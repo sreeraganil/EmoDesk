@@ -1,0 +1,2185 @@
+<!doctype html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>EmoDesk</title>
+
+<style>
+
+:root {
+
+  --bg: #0d1117;
+
+  --panel: #161b22;
+
+  --panel-hover: #21262d;
+
+  --ink: #c9d1d9;
+
+  --mute: #8b949e;
+
+  --line: #30363d;
+
+  --cheek: #f78166;
+
+  --oled: #000;
+
+  --pix: #8ff0ff;
+
+  --ok: #238636;
+
+  --bad: #da3633;
+
+  --r: 16px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+
+  --accent: #58a6ff;
+
+  --shadow: 0 8px 24px rgba(0,0,0,0.2);
+
+}
+
+@media (prefers-color-scheme: light) {
+
+  :root {
+
+    --bg: #f3f4f6;
+
+    --panel: #ffffff;
+
+    --panel-hover: #f9fafb;
+
+    --ink: #111827;
+
+    --mute: #6b7280;
+
+    --line: #e5e7eb;
+
+    --cheek: #fb7185;
+
+    --oled: #111827;
+
+    --accent: #3b82f6;
+
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+
+  }
+
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); transition: background 0.2s, color 0.2s; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+
+
+header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+
+.logo { display: flex; gap: 6px; background: var(--oled); padding: 10px 12px; border-radius: 12px; }
+
+.logo i { width: 14px; height: 14px; background: var(--pix); border-radius: 4px; animation: blink 5s infinite; }
+
+@keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+
+header h1 { font-size: 20px; margin: 0; font-weight: 700; letter-spacing: -0.02em; }
+
+.chips { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+.chip { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; font-size: 13px; font-weight: 500; color: var(--mute); white-space: nowrap; }
+
+.chip.ok { color: var(--ok); border-color: var(--ok); background: rgba(35, 134, 54, 0.1); }
+
+.chip.bad { color: var(--bad); border-color: var(--bad); background: rgba(218, 54, 51, 0.1); }
+
+
+
+.shell { display: grid; grid-template-columns: 340px 1fr; gap: 32px; padding: 32px 24px 60px; max-width: 1400px; margin: 0 auto; align-items: start; }
+
+@media(max-width: 900px) { .shell { grid-template-columns: 1fr; padding: 24px 16px 60px; gap: 24px; } }
+
+
+
+/* device */
+
+.device { position: sticky; top: 90px; background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 16px; }
+
+.bezel { background: var(--oled); border-radius: 16px; padding: 16px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); }
+
+#scr { width: 100%; aspect-ratio: 2/1; display: block; image-rendering: pixelated; background: var(--oled); border-radius: 4px; filter: drop-shadow(0 0 4px rgba(143,240,255,0.3)); }
+
+.under { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+.pad { width: 64px; height: 64px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; touch-action: none; user-select: none; font-size: 13px; font-weight: 600; flex: none; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); transition: transform 0.1s, box-shadow 0.1s; }
+
+.pad.down { transform: translateY(2px); box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3); }
+
+.nav { display: flex; flex-direction: column; gap: 12px; flex: 1; min-width: 0; }
+
+.navrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.navrow > input, .navrow > select { flex: 1 1 160px; width: auto; min-width: 0; }
+
+.navrow > .row { flex: 1 1 220px; border-top: none; padding: 0; }
+
+.nav .navrow { flex-wrap: nowrap; }
+
+.cardname { flex: 1; min-width: 0; text-align: center; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.btn { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 16px; cursor: pointer; font-weight: 500; font-size: 14px; transition: background 0.15s; }
+
+.btn:hover { background: var(--panel-hover); }
+
+.btn.pri { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.btn.pri:hover { filter: brightness(1.1); }
+
+.btn.pink { background: var(--cheek); border-color: var(--cheek); color: #fff; }
+
+.btn.sm { padding: 4px 12px; font-size: 13px; }
+
+.btn.danger { border-color: var(--bad); color: var(--bad); background: rgba(218, 54, 51, 0.05); }
+
+.btn.danger:hover { background: rgba(218, 54, 51, 0.1); }
+
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+.btn { white-space: nowrap; line-height: 1.3; }
+
+.btn.ghost { background: transparent; }
+
+.btn.ghost:hover { background: var(--panel-hover); }
+
+a.btn { display: inline-flex; align-items: center; text-decoration: none; color: inherit; }
+
+.gest { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.hint { font-size: 13px; color: var(--mute); margin: 0; line-height: 1.4; }
+
+
+
+/* tabs */
+
+.tabs { display: flex; gap: 8px; overflow-x: auto; padding: 4px; background: var(--bg); border-radius: 12px; border: 1px solid var(--line); scrollbar-width: none; margin-bottom: 24px; }
+
+.tabs::-webkit-scrollbar { display: none; }
+
+.tabs button { flex: none; border: none; background: transparent; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; color: var(--mute); transition: all 0.2s; }
+
+.tabs button:hover { color: var(--ink); background: var(--panel-hover); }
+
+.tabs button[aria-selected=true] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid var(--line); }
+
+
+
+main { min-width: 0; }
+
+.grp { background: var(--panel); border-radius: 16px; padding: 24px; margin-bottom: 24px; border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
+
+.grp h2 { margin: 0 0 8px 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+
+.grp>p.d { margin: 0 0 16px; color: var(--mute); font-size: 14px; line-height: 1.5; }
+
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+
+.row > .lab { flex: 1 1 180px; }
+
+.row > .sw { margin-left: auto; }
+
+.row > .days, .row > .rng { width: min(280px, 100%); }
+
+.row:first-of-type { border-top: none; }
+
+.row.col { flex-direction: column; align-items: stretch; gap: 8px; }
+
+.lab { flex: 1; min-width: 0; font-weight: 500; }
+
+.lab small { display: block; color: var(--mute); font-size: 13px; font-weight: 400; margin-top: 2px; }
+
+input[type=text], input[type=password], input[type=number], input[type=time], input[type=date], select, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 14px; width: 100%; transition: border-color 0.2s; }
+
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+
+.row>input, .row>select { width: min(280px, 100%); }
+
+input[type=file] { max-width: 100%; min-width: 0; }
+
+.grp h3, .mbody h3 { margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: var(--mute); text-transform: uppercase; letter-spacing: .04em; }
+
+textarea { min-height: 100px; resize: vertical; }
+
+.rng { display: flex; align-items: center; gap: 12px; width: min(280px, 100%); }
+
+.rng input { flex: 1; accent-color: var(--accent); cursor: pointer; }
+
+.rng output { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--mute); font-weight: 600; }
+
+.sw { position: relative; display: inline-block; vertical-align: middle; width: 44px; height: 24px; flex: none; }
+
+.sw input { opacity: 0; position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+
+.sw span { position: absolute; inset: 0; background: var(--line); border-radius: 99px; transition: 0.2s; }
+
+.sw span:after { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+
+.sw input:checked+span { background: var(--ok); }
+
+.sw input:checked+span:after { left: 23px; }
+
+.sw input:focus-visible+span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+
+
+.days { display: flex; gap: 4px; }
+
+.days button { flex: 1; height: 32px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; font-size: 13px; font-weight: 600; color: var(--mute); }
+
+.days button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.item { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 12px 0; background: var(--bg); }
+
+.item .row { border-top-color: var(--line); padding: 8px 0; }
+
+.itembar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding-top: 12px; }
+
+
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+
+.tile { border: 1px solid var(--line); background: var(--bg); border-radius: 12px; padding: 12px; cursor: pointer; text-align: left; transition: border-color 0.15s, transform 0.15s; }
+
+.tile:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+.tile b { display: block; font-size: 14px; margin-bottom: 4px; }
+
+.tile small { color: var(--mute); font-size: 12px; }
+
+
+
+/* card list */
+
+.clist { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+.citem { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px; transition: border-color 0.2s; }
+
+.citem.off { opacity: 0.6; }
+
+.citem.cur { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+.citem .grab { cursor: grab; color: var(--mute); font-size: 18px; user-select: none; padding: 0 4px; }
+
+.citem .nm { flex: 1 1 140px; min-width: 0; }
+
+.citem .nm b { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.citem .nm small { color: var(--mute); font-size: 13px; }
+
+.citem .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: auto; }
+
+.dragging { opacity: 0.4; }
+
+
+
+.bars { display: grid; gap: 12px; margin: 16px 0; }
+
+.bar { display: grid; grid-template-columns: 70px 1fr 40px; gap: 12px; align-items: center; font-size: 13px; font-weight: 500; }
+
+.bar div { height: 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+
+.bar div i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s ease; }
+
+
+
+.emos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+.pix { image-rendering: pixelated; background: var(--oled); border-radius: 8px; width: 100%; aspect-ratio: 2/1; display: block; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2)); }
+
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-top: 16px; }
+
+.thumb { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+
+.thumb canvas { width: 100%; image-rendering: pixelated; background: var(--oled); border-radius: 6px; display: block; }
+
+.thumb div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; font-size: 12px; margin-top: 8px; gap: 4px; color: var(--mute); }
+
+.meter { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+
+.meter i { display: block; height: 100%; background: var(--accent); }
+
+pre.log { background: var(--oled); color: #00ff00; border-radius: 8px; padding: 16px; max-height: 400px; overflow: auto; font-size: 13px; font-family: ui-monospace, monospace; white-space: pre-wrap; margin: 16px 0; }
+
+.note { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 12px; padding: 12px 16px; margin: 16px 0; font-size: 14px; color: var(--accent); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.note.warn { background: rgba(218, 54, 51, 0.08); border-color: rgba(218, 54, 51, 0.3); color: var(--bad); }
+
+.chip.warn { color: #b7791f; border-color: #b7791f; background: rgba(183, 121, 31, 0.1); }
+
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin: 12px 0; }
+
+.kv div { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-width: 0; }
+
+.kv b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.kv small { color: var(--mute); font-size: 12px; }
+
+.batt { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 8px 0 4px; }
+
+.batt .cell { position: relative; width: 64px; height: 30px; border: 2px solid var(--ink); border-radius: 6px; padding: 3px; flex: none; }
+
+.batt .cell:after { content: ""; position: absolute; right: -6px; top: 8px; width: 4px; height: 10px; background: var(--ink); border-radius: 0 2px 2px 0; }
+
+.batt .cell i { display: block; height: 100%; border-radius: 3px; background: var(--ok); transition: width .3s; }
+
+.batt .cell.low i { background: var(--bad); }
+
+.batt b { font-size: 22px; }
+
+.results { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+
+.results button { text-align: left; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 10px 14px; cursor: pointer; transition: background 0.15s; font-size: 14px; }
+
+.results button:hover { background: var(--panel-hover); }
+
+
+
+dialog { margin: auto; border: 1px solid var(--line); border-radius: 20px; padding: 0; width: min(600px, 92vw); max-height: 85vh; background: var(--panel); color: var(--ink); box-shadow: 0 24px 48px rgba(0,0,0,0.3); }
+
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); }
+
+.mhead { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 2; border-radius: 20px 20px 0 0; }
+
+.mhead h2 { margin: 0; flex: 1; font-size: 18px; font-weight: 600; }
+
+.mbody { padding: 8px 24px 24px; overflow: auto; max-height: calc(85vh - 72px); }
+
+
+
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(100px); background: var(--ink); color: var(--bg); padding: 12px 24px; border-radius: 99px; font-weight: 600; font-size: 14px; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); z-index: 99; max-width: 90vw; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+
+#toast.show { transform: translateX(-50%) translateY(0); }
+
+#toast.err { background: var(--bad); color: #fff; }
+
+.kbd { font-weight: 600; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font-size: 12px; font-family: ui-monospace, monospace; color: var(--mute); }
+
+@media(max-width: 600px) {
+
+  header { flex-wrap: wrap; padding: 12px 16px; gap: 10px; }
+
+  .chips { margin-left: 0; width: 100%; justify-content: flex-start; }
+
+  .device { position: static; padding: 16px; }
+
+  .grp { padding: 16px; border-radius: 14px; }
+
+  .row > input, .row > select, .row > .rng, .row > .days { width: 100%; }
+
+  .citem .acts { width: 100%; justify-content: stretch; }
+
+  .citem .acts .btn { flex: 1; }
+
+  .mbody { padding: 8px 16px 20px; }
+
+  .mhead { padding: 16px; }
+
+}
+
+@media(prefers-reduced-motion: reduce) { * { transition: none!important; animation: none!important; } }
+
+</style>
+
+</head>
+
+<body>
+
+<header>
+
+  <div class="logo" aria-hidden="true"><i></i><i></i></div>
+
+  <h1 id="devname">EmoDesk</h1>
+
+  <div class="chips" id="chips"></div>
+
+</header>
+
+<div class="shell">
+
+  <aside class="device" aria-label="Live device">
+
+    <div class="body">
+
+      <div class="bezel"><canvas id="scr" width="128" height="64" aria-label="Live copy of the OLED screen"></canvas></div>
+
+      <div class="under">
+
+        <button class="pad" id="pad" aria-label="Touch pad: tap, double-tap or hold">touch</button>
+
+        <div class="nav">
+
+          <div class="navrow">
+
+            <button class="btn sm" onclick="act('prev')" aria-label="Previous card">&#8249;</button>
+
+            <div class="cardname" id="cardname">…</div>
+
+            <button class="btn sm" onclick="act('next')" aria-label="Next card">&#8250;</button>
+
+          </div>
+
+          <div class="gest">
+
+            <button class="btn sm ghost" onclick="gest('double')">Double</button>
+
+            <button class="btn sm ghost" onclick="gest('triple')">Triple</button>
+
+            <button class="btn sm ghost" onclick="gest('long')">Hold</button>
+
+            <button class="btn sm ghost" onclick="act('home')">Home</button>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <p class="hint">The pad works like the real one: click to tap, click twice to double-tap, press and hold for a long press.</p>
+
+  </aside>
+
+  <main>
+
+    <nav class="tabs" role="tablist" id="tabs"></nav>
+
+    <div id="view"></div>
+
+  </main>
+
+</div>
+
+<dialog id="modal"><div class="mhead"><h2 id="mtitle"></h2><button class="btn sm ghost" onclick="closeModal()">Close</button></div><div class="mbody" id="mbody"></div></dialog>
+
+<div id="toast" role="status"></div>
+
+<script>
+
+'use strict';
+
+const $=(s,r=document)=>r.querySelector(s);
+
+function h(t,p,...k){const e=document.createElement(t);if(p)for(const[a,v]of Object.entries(p)){if(v==null||v===false)continue;if(a.startsWith('on'))e.addEventListener(a.slice(2),v);else if(a==='class')e.className=v;else if(a==='html')e.innerHTML=v;else if(a in e&&a!=='list')try{e[a]=v}catch(_){e.setAttribute(a,v)}else e.setAttribute(a,v===true?'':v)}
+
+for(const c of k.flat(9)){if(c==null||c===false)continue;e.append(c.nodeType?c:document.createTextNode(c))}return e}
+
+let CFG={},CARDS={cards:[]},ST={},SND={sfx:[],mel:[],files:[]},FILES={files:[],total:1,used:0},TAB='home';
+
+const gp=(o,p)=>p.split('.').reduce((a,k)=>a==null?undefined:a[k],o);
+
+const sp=(o,p,v)=>{const ks=p.split('.');let a=o;for(const k of ks.slice(0,-1)){if(typeof a[k]!=='object'||a[k]===null)a[k]={};a=a[k]}a[ks[ks.length-1]]=v};
+
+async function api(p,o={}){const opt={method:o.method||(o.body!==undefined?'POST':'GET'),headers:{}};
+
+ if(o.body!==undefined){if(o.body instanceof FormData||o.body instanceof Blob)opt.body=o.body;else{opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(o.body)}}
+
+ const r=await fetch(p,opt);const ct=r.headers.get('content-type')||'';const d=ct.includes('json')?await r.json():(ct.includes('octet')?await r.arrayBuffer():await r.text());
+
+ if(!r.ok)throw new Error((d&&d.error)||r.statusText);return d}
+
+let tt;function toast(m,err){const t=$('#toast');if($('#modal').open)$('#modal').append(t);else document.body.append(t);t.textContent=m;t.className='show'+(err?' err':'');clearTimeout(tt);tt=setTimeout(()=>t.className='',err?4000:1800)}
+
+const post=(p,b)=>api(p,{body:b===undefined?{}:b}).catch(e=>toast(e.message,1));
+
+let saveT;function cfgChanged(){clearTimeout(saveT);saveT=setTimeout(saveCfg,600)}
+
+async function saveCfg(){try{const r=await api('/api/config',{body:CFG});toast(r.reboot?'Saved. Restart to use the new name.':'Saved')}catch(e){toast('Not saved: '+e.message,1)}}
+
+async function saveCards(msg){try{await api('/api/cards',{body:CARDS});if(msg!==false)toast(msg||'Cards saved')}catch(e){toast('Not saved: '+e.message,1)}}
+
+const act=a=>post('/api/action?a='+a).then(status);
+
+const gest=g=>post('/api/input?g='+g).then(()=>setTimeout(status,400));
+
+
+
+/* ------------------------------------------------------------ reference data */
+
+const TZ=[['UTC','UTC0',''],['London, Dublin','GMT0BST,M3.5.0/1,M10.5.0','Europe/London Europe/Dublin'],['Lisbon','WET0WEST,M3.5.0/1,M10.5.0','Europe/Lisbon'],
+
+['Paris, Berlin, Rome, Madrid','CET-1CEST,M3.5.0,M10.5.0/3','Europe/Paris Europe/Berlin Europe/Rome Europe/Madrid Europe/Amsterdam Europe/Brussels Europe/Vienna Europe/Stockholm Europe/Oslo Europe/Copenhagen Europe/Warsaw Europe/Prague Europe/Zurich Europe/Budapest'],
+
+['Athens, Helsinki, Kyiv','EET-2EEST,M3.5.0/3,M10.5.0/4','Europe/Athens Europe/Helsinki Europe/Kiev Europe/Kyiv Europe/Bucharest Europe/Sofia'],['Cairo','EET-2EEST,M4.5.5/0,M10.5.4/24','Africa/Cairo'],
+
+['Johannesburg','SAST-2','Africa/Johannesburg'],['Lagos','WAT-1','Africa/Lagos'],['Nairobi','EAT-3','Africa/Nairobi'],['Istanbul','<+03>-3','Europe/Istanbul'],['Moscow','MSK-3','Europe/Moscow'],
+
+['Riyadh, Doha','<+03>-3','Asia/Riyadh Asia/Qatar Asia/Kuwait Asia/Baghdad'],['Tehran','<+0330>-3:30','Asia/Tehran'],['Dubai','<+04>-4','Asia/Dubai Asia/Muscat'],['Karachi','PKT-5','Asia/Karachi'],
+
+['India','IST-5:30','Asia/Kolkata Asia/Calcutta'],['Sri Lanka','<+0530>-5:30','Asia/Colombo'],['Kathmandu','<+0545>-5:45','Asia/Kathmandu'],['Dhaka','<+06>-6','Asia/Dhaka'],
+
+['Bangkok, Hanoi','<+07>-7','Asia/Bangkok Asia/Ho_Chi_Minh Asia/Saigon'],['Jakarta','WIB-7','Asia/Jakarta'],['Singapore, Kuala Lumpur','<+08>-8','Asia/Singapore Asia/Kuala_Lumpur'],
+
+['China','CST-8','Asia/Shanghai Asia/Chongqing'],['Hong Kong','HKT-8','Asia/Hong_Kong'],['Taipei','CST-8','Asia/Taipei'],['Manila','PST-8','Asia/Manila'],['Perth','AWST-8','Australia/Perth'],
+
+['Tokyo','JST-9','Asia/Tokyo'],['Seoul','KST-9','Asia/Seoul'],['Adelaide','ACST-9:30ACDT,M10.1.0,M4.1.0/3','Australia/Adelaide'],['Brisbane','AEST-10','Australia/Brisbane'],
+
+['Sydney, Melbourne','AEST-10AEDT,M10.1.0,M4.1.0/3','Australia/Sydney Australia/Melbourne Australia/Hobart'],['Auckland','NZST-12NZDT,M9.5.0,M4.1.0/3','Pacific/Auckland'],
+
+['Honolulu','HST10','Pacific/Honolulu'],['Anchorage','AKST9AKDT,M3.2.0,M11.1.0','America/Anchorage'],['Los Angeles, Vancouver','PST8PDT,M3.2.0,M11.1.0','America/Los_Angeles America/Vancouver'],
+
+['Phoenix','MST7','America/Phoenix'],['Denver','MST7MDT,M3.2.0,M11.1.0','America/Denver America/Edmonton'],['Chicago','CST6CDT,M3.2.0,M11.1.0','America/Chicago America/Winnipeg'],
+
+['Mexico City','CST6','America/Mexico_City'],['New York, Toronto','EST5EDT,M3.2.0,M11.1.0','America/New_York America/Toronto America/Detroit'],['Bogota, Lima','<-05>5','America/Bogota America/Lima'],
+
+['Santiago','<-04>4<-03>,M9.1.6/24,M4.1.6/24','America/Santiago'],['Sao Paulo, Buenos Aires','<-03>3','America/Sao_Paulo America/Argentina/Buenos_Aires']];
+
+const LEAGUES=[['eng.1','Premier League'],['esp.1','La Liga'],['ita.1','Serie A'],['ger.1','Bundesliga'],['fra.1','Ligue 1'],['uefa.champions','Champions League'],['uefa.europa','Europa League'],
+
+['eng.2','Championship'],['ned.1','Eredivisie'],['por.1','Primeira Liga'],['sco.1','Scottish Premiership'],['usa.1','MLS'],['mex.1','Liga MX'],['bra.1','Brasileirão'],['ind.1','Indian Super League'],['sau.1','Saudi Pro League'],['fifa.world','World Cup']];
+
+const EMOS=['neutral','happy','sad','angry','sleepy','surprised','love','bored','dizzy','confused','excited','suspicious','cry','sleep','cool','focused','sick'];
+
+const ACTIONS=[['next','Next card'],['prev','Previous card'],['home','Go home (Emo)'],['speak','Read card aloud'],['mute','Mute / unmute'],['volup','Volume up'],['voldown','Volume down'],
+
+['pet','Play with Emo'],['feed','Feed Emo'],['rotate','Auto-rotate on/off'],['profile','Next profile'],['screen','Screen off/on'],['sound','Play favourite sound'],['refresh','Refresh card data'],
+
+['brief','Morning briefing'],['saver','Battery saver on/off'],['sleep','Deep sleep (touch to wake)'],['media_play','PC: play/pause (USB/Bluetooth)'],['media_next','PC: next track (USB/Bluetooth)'],['media_prev','PC: previous track (USB/Bluetooth)'],['media_volup','PC: volume up (USB/Bluetooth)'],['media_voldown','PC: volume down (USB/Bluetooth)'],['none','Nothing']];
+
+const P=(k,t,l,d,o)=>({k,t,l,d,o:o||{}});
+
+const LOC=P('loc','loc','Location',null),LEAGUE=P('league','sel','League','eng.1',{o:LEAGUES});
+function findLeagueSlug(slug, name) {
+  const s = String(slug || '').toLowerCase().trim();
+  const n = String(name || '').toLowerCase().trim();
+  for (const [k] of LEAGUES) { if (k.toLowerCase() === s) return k; }
+  const clean = str => str.replace(/[^a-z0-9]/g, '');
+  const cs = clean(s), cn = clean(n);
+  for (const [k, l] of LEAGUES) {
+    const cl = clean(l.toLowerCase()), ck = clean(k.toLowerCase());
+    if ((cs && (cs === ck || cs === cl)) || (cn && (cn === cl || cn.includes(cl) || cl.includes(cn)))) return k;
+  }
+  if (/champions/i.test(n) || /champions/i.test(s)) return 'uefa.champions';
+  if (/europa/i.test(n) || /europa/i.test(s)) return 'uefa.europa';
+  if (/premier.*league|epl/i.test(n) || /epl/i.test(s)) return 'eng.1';
+  if (/la.*liga/i.test(n) || /laliga/i.test(s)) return 'esp.1';
+  if (/serie.*a/i.test(n)) return 'ita.1';
+  if (/bundesliga/i.test(n)) return 'ger.1';
+  if (/ligue.*1/i.test(n)) return 'fra.1';
+  if (/championship/i.test(n)) return 'eng.2';
+  if (/eredivisie/i.test(n)) return 'ned.1';
+  if (/primeira|portug/i.test(n)) return 'por.1';
+  if (/scottish/i.test(n)) return 'sco.1';
+  if (/mls|major league soccer/i.test(n)) return 'usa.1';
+  if (/liga mx|mexic/i.test(n)) return 'mex.1';
+  if (/brasil/i.test(n)) return 'bra.1';
+  if (/isl|indian super/i.test(n)) return 'ind.1';
+  if (/saudi/i.test(n)) return 'sau.1';
+  if (/world cup/i.test(n)) return 'fifa.world';
+  return s || '';
+}
+
+const C=(n,c,d,p,dur)=>({n,c,d,p:[...(p||[]),P('bat','bool','Show battery percent on screen',false)],dur:dur||0});
+
+const GAME=d=>C(d[0],'Games',d[1]+' Hold the pad for a second to leave.');
+
+const T={
+
+emo:C('Emo face','Emo','Big expressive eyes. Tap to poke, hold to pet, double-tap to move on.',[],30),
+
+pet:C('Pet care','Emo','Joy, energy and food. Double-tap to play, hold to feed.'),
+
+clock:C('Clock','Time','Large digital clock.',[P('style','sel','Style','big',{o:[['big','Big with date'],['minimal','Minimal'],['seconds','With seconds'],['date','Time and full date']]})]),
+
+analog:C('Analog clock','Time','A watch face with the date beside it.'),
+
+binary:C('Binary clock','Time','Hours, minutes and seconds as dots.'),
+
+wordclock:C('Word clock','Time','The time in words, like "half past ten".'),
+
+calendar:C('Calendar','Time','This month with today highlighted.'),
+
+world:C('World clock','Time','Up to four cities.',[P('cities','objs','Cities',[{n:'London',tz:'GMT0BST,M3.5.0/1,M10.5.0'},{n:'New York',tz:'EST5EDT,M3.2.0,M11.1.0'}],{f:[P('n','text','City',''),P('tz','tz','Time zone','UTC0')],max:4})]),
+
+progress:C('Progress bars','Time','How much of the day, week, month and year has gone.'),
+
+sunmoon:C('Sun and moon','Time','Sunrise, sunset and the moon phase.'),
+
+countdown:C('Countdown','Time','Days until an event. Celebrates when it arrives.',[P('title','text','Event','New Year'),P('date','date','Date','2027-01-01'),P('time','time','Time','00:00'),P('alert','bool','Celebrate when it arrives',true)]),
+
+dayssince:C('Days since','Time','Counts the days from a date.',[P('title','text','Title','Days since'),P('date','date','Since','2026-01-01')]),
+
+weather:C('Weather now','Weather','Temperature, conditions, humidity and wind.',[LOC]),
+
+forecast:C('Forecast','Weather','The next three days or the next 12 hours.',[LOC,P('mode','sel','Show','daily',{o:[['daily','Next 3 days'],['hourly','Next 12 hours']]})]),
+
+aqi:C('Air quality','Weather','US AQI with PM2.5, PM10 and UV.',[LOC]),
+
+cricket:C('Cricket live','Sports','Live score for your teams. Needs the match server address in Connect.',[P('team','match','Team / Teams','',{sport:'cricket',ph:'e.g. India, Australia (optional, blank = all)'}),P('layout','sel','Layout style','modern',{o:[['modern','Modern (Live + Over matrix)'],['compact','Compact (Scores + Over)']]}),P('overMatrix','bool','Ball-by-ball over matrix',true),P('winProb','bool','Live win probability bar',true),P('alerts','bool','Wicket & result alerts',true),P('cycle','bool','Auto-cycle details',true),P('animWicket','file','Wicket animation','',{dir:'/anim'}),P('animResult','file','Result animation','',{dir:'/anim'})]),
+
+cricfix:C('Cricket matches','Sports','Current and recent matches.',[P('team','match','Team / Teams filter','',{sport:'cricket',ph:'e.g. India, Australia (optional, blank = all)'})]),
+
+football:C('Football','Sports','Matches for a league or teams.',[P('show','sel','Show','all',{o:[['all','All'],['live','Live'],['fixtures','Fixtures'],['results','Results']]}),LEAGUE,P('team','match','Team / Teams','',{sport:'football',ph:'e.g. Arsenal, Chelsea (optional, blank = league)'}),P('alerts','bool','Goal alerts',true),P('anim','file','Goal animation','',{dir:'/anim'}),P('cycle','bool','Auto-cycle details',true)]),
+
+ftable:C('League table','Sports','Standings, five rows at a time.',[LEAGUE,P('team','text','Highlight team(s)','',{ph:'e.g. Arsenal, Chelsea (optional)'})]),
+
+crypto:C('Crypto','Money','Prices with 24h change and a mini chart.',[P('coins','text','Coins (CoinGecko ids)','bitcoin,ethereum'),P('cur','text','Currency','usd'),P('alerts','text','Price alerts','',{ph:'bitcoin>100000;ethereum<2000'}),P('refresh','num','Refresh every (min)',5)]),
+
+stock:C('Stocks','Money','Quotes with an intraday chart. Add .NS for NSE, .BO for BSE.',[P('symbols','text','Symbols','AAPL',{ph:'AAPL,TSLA'}),P('alerts','text','Price alerts','',{ph:'AAPL>250'}),P('refresh','num','Refresh every (min)',10)]),
+
+currency:C('Exchange rates','Money','Rates from one base currency.',[P('base','text','Base','USD'),P('to','text','Show','EUR,GBP,JPY'),P('refresh','num','Refresh every (min)',60)]),
+
+news:C('News','Info','Headlines from any RSS feed.',[P('url','text','RSS feed','http://feeds.bbci.co.uk/news/world/rss.xml'),P('count','num','Headlines',6),P('refresh','num','Refresh every (min)',30)]),
+
+quote:C('Quote','Info','Quote of the day.',[P('mode','sel','Which quote','today',{o:[['today','Quote of the day'],['random','A new one each refresh']]})]),
+
+joke:C('Joke','Info','A clean joke. Hold for a new one.',[P('refresh','num','New joke every (min)',60),P('speak','bool','Read new jokes aloud',false)]),
+
+fact:C('Fun fact','Info','A random fact. Hold for another.',[P('refresh','num','New fact every (min)',60),P('speak','bool','Read new facts aloud',false)]),
+
+word:C('Word of the day','Info','A word and its meaning. Works offline.'),
+
+iss:C('Space station','Info','Where the ISS is and how many people are in space.'),
+
+youtube:C('YouTube stats','Info','Subscribers, views and videos.',[P('channel','text','Channel ID','',{ph:'UC…'}),P('key','text','API key','',{hint:'Blank uses the key in Connect'}),P('milestone','num','Celebrate every',1000),P('refresh','num','Refresh every (min)',30)]),
+
+github:C('GitHub stats','Info','Followers, repositories and stars.',[P('user','text','Username',''),P('token','text','Token (optional)','')]),
+
+pomodoro:C('Focus timer','Productivity','Pomodoro. Double-tap to start or pause, hold to reset.',[P('work','num','Focus (min)',25),P('brk','num','Break (min)',5),P('lbrk','num','Long break (min)',15),P('every','num','Long break every',4),P('auto','bool','Start the next session automatically',false),P('tick','bool','Ticking sound',false),P('hold','bool','Stay on screen while running',true)]),
+
+timer:C('Timer','Productivity','Double-tap to start or pause. Hold to change preset or reset.',[P('min','num','Default minutes',5),P('presets','text','Presets (min)','1,3,5,10,15,25,30,60'),P('sound','sound','Alarm sound','sfx:alarm')]),
+
+stopwatch:C('Stopwatch','Productivity','Double-tap to start or stop. Hold for a lap or reset.'),
+
+alarms:C('Alarms','Productivity','The next alarm. Set alarms in the Alarms tab.'),
+
+reminders:C('Reminders','Productivity','Upcoming reminders from the Alarms tab.'),
+
+todo:C('To-do list','Productivity','Double-tap moves the cursor, hold ticks a task off.',[P('items','objs','Tasks',[{t:'Plan the day',d:false}],{f:[P('t','text','Task',''),P('d','bool','Done',false)]})]),
+
+habits:C('Habits','Productivity','Daily streaks. Double-tap moves, hold marks today as done.',[P('items','objs','Habits',[{t:'Exercise',s:0,l:0}],{f:[P('t','text','Habit',''),P('s','num','Current streak',0)]})]),
+
+water:C('Water','Productivity','Glasses drunk today. Double-tap adds one, hold removes one.',[P('goal','num','Daily goal (glasses)',8)]),
+
+note:C('Note','Productivity','Any text you like.',[P('text','area','Text','Hello!'),P('big','bool','Large text',false)]),
+
+calevents:C('Calendar events','Productivity','Next events from an iCal (.ics) link. Repeating events are not expanded.',[P('url','text','iCal link','',{ph:'https://…/basic.ics'}),P('alert','num','Alert minutes before',10),P('refresh','num','Refresh every (min)',30)]),
+
+message:C('Messages','Home','The last message from Telegram, MQTT or this dashboard.'),
+
+mqtt:C('Home Assistant','Home','Values from MQTT topics. Hold to toggle the selected one.',[P('items','objs','Entities',[],{f:[P('l','text','Label',''),P('t','text','State topic',''),P('u','text','Unit',''),P('c','text','Command topic (optional)',''),P('on','text','ON payload','ON'),P('off','text','OFF payload','OFF')],max:6})]),
+
+pcstats:C('PC stats','Home','CPU, RAM, GPU and network from the PC companion script.'),
+
+nowplaying:C('Now playing','Home','The song playing on your computer.'),
+
+musicbox:C('Music box','Sound','Melodies. Double-tap plays or stops, hold picks the next.'),
+
+soundboard:C('Soundboard','Sound','Effects and your clips. Double-tap plays, hold picks the next.'),
+
+sleepsounds:C('Sleep sounds','Sound','Rain, ocean or noise with a sleep timer.',[P('type','sel','Sound','rain',{o:['white','pink','brown','rain','ocean']}),P('min','num','Stop after (min, 0 = never)',30)]),
+
+metronome:C('Metronome','Sound','Double-tap to start or stop, hold changes tempo.',[P('bpm','num','Beats per minute',100)]),
+
+visualizer:C('Visualizer','Sound','A live picture of whatever is playing.',[P('mode','sel','Style','bars',{o:['bars','wave']})]),
+
+images:C('Pictures','Pictures','A slideshow of your drawings and images.',[P('files','text','Only these files','',{hint:'Blank shows all of them'}),P('sec','num','Seconds per picture',8)]),
+
+anim:C('Animation','Pictures','Plays a GIF you converted in the Media tab.',[P('file','file','Animation','',{dir:'/anim'}),P('fps','num','Frames per second (0 = original)',0)]),
+
+scroller:C('Scrolling text','Pictures','A marquee message.',[P('text','text','Text','Hello from Emo!'),P('size','sel','Size',2,{o:[[1,'Small'],[2,'Medium'],[3,'Large']]}),P('speed','num','Speed (px/s)',40),P('invert','bool','Inverted',false)]),
+
+flappy:GAME(['Flappy','Tap to flap through the pipes.']),dino:GAME(['Runner','Tap to jump over cacti.']),stack:GAME(['Stack','Tap to drop the sliding block.']),
+
+dodge:GAME(['Dodge','Tap to switch lanes.']),reaction:GAME(['Reaction','Tap as soon as the screen flashes.']),rhythm:GAME(['Rhythm','Tap when notes hit the line.']),
+
+eightball:C('Magic answer','Games','Ask a yes-or-no question, then double-tap.'),
+
+dice:C('Dice and coin','Games','Double-tap to roll.',[P('mode','sel','Mode','dice',{o:[['dice','One die'],['2dice','Two dice'],['coin','Coin']]})]),
+
+decision:C('Decision maker','Games','Double-tap and Emo picks one.',[P('opts','list','Options',['Pizza','Pasta','Salad'])]),
+
+matrix:C('Matrix rain','Screensavers','Falling characters.'),starfield:C('Starfield','Screensavers','Flying through space.'),life:C('Game of Life','Screensavers','Cells that live and die.'),
+
+fireworks:C('Fireworks','Screensavers','Bursts of light.'),bounce:C('Bouncing Emo','Screensavers','A little face bouncing around.'),
+
+netinfo:C('Network','System','Wi-Fi name, IP address and signal.'),health:C('Device health','System','Memory, storage, temperature and API use.'),battery:C('Battery','System','Charge, voltage and whether the battery saver is on.'),
+
+ble:C('Bluetooth','System','BLE status, RAM bar, and a media remote cheat-sheet. Tap/double-tap/hold to send play, next, vol+ when in Remote mode.'),
+
+whatsapp:C('WhatsApp','Home','Last WhatsApp message from the bridge script. Tap clears, 2× tap reads aloud, hold pauses scroll.')};
+
+const CATS=['Emo','Time','Weather','Sports','Money','Info','Productivity','Home','Sound','Pictures','Games','Screensavers','System'];
+
+
+
+/* ------------------------------------------------------------ form fields */
+
+function sel(opts,val,onch){const s=h('select',{onchange:()=>onch(opts.map(o=>Array.isArray(o)?o[0]:o)[s.selectedIndex])});
+
+ for(const o of opts){const[v,l]=Array.isArray(o)?o:[o,o];s.append(h('option',{value:String(v),selected:String(v)===String(val)},l))}return s}
+
+function daysPick(v,set){const d=h('div',{class:'days'});'MTWTFSS'.split('').forEach((c,i)=>{const b=h('button',{type:'button',class:(v>>i)&1?'on':'',title:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i],onclick:()=>{v^=1<<i;b.classList.toggle('on');set(v)}},c);d.append(b)});return d}
+
+function soundPick(v,set){const o=[['','No sound']];SND.sfx.forEach(s=>o.push(['sfx:'+s,'Effect: '+s]));SND.mel.forEach((m,i)=>o.push(['mel:'+i,'Melody: '+m]));SND.files.forEach(f=>o.push(['file:/snd/'+f,'Clip: '+f]));
+
+ if(v&&!o.some(x=>x[0]===v))o.push([v,v]);return sel(o,v,set)}
+
+function tzPick(v,set){const o=TZ.map(t=>[t[1],t[0]]);if(v&&!o.some(x=>x[0]===v))o.push([v,v]);return sel(o,v,set)}
+
+function locPick(v,set,home){const box=h('div');const draw=()=>{box.innerHTML='';const cur=h('div',{class:'navrow'},h('span',{class:'lab'},v&&v.name?`${v.name} (${(+v.lat).toFixed(2)}, ${(+v.lon).toFixed(2)})`:(home?'Not set':'Home location')));
+
+ if(v&&!home)cur.append(h('button',{class:'btn sm ghost',type:'button',onclick:()=>{v=null;set(null);draw()}},'Use home'));box.append(cur);
+
+ const q=h('input',{type:'text',placeholder:'Search a city'}),res=h('div',{class:'results'});
+
+ const go=async()=>{res.textContent='Searching…';try{const r=await(await fetch('https://geocoding-api.open-meteo.com/v1/search?count=6&name='+encodeURIComponent(q.value))).json();res.innerHTML='';
+
+  (r.results||[]).forEach(x=>res.append(h('button',{type:'button',onclick:()=>{v={name:x.name,lat:+x.latitude.toFixed(4),lon:+x.longitude.toFixed(4)};set(v,x);draw()}},`${x.name}, ${x.admin1?x.admin1+', ':''}${x.country||''}`)));
+
+  if(!r.results)res.textContent='No places found. Try another spelling.'}catch(e){res.textContent='Search needs internet on this phone or computer.'}};
+
+ q.onkeydown=e=>{if(e.key==='Enter')go()};box.append(h('div',{class:'navrow'},q,h('button',{class:'btn sm',type:'button',onclick:go},'Search')),res)};draw();return box}
+
+function matchPick(v,set,o,obj,path,onch){const box=h('div');const sport=o.sport||(path.startsWith('cric.')?'cricket':'football');const txt=h('input',{type:'text',value:v||'',placeholder:o.ph||(sport==='football'?'e.g. Arsenal, Chelsea (blank = league)':'e.g. India, Australia (blank = all)'),autocomplete:'off',style:'flex:1'});
+ const applyVal=val=>{txt.value=val;set(val);if(obj){if(path==='team'||path==='teams'){obj['team']=val;obj['teams']=val}if(path==='cric.team'||path==='cric.teams'){sp(obj,'cric.team',val);sp(obj,'cric.teams',val)}}};
+ txt.oninput=e=>applyVal(e.target.value);txt.onchange=e=>applyVal(e.target.value);
+ const res=h('div',{class:'results',style:'margin-top:8px;max-height:260px;overflow-y:auto;'});
+ const clearBtn=h('button',{class:'btn sm ghost',type:'button',onclick:async()=>{applyVal('');if(obj&&typeof obj==='object'){delete obj['match'];delete obj['matchId'];if(path.startsWith('cric.')){sp(CFG,'cric.match','');sp(CFG,'cric.matchId','');}}res.innerHTML='';if(obj&&obj!==CFG&&!path.startsWith('cric.')){await saveCards('Cleared teams filter');const idx=CARDS.cards.findIndex(c=>c.p===obj);if(idx>=0)post('/api/refresh?i='+idx)}else{await saveCfg();post('/api/refresh');toast('Cleared teams filter')}}},'\u2715 Clear');
+ const fetchBtn=h('button',{class:'btn sm pri',type:'button'},'\u26a1 Live matches');
+ fetchBtn.onclick=async()=>{
+  res.textContent='Fetching '+sport+' matches\u2026';
+  const cricUrl=(CFG.cric&&CFG.cric.url)||'';
+  let list=[];
+  if(cricUrl){
+    try{
+      const base=cricUrl.replace(/\/api\/(emo\/)?cricket.*$/i,'').replace(/\/+$/,'');
+      const key=cricUrl.includes('key=')?'?'+cricUrl.split('?')[1]:'';
+      const epLive=sport==='football'?'/api/football/live':'/api/cricket/live';
+      const epAll=sport==='football'?'/api/football/all':'/api/cricket/all';
+      let r=await fetch(base+epLive+key,{headers:{Accept:'application/json'}});
+      let data=r.ok?await r.json():null;
+      let arr=Array.isArray(data)?data:(data?.matches||(sport==='football'?data?.football:data?.cricket)||[]);
+      if(!arr.length){
+        r=await fetch(base+epAll+key,{headers:{Accept:'application/json'}});
+        data=r.ok?await r.json():null;
+        arr=Array.isArray(data)?data:(data?.matches||(sport==='football'?data?.football:data?.cricket)||[]);
+      }
+      arr.forEach(m=>{
+        if(sport==='football'){
+          if(m.sport&&m.sport!=='football')return;
+          if(m.inn||m.t1Batting||m.oversRem||m.crr||m.partner)return;
+        }else{
+          if(m.sport&&m.sport!=='cricket')return;
+          if(m.clock||m.id?.startsWith('fb_'))return;
+        }
+        const title=m.title||m.name||(m.home&&m.away?`${m.home.name||m.home} vs ${m.away.name||m.away}`:'');
+        let tParts=[];
+        if(m.teams&&m.teams.length>=2){
+          m.teams.forEach(t=>{
+            const n=(typeof t==='string'?t:(t.name||t.short||'')).trim(),s=(typeof t==='object'&&t.short?t.short:'').trim();
+            if(n&&!tParts.includes(n))tParts.push(n);
+            if(s&&!tParts.includes(s))tParts.push(s);
+          });
+        }else if(m.home&&m.away){
+          [m.home,m.away].forEach(t=>{
+            const n=(typeof t==='string'?t:(t.name||t.short||'')).trim(),s=(typeof t==='object'&&t.short?t.short:'').trim();
+            if(n&&!tParts.includes(n))tParts.push(n);
+            if(s&&!tParts.includes(s))tParts.push(s);
+          });
+        }else{
+          [m.t1n,m.t2n,m.t1,m.t2].forEach(x=>{const s=(x||'').trim();if(s&&!tParts.includes(s))tParts.push(s)});
+        }
+        let teams=tParts.length?tParts.join(', '):title;
+        let score=m.statusText||'';
+        if(!score&&m.teams)score=m.teams.map(t=>`${t.short||t.name||''}: ${t.score||''}`).filter(Boolean).join('  ');
+        if(!score&&m.home&&m.away&&m.home.score!=null)score=`${m.home.short||m.home.name||'Home'} ${m.home.score} - ${m.away.score} ${m.away.short||m.away.name||'Away'}`;
+        const rawSlug=m.leagueSlug||m.league?.slug||m.league?.id||'';
+        const rawName=m.league?.name||(typeof m.league==='string'?m.league:'')||m.series?.name||m.series||'';
+        const leagueSlug=findLeagueSlug(rawSlug,rawName);
+        list.push({
+          id:m.id||m.sourceId||'',
+          title,teams,score,
+          status:m.status||'live',
+          series:rawName||rawSlug||'',
+          leagueSlug:leagueSlug||'',
+          sport
+        });
+      });
+    }catch(e){console.warn('Match server fetch error:',e)}
+  }
+  if(!list.length&&sport==='cricket'){
+    try{
+      const r=await fetch('/api/sports/matches');
+      if(r.ok){
+        const arr=await r.json();
+        arr.forEach(m=>{
+          const title=m.name||`${m.t1} vs ${m.t2}`;
+          let tParts=[m.t1n,m.t2n,m.t1,m.t2].filter(Boolean).map(x=>String(x).trim()).filter((x,i,a)=>x&&a.indexOf(x)===i);
+          const teams=tParts.length?tParts.join(', '):title;
+          const score=(m.sc1||m.sc2)?`${m.t1}: ${m.sc1||'-'}  ${m.t2}: ${m.sc2||'-'}`:m.status;
+          list.push({id:m.id||'',title,teams,score,status:m.live?'live':(m.ended?'finished':'upcoming'),series:m.series||m.type||'',leagueSlug:'',sport:'cricket'});
+        });
+      }
+    }catch(e){console.warn('ESP32 cricket matches fetch error:',e)}
+  }
+  res.innerHTML='';
+  if(!list.length){
+    res.append(h('div',{class:'note'},`No ${sport} matches found right now. Check back when a match is on, or make sure the match server is connected.`));
+    return;
+  }
+  res.append(h('small',{style:'display:block;margin-bottom:6px;opacity:0.75;font-weight:600;'},'Tap a match to select & save:'));
+  list.forEach(m=>{
+    const isLive=m.status==='live'||m.status==='in-progress'||m.status===true;
+    const badge=h('span',{style:`font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;${isLive?'background:#ef4444;color:#fff;':'background:var(--line);'}`},isLive?'\U0001f534 LIVE':(m.status||'').toUpperCase());
+    const onSelect=async()=>{
+      applyVal(m.teams);
+      if(obj&&typeof obj==='object'){
+        obj['match']=(m.title||m.name||'').trim();
+        obj['matchId']=(m.id||'').trim();
+        if(m.series)obj['series']=String(m.series).trim();
+        if(sport==='football'&&m.leagueSlug){
+          obj['league']=m.leagueSlug;
+          const container=box.closest('section')||box.closest('.modal')||document;
+          const leagueSelect=Array.from(container.querySelectorAll('select')).find(sel=>Array.from(sel.options).some(opt=>opt.value==='eng.1'||opt.value==='esp.1'));
+          if(leagueSelect){
+            leagueSelect.value=m.leagueSlug;
+            if(leagueSelect.onchange)leagueSelect.onchange();
+          }
+        }
+      }
+      if(path.startsWith('cric.')){
+        sp(CFG,'cric.team',m.teams);
+        sp(CFG,'cric.teams',m.teams);
+        sp(CFG,'cric.match',(m.title||m.name||'').trim());
+        sp(CFG,'cric.matchId',(m.id||'').trim());
+      }
+      res.innerHTML='';
+      if(obj&&obj!==CFG&&!path.startsWith('cric.')){
+        await saveCards('Saved: '+(m.title||m.teams));
+        const idx=CARDS.cards.findIndex(c=>c.p===obj);
+        if(idx>=0){
+          post('/api/refresh?i='+idx);
+          post('/api/goto?i='+idx);
+        }
+      }else{
+        await saveCfg();
+        post('/api/refresh');
+        toast('Saved: '+(m.title||m.teams));
+      }
+    };
+    const btn=h('button',{type:'button',style:'display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:3px;padding:8px 12px;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:var(--bg);margin-bottom:6px;width:100%;',onclick:onSelect},
+      h('div',{style:'display:flex;justify-content:space-between;width:100%;align-items:center;gap:6px;'},
+        h('b',{style:'font-size:13px;'},m.title||m.teams),
+        badge
+      ),
+      m.score?h('div',{style:'font-size:12px;opacity:0.9;'},m.score):null,
+      m.series?h('small',{style:'opacity:0.6;'},m.series):null
+    );
+    res.append(btn);
+  });
+ };
+ box.append(h('div',{class:'navrow'},txt,fetchBtn,clearBtn),res);
+ return box
+}
+
+function listEd(arr,onch){const box=h('div');const draw=()=>{box.innerHTML='';arr.forEach((v,i)=>box.append(h('div',{class:'navrow',style:'margin:4px 0'},h('input',{type:'text',value:v,style:'flex:1',onchange:e=>{arr[i]=e.target.value;onch()}}),
+
+ h('button',{class:'btn sm ghost',type:'button',onclick:()=>{arr.splice(i,1);onch();draw()}},'Remove'))));box.append(h('button',{class:'btn sm',type:'button',onclick:()=>{arr.push('');onch();draw()}},'Add'))};draw();return box}
+
+function objsEd(arr,fields,onch,max){const box=h('div');const draw=()=>{box.innerHTML='';arr.forEach((it,i)=>{const d=h('div',{class:'item'});fields.forEach(f=>d.append(field(it,f.k,f.l,f.t,f.d,f.o,onch)));
+
+ d.append(h('div',{class:'itembar'},i>0&&h('button',{class:'btn sm ghost',type:'button',onclick:()=>{arr.splice(i-1,0,arr.splice(i,1)[0]);onch();draw()}},'Move up'),
+
+ h('button',{class:'btn sm danger',type:'button',onclick:()=>{arr.splice(i,1);onch();draw()}},'Remove')));box.append(d)});
+
+ if(!max||arr.length<max)box.append(h('button',{class:'btn sm',type:'button',onclick:()=>{const o={};fields.forEach(f=>o[f.k]=f.d);arr.push(o);onch();draw()}},'Add'))};draw();return box}
+
+function field(obj,path,label,type,def,o={},onch=cfgChanged){let v=gp(obj,path);if(v===undefined)v=def;const set=x=>{sp(obj,path,x);onch&&onch()};let inp,col=false;
+
+ switch(type){
+
+ case'bool':inp=h('label',{class:'sw'},h('input',{type:'checkbox',checked:!!v,'aria-label':label,onchange:e=>set(e.target.checked)}),h('span'));break;
+
+ case'range':{const fm=o.fmt||(x=>x);const out=h('output',{},fm(v));inp=h('div',{class:'rng'},h('input',{type:'range',min:o.min,max:o.max,step:o.step||1,value:v,'aria-label':label,oninput:e=>out.textContent=fm(+e.target.value),onchange:e=>set(+e.target.value)}),out);break}
+
+ case'num':inp=h('input',{type:'number',value:v,min:o.min,max:o.max,onchange:e=>set(+e.target.value)});break;
+
+ case'sel':{const vo=x=>Array.isArray(x)?x[0]:x;if(o.o&&o.o.length&&!o.o.some(x=>String(vo(x))===String(v))){v=vo(o.o[0]);set(v)}inp=sel(o.o,v,set);break}case'days':inp=daysPick(v==null?127:v,set);break;case'sound':inp=soundPick(v,set);break;case'tz':inp=tzPick(v,set);break;
+
+ case'file':{const fl=[['','None / Default'],...FILES.files.filter(f=>f.dir===o.dir).map(f=>[f.name,f.name])];if(!fl.find(x=>x[0]===v)){v='';set(v)}inp=sel(fl,v,set);break}
+
+ case'area':inp=h('textarea',{value:v||'',onchange:e=>set(e.target.value)});col=true;break;
+
+ case'loc':inp=locPick(v,set,o.home);col=true;break;
+ case'match':inp=matchPick(v,set,o,obj,path,onch);col=true;break;
+
+ case'list':{if(!Array.isArray(gp(obj,path)))sp(obj,path,JSON.parse(JSON.stringify(v||[])));inp=listEd(gp(obj,path),onch);col=true;break}
+
+ case'objs':{if(!Array.isArray(gp(obj,path)))sp(obj,path,JSON.parse(JSON.stringify(v||[])));inp=objsEd(gp(obj,path),o.f,onch,o.max);col=true;break}
+
+ default:inp=h('input',{type:type==='pass'?'password':(type==='time'||type==='date'?type:'text'),value:v??'',placeholder:o.ph||'',autocomplete:'off',onchange:e=>set(e.target.value)})}
+
+ return h('div',{class:'row'+(col?' col':'')},h('div',{class:'lab'},label,o.hint&&h('small',{},o.hint)),inp)}
+
+const F=(path,label,type,def,o)=>field(CFG,path,label,type,def,o);
+
+const sec=(title,desc,...rows)=>h('section',{class:'grp'},h('h2',{},title),desc&&h('p',{class:'d'},desc),rows);
+
+
+
+/* ------------------------------------------------------------ live screen + pad */
+
+const scr=$('#scr').getContext('2d'),img=scr.createImageData(128,64);
+
+async function pollScreen(){if(document.visibilityState==='visible'){try{const b=new Uint8Array(await api('/api/screen'));for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=b[p*128+x];for(let k=0;k<8;k++){const i=((p*8+k)*128+x)*4,on=(v>>k)&1;
+
+ img.data[i]=on?143:5;img.data[i+1]=on?240:6;img.data[i+2]=on?255:10;img.data[i+3]=255}}scr.putImageData(img,0,0)}catch(e){}}setTimeout(pollScreen,280)}
+
+(()=>{const pad=$('#pad');let down=0,taps=0,tm,lt;const send=g=>gest(g);
+
+ pad.onpointerdown=e=>{e.preventDefault();down=Date.now();pad.classList.add('down');clearTimeout(tm);lt=setTimeout(()=>{if(down){send('vlong');down=0;pad.classList.remove('down')}},3000)};
+
+ const up=()=>{if(!down)return;clearTimeout(lt);const d=Date.now()-down;down=0;pad.classList.remove('down');if(d>=700){send('long');return}taps++;tm=setTimeout(()=>{send(taps===1?'tap':taps===2?'double':'triple');taps=0},320)};
+
+ pad.onpointerup=up;pad.onpointerleave=up;pad.onkeydown=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();send('tap')}}})();
+
+
+
+/* ------------------------------------------------------------ status */
+
+async function status(){try{ST=await api('/api/status')}catch(e){$('#chips').replaceChildren(h('span',{class:'chip bad'},'Device not reachable'));return}
+
+ $('#devname').textContent=ST.name||'EmoDesk';document.title=(ST.name||'Emo')+' · EmoDesk';
+
+ const c=CARDS.cards.find(x=>x.id===ST.cardId);$('#cardname').textContent=c?(c.name||(T[c.type]||{}).n||c.type):'—';
+
+ $('#chips').replaceChildren(h('span',{class:'chip '+(ST.online?'ok':'bad')},ST.online?`Wi-Fi ${ST.rssi} dBm`:(ST.portal?'Setup hotspot':'Offline')),
+
+  ST.emo&&h('span',{class:'chip'},ST.emo.mood),ST.audio.installed&&h('span',{class:'chip'},ST.audio.muted?'Muted':`Volume ${ST.audio.vol}`),ST.w&&h('span',{class:'chip'},`${Math.round(ST.w.t)}° ${ST.w.c}`),
+
+  ST.power&&ST.power.bat>=0&&h('span',{class:'chip'+(ST.power.bat<=15?' bad':'')},`Battery ${ST.power.bat}%`),
+
+  ST.power&&ST.power.saver&&h('span',{class:'chip warn'},'Saver on'),ST.safe&&h('span',{class:'chip bad'},'Safe mode'));
+
+ document.querySelectorAll('.citem').forEach(e=>e.classList.toggle('cur',e.dataset.id===ST.cardId));
+
+ if(TAB==='home'||TAB==='emo')homeLive()}
+
+
+
+/* ------------------------------------------------------------ tabs */
+
+const TABS=[['home','Home'],['cards','Cards'],['emo','Emo'],['sound','Sound'],['alarms','Alarms'],['display','Display'],['power','Power'],['controls','Controls'],['connect','Connect'],['media','Media'],['system','System']];
+
+function tabs(){$('#tabs').replaceChildren(...TABS.map(([k,l])=>h('button',{role:'tab','aria-selected':String(TAB===k),onclick:()=>{TAB=k;tabs();render()}},l)))}
+
+function render(){const v=$('#view');v.replaceChildren(...[].concat(VIEWS[TAB]()).filter(Boolean));homeLive()}
+
+
+
+function homeLive(){const b=$('#petbars');if(!b||!ST.emo)return;b.replaceChildren(...[['Joy',ST.emo.happy],['Energy',ST.emo.energy],['Food',100-ST.emo.hunger]].map(([l,v])=>h('div',{class:'bar'},h('span',{},l),h('div',{},h('i',{style:`width:${v}%`})),h('span',{},v+'%'))));
+
+ const m=$('#lastmsg');if(m)m.textContent=ST.msg&&ST.msg.text?`Last message from ${ST.msg.from}: ${ST.msg.text}`:'No messages yet.'}
+
+
+
+function createTerminalSection(){
+
+ let port=null,reader=null,writer=null,lines=[],history=[],histIdx=-1,autoScroll=true,filterText='',pollTimer=null;
+
+ const screen=h('div',{class:'term-screen',style:'background:var(--oled);color:#a3e635;border:1px solid var(--line);border-radius:10px;padding:12px;height:380px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word;user-select:text;'});
+
+ const badge=h('span',{style:'display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:99px;background:rgba(59,130,246,0.12);color:var(--accent);border:1px solid rgba(59,130,246,0.25);'},'🌐 Wi-Fi Mode (Polling)');
+
+ const btnUsb=h('button',{class:'btn sm pri'},'🔌 Connect USB (WebSerial)');
+
+ const chkScroll=h('input',{type:'checkbox',checked:true,style:'cursor:pointer;'});
+
+ const filterInput=h('input',{type:'text',placeholder:'Filter (e.g. [CARD])...',style:'max-width:160px;font-size:12px;padding:4px 8px;'});
+
+ const btnClear=h('button',{class:'btn sm ghost'},'Clear');
+
+ const btnCopy=h('button',{class:'btn sm ghost'},'Copy');
+
+ const cmdInput=h('input',{type:'text',placeholder:"Type command ('help', 'status', 'card next', 'emo love')...",style:'flex:1;font-family:monospace;font-size:13px;padding:8px 12px;'});
+
+ const btnSend=h('button',{class:'btn pri sm',style:'padding:8px 16px;'},'Send');
+
+
+
+ function formatLine(raw){
+
+  let s=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  s=s.replace(/\033\[1;31m/g,'<span style="color:#f87171;font-weight:bold;">')
+
+     .replace(/\033\[1;32m/g,'<span style="color:#4ade80;font-weight:bold;">')
+
+     .replace(/\033\[1;33m/g,'<span style="color:#facc15;font-weight:bold;">')
+
+     .replace(/\033\[1;36m/g,'<span style="color:#38bdf8;font-weight:bold;">')
+
+     .replace(/\033\[1;37m/g,'<span style="color:#ffffff;font-weight:bold;">')
+
+     .replace(/\033\[0m/g,'</span>');
+
+  s=s.replace(/(\[CARD\])/g,'<span style="color:#38bdf8;font-weight:bold;">$1</span>')
+
+     .replace(/(\[FETCH\])/g,'<span style="color:#818cf8;font-weight:bold;">$1</span>')
+
+     .replace(/(\[INPUT\])/g,'<span style="color:#4ade80;font-weight:bold;">$1</span>')
+
+     .replace(/(\[ACTION\])/g,'<span style="color:#34d399;font-weight:bold;">$1</span>')
+
+     .replace(/(\[EMO\])/g,'<span style="color:#f472b6;font-weight:bold;">$1</span>')
+
+     .replace(/(\[NET\])/g,'<span style="color:#60a5fa;font-weight:bold;">$1</span>')
+
+     .replace(/(\[WEB\])/g,'<span style="color:#c084fc;font-weight:bold;">$1</span>')
+
+     .replace(/(\[AUDIO\])/g,'<span style="color:#fb923c;font-weight:bold;">$1</span>')
+
+     .replace(/(\[POWER\])/g,'<span style="color:#a3e635;font-weight:bold;">$1</span>')
+
+     .replace(/(\[ALARM\])/g,'<span style="color:#f87171;font-weight:bold;">$1</span>')
+
+     .replace(/(\[CLI\])/g,'<span style="color:#facc15;font-weight:bold;">$1</span>')
+
+     .replace(/(\[OK\])/g,'<span style="color:#4ade80;font-weight:bold;">$1</span>')
+
+     .replace(/(\[ERR\])/g,'<span style="color:#f87171;font-weight:bold;">$1</span>');
+
+  return s;
+
+ }
+
+
+
+ function renderLines(){
+
+  const flt=filterText.toLowerCase();
+
+  const visible=flt?lines.filter(l=>l.toLowerCase().includes(flt)):lines;
+
+  screen.innerHTML=visible.map(formatLine).join('\n');
+
+  if(autoScroll)screen.scrollTop=screen.scrollHeight;
+
+ }
+
+
+
+ function appendChunk(chunk){
+
+  const rawLines=chunk.replace(/\r/g,'').split('\n');
+
+  for(let i=0;i<rawLines.length;i++){
+
+   if(i===0&&lines.length>0&&!lines[lines.length-1].endsWith('\n')){
+
+    lines[lines.length-1]+=rawLines[i];
+
+   }else if(rawLines[i].length>0||i<rawLines.length-1){
+
+    lines.push(rawLines[i]);
+
+   }
+
+  }
+
+  if(lines.length>500)lines=lines.slice(-400);
+
+  renderLines();
+
+ }
+
+
+
+ async function sendCommand(txt){
+
+  txt=(txt||'').trim();
+
+  if(!txt)return;
+
+  history.push(txt);
+
+  histIdx=history.length;
+
+  cmdInput.value='';
+
+  appendChunk('\n> '+txt+'\n');
+
+  if(writer){
+
+   try{
+
+    const enc=new TextEncoder();
+
+    await writer.write(enc.encode(txt+'\r\n'));
+
+   }catch(e){appendChunk('[ERR] Serial write failed: '+e.message+'\n');}
+
+  }else{
+
+   try{
+
+    const res=await api('/api/cmd?c='+encodeURIComponent(txt)+'&ansi=1');
+
+    if(res)appendChunk(res+'\n');
+
+   }catch(e){appendChunk('[ERR] '+e.message+'\n');}
+
+  }
+
+ }
+
+
+
+ async function connectUsb(){
+
+  if(!('serial' in navigator)){
+
+   alert('WebSerial is supported in Google Chrome, Microsoft Edge, Opera, and Chromium-based browsers. On other platforms, the console runs smoothly via Wi-Fi polling.');
+
+   return;
+
+  }
+
+  if(port){
+
+   try{
+
+    if(reader)await reader.cancel();
+
+    if(writer)await writer.close();
+
+    await port.close();
+
+   }catch(_){}
+
+   port=null;reader=null;writer=null;
+
+   btnUsb.textContent='🔌 Connect USB (WebSerial)';
+
+   btnUsb.className='btn sm pri';
+
+   badge.textContent='🌐 Wi-Fi Mode (Polling)';
+
+   badge.style.background='rgba(59,130,246,0.12)';
+
+   badge.style.color='var(--accent)';
+
+   startWifiPoll();
+
+   return;
+
+  }
+
+  try{
+
+   port=await navigator.serial.requestPort({filters:[{usbVendorId:0x303a}]}).catch(()=>navigator.serial.requestPort());
+
+   if(!port)return;
+
+   await port.open({baudRate:115200});
+
+   btnUsb.textContent='⚡ Disconnect USB';
+
+   btnUsb.className='btn sm danger';
+
+   badge.textContent='⚡ Connected to USB (115200 baud)';
+
+   badge.style.background='rgba(34,197,94,0.15)';
+
+   badge.style.color='var(--ok)';
+
+   if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+
+   const textDecoder=new TextDecoderStream();
+
+   port.readable.pipeTo(textDecoder.writable);
+
+   reader=textDecoder.readable.getReader();
+
+   const textEncoder=new TextEncoderStream();
+
+   textEncoder.readable.pipeTo(port.writable);
+
+   writer=textEncoder.writable.getWriter();
+
+   readUsbLoop();
+
+  }catch(e){toast('Serial: '+e.message,1);}
+
+ }
+
+
+
+ async function readUsbLoop(){
+
+  try{
+
+   while(reader){
+
+    const{value,done}=await reader.read();
+
+    if(done)break;
+
+    if(value)appendChunk(value);
+
+   }
+
+  }catch(_){}
+
+ }
+
+
+
+ function startWifiPoll(){
+
+  if(pollTimer)clearInterval(pollTimer);
+
+  const fetchLogs=async()=>{
+
+   if(port)return;
+
+   try{
+
+    const t=await api('/api/log');
+
+    if(t){lines=t.replace(/\r/g,'').split('\n');renderLines();}
+
+   }catch(_){}
+
+  };
+
+  fetchLogs();
+
+  pollTimer=setInterval(fetchLogs,2500);
+
+ }
+
+
+
+ btnUsb.onclick=connectUsb;
+
+ btnClear.onclick=()=>{lines=[];renderLines();};
+
+ btnCopy.onclick=()=>{navigator.clipboard.writeText(lines.join('\n')).then(()=>toast('Logs copied to clipboard!')).catch(()=>{});};
+
+ chkScroll.onchange=()=>{autoScroll=chkScroll.checked;if(autoScroll)screen.scrollTop=screen.scrollHeight;};
+
+ filterInput.oninput=()=>{filterText=filterInput.value;renderLines();};
+
+ btnSend.onclick=()=>sendCommand(cmdInput.value);
+
+ cmdInput.onkeydown=(e)=>{
+
+  if(e.key==='Enter')sendCommand(cmdInput.value);
+
+  else if(e.key==='ArrowUp'){if(history.length&&histIdx>0){histIdx--;cmdInput.value=history[histIdx];}e.preventDefault();}
+
+  else if(e.key==='ArrowDown'){if(histIdx<history.length-1){histIdx++;cmdInput.value=history[histIdx];}else{histIdx=history.length;cmdInput.value='';}e.preventDefault();}
+
+ };
+
+
+
+ const macros=[['Status','status'],['Cards','cards'],['Next Card','card next'],['Poke Emo','touch tap'],['Pet Emo','emo pet'],['Feed Emo','emo feed'],['Love','emo love'],['Screen','screen toggle'],['Heap Info','heap'],['Reboot','reboot']];
+
+ const macroBar=h('div',{style:'display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;'},
+
+  macros.map(([label,cmd])=>h('button',{type:'button',class:'btn sm ghost',style:'font-size:12px;padding:3px 10px;',onclick:()=>sendCommand(cmd)},label))
+
+ );
+
+
+
+ startWifiPoll();
+
+
+
+ return sec('Live Console & WebSerial Terminal',
+
+  'Stream real-time ESP32-C3 firmware activity, monitor background operations, and send direct CLI commands over USB or Wi-Fi.',
+
+  h('div',{class:'navrow',style:'align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;'},
+
+   btnUsb,badge,
+
+   h('div',{style:'margin-left:auto;display:flex;align-items:center;gap:8px;'},
+
+    filterInput,
+
+    h('label',{style:'display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;'},chkScroll,'Auto-scroll'),
+
+    btnClear,btnCopy
+
+   )
+
+  ),
+
+  screen,
+
+  macroBar,
+
+  h('div',{class:'navrow',style:'margin-top:6px;gap:8px;'},
+
+   h('span',{style:'font-family:monospace;font-weight:bold;color:var(--ok);align-self:center;'},'emo>'),
+
+   cmdInput,btnSend
+
+  )
+
+ );
+
+}
+
+
+
+
+
+const VIEWS={
+
+home(){const txt=h('input',{type:'text',placeholder:'Type a message for the screen',style:'flex:1'}),spk=h('input',{type:'checkbox',id:'spk'});
+
+ const send=async()=>{if(!txt.value.trim())return;await post('/api/message',{text:txt.value,speak:spk.checked});txt.value='';toast('Sent to Emo')};txt.onkeydown=e=>{if(e.key==='Enter')send()};
+
+ const profs=CFG.profiles||['Default'];
+
+ return[sec('Say hello','Messages pop up on the screen with a little sound.',h('div',{class:'navrow'},txt,h('button',{class:'btn pri',onclick:send},'Send')),
+
+   h('div',{class:'row'},h('label',{class:'lab',for:'spk'},'Also read it aloud'),h('label',{class:'sw'},spk,h('span'))),h('p',{class:'d',id:'lastmsg'})),
+
+  sec('Mood','Make Emo feel something for a few seconds.',h('div',{class:'emos'},EMOS.map(e=>h('button',{class:'btn sm ghost',onclick:()=>post('/api/emo',{e})},e))),
+
+   h('div',{class:'bars',id:'petbars'}),h('div',{class:'gest'},h('button',{class:'btn sm',onclick:()=>post('/api/pet?a=feed').then(status)},'Feed'),h('button',{class:'btn sm',onclick:()=>post('/api/pet?a=play').then(status)},'Play'),
+
+   h('button',{class:'btn sm',onclick:()=>post('/api/pet?a=sleep')},'Put to bed'),h('button',{class:'btn sm',onclick:()=>post('/api/pet?a=wake')},'Wake up'))),
+
+  sec('Quick controls',null,F('profile','Profile','sel','Default',{o:profs}),F('rotate.auto','Rotate cards automatically','bool',true),
+
+   CFG.audio&&CFG.audio.installed?[F('audio.vol','Volume','range',40,{min:0,max:100}),F('audio.muted','Mute','bool',false),
+
+    h('div',{class:'gest',style:'margin-top:8px'},h('button',{class:'btn sm',onclick:()=>act('speak')},'Read this card aloud'),h('button',{class:'btn sm',onclick:()=>post('/api/brief')},'Morning briefing now'),h('button',{class:'btn sm danger',onclick:()=>post('/api/sound',{stop:true})},'Stop sound'))]
+
+   :h('p',{class:'d'},'Speaker is off. Turn it on in the Sound tab once the amplifier is wired.'))]},
+
+
+
+cards(){const list=h('ul',{class:'clist'});let dragI=-1;const profs=CFG.profiles||['Default'];
+
+ CARDS.cards.forEach((c,i)=>{const t=T[c.type]||{n:c.type,c:'?'};const li=h('li',{class:'citem'+(c.en===false?' off':'')+(c.id===ST.cardId?' cur':''),draggable:true,'data-id':c.id,
+
+  ondragstart:()=>{dragI=i;li.classList.add('dragging')},ondragend:()=>li.classList.remove('dragging'),ondragover:e=>e.preventDefault(),
+
+  ondrop:e=>{e.preventDefault();if(dragI<0||dragI===i)return;CARDS.cards.splice(i,0,CARDS.cards.splice(dragI,1)[0]);saveCards('Order saved');render()}},
+
+  h('span',{class:'grab','aria-hidden':'true'},'⋮⋮'),h('label',{class:'sw'},h('input',{type:'checkbox',checked:c.en!==false,'aria-label':'Show '+t.n,onchange:e=>{c.en=e.target.checked;li.classList.toggle('off',!c.en);saveCards(c.en?'Card on':'Card off')}}),h('span')),
+
+  h('div',{class:'nm'},h('b',{},c.name||t.n),h('small',{},t.c+(c.p&&(c.p.team||c.p.teams)?' · '+(c.p.team||c.p.teams):'')+(c.pf&&c.pf.length?' · '+c.pf.join(', '):'')+(c.from&&c.to?` · ${c.from}–${c.to}`:''))),
+
+  h('div',{class:'acts'},i>0&&h('button',{class:'btn sm ghost',onclick:()=>{CARDS.cards.splice(i-1,0,CARDS.cards.splice(i,1)[0]);saveCards('Order saved');render()},'aria-label':'Move up'},'↑'),
+
+   h('button',{class:'btn sm ghost',onclick:()=>post('/api/goto?i='+i).then(()=>setTimeout(status,300))},'Show'),h('button',{class:'btn sm',onclick:()=>editCard(c)},'Edit'),
+
+   h('button',{class:'btn sm ghost',onclick:()=>{const n=JSON.parse(JSON.stringify(c));n.id=newId();n.name=(c.name||t.n)+' copy';CARDS.cards.splice(i+1,0,n);saveCards('Copied');render()}},'Copy'),
+
+   h('button',{class:'btn sm danger',onclick:()=>{if(confirm('Delete this card?')){CARDS.cards.splice(i,1);saveCards('Deleted');render()}}},'Delete')));list.append(li)});
+
+ return[sec('Cards',`${CARDS.cards.length} cards. Drag to reorder, switch off to hide, or give a card profiles and hours so it only appears when you want.`,
+
+  h('div',{class:'gest'},h('button',{class:'btn pink',onclick:library},'Add a card'),h('button',{class:'btn ghost',onclick:()=>{CARDS.cards.forEach(c=>c.en=true);saveCards('All on');render()}},'Turn all on')),list),
+
+  sec('Rotation',null,F('rotate.auto','Rotate cards automatically','bool',true),F('rotate.trans','Card slide animations','bool',true),F('rotate.dur','Default time per card (s)','range',10,{min:3,max:120}),
+
+   F('rotate.home','Return to Emo after idle (s, rotation off only)','range',0,{min:0,max:600,step:10,fmt:x=>x?x+'s':'off'}),
+
+   F('profile','Active profile','sel','Default',{o:profs,hint:'Edit profiles in Connect'}))]},
+
+
+
+emo(){const pv=h('canvas',{class:'pix',width:128,height:64});const draw=()=>{const g=pv.getContext('2d'),e=CFG.emo||{};const w=e.w??36,hh=e.h??36,gap=e.gap??14,r=Math.min(e.r??8,w/2,hh/2);
+
+ g.fillStyle='#05060a';g.fillRect(0,0,128,64);g.fillStyle='#8ff0ff';[64-gap/2-w/2,64+gap/2+w/2].forEach(cx=>{g.beginPath();g.roundRect?g.roundRect(cx-w/2,30-hh/2,w,hh,r):g.rect(cx-w/2,30-hh/2,w,hh);g.fill()})};
+
+ const ch=()=>{cfgChanged();draw()};const E=(p,l,t,d,o)=>field(CFG,p,l,t,d,o,ch);setTimeout(draw);
+
+ const ebox=h('div',{class:'gest'});const edraw=()=>{ebox.innerHTML='';const e=sel(EMOS.map(x=>[x,x]),ex,x=>{ex=x;edraw()});
+
+  const path=`emo.x.${ex}`;if(!gp(CFG,path))sp(CFG,path,{});const cust=gp(CFG,path);
+
+  const chX=()=>{cfgChanged();edraw()};const Fx=(p,l,t,d,o)=>field(cust,p,l,t,d,o,chX);
+
+  const delBtn=h('button',{class:'btn sm danger',onclick:()=>{delete CFG.emo.x[ex];cfgChanged();edraw()}},'Reset');
+
+  const typeRow=h('div',{class:'row'},h('div',{class:'lab'},'Type'),sel([['shape','Eye Shapes'],['anim','Animation (GIF)']],cust.anim!==undefined?'anim':'shape',v=>{if(v==='anim'){cust.anim=''}else{delete cust.anim};chX()}));
+
+  ebox.append(h('div',{class:'navrow'},e,Fx('on','Use custom look','bool',false),delBtn),
+
+  cust.on?h('div',{style:'margin-top:12px;padding-top:12px;border-top:1px solid var(--line)'},
+
+   typeRow,
+
+   cust.anim!==undefined?Fx('anim','Full screen animation (from Media tab)','file','',{dir:'/anim'}):h('div',{},
+
+    h('p',{class:'d',style:'margin-top:10px'},'Shape the eye cuts manually (w, h, topOuter, topInner, botOuter, botInner):'),
+
+    Fx('l','Left eye','list',[36,42,0,0,0,0]),Fx('r','Right eye','list',[36,42,0,0,0,0])
+
+   )
+
+  ):h('span'))};let ex='happy';edraw();
+
+ return[sec('Looks','Shape of the eyes. The preview updates as you drag.',pv,F('name','Name','text','Emo'),
+
+   E('emo.style','Eye style','sel','round',{o:[['round','Round / EVE'],['pixel','Retro 8-bit'],['scanner','Scanner / KITT'],['cat','Cat']]}),
+
+   E('emo.needs','Show needs (hungry, lonely) bubbles','bool',true),
+
+   E('emo.w','Eye width','range',36,{min:16,max:52}),E('emo.h','Eye height','range',36,{min:10,max:50}),
+
+   E('emo.gap','Gap between eyes','range',14,{min:4,max:40}),E('emo.r','Roundness','range',8,{min:0,max:24})),
+
+  sec('Custom expressions','Change how Emo looks for each feeling.',ebox),
+
+  sec('Personality',null,F('emo.activity','Liveliness','range',60,{min:0,max:100,fmt:x=>x+'%'}),F('emo.tapPoke','Tap pokes Emo (double-tap moves on)','bool',true),
+
+   F('emo.chirps','Chirps and babble','bool',true),F('emo.weather','React to the weather','bool',true),
+
+   F('emo.boredMin','Gets bored after (min)','range',5,{min:0,max:60,fmt:x=>x||'never'}),F('emo.sleepyMin','Gets sleepy after (min)','range',15,{min:0,max:120,fmt:x=>x||'never'}),
+
+   F('emo.napMin','Naps after (min)','range',30,{min:0,max:240,fmt:x=>x||'never'})),
+
+  sec('Bedtime','Emo sleeps at night and wakes up happy in the morning. Touch wakes it (grumpily).',F('emo.sleepEn','Sleep at night','bool',true),F('emo.sleepFrom','Bedtime','time','23:00'),F('emo.sleepTo','Wake up','time','07:00'),
+
+   F('display.nightOff','Turn the screen off while it sleeps','bool',false)),
+
+  sec('Pet stats',null,h('div',{class:'bars',id:'petbars'}),h('button',{class:'btn sm danger',onclick:()=>confirm('Reset joy, energy and food?')&&post('/api/pet?a=reset').then(status)},'Reset stats'))]},
+
+
+
+sound(){const A=CFG.audio||{};const ev=[['touch','Touch and poke'],['emo','Emo chirps'],['chime','Hourly chime'],['alarm','Alarms (always ring)'],['timer','Timers'],['remind','Reminders'],['sports','Goals and wickets'],['msg','Messages'],['game','Games'],['notify','Other alerts']];
+
+ const say=h('input',{type:'text',placeholder:'Type something for Emo to say',style:'flex:1'});
+
+ const mel=CFG.audio&&CFG.audio.melodies||[];
+
+ const up=h('input',{type:'file',accept:'audio/*'}),rate=sel([[8000,'8 kHz (smallest)'],[11025,'11 kHz'],[16000,'16 kHz (clearest)']],11025,()=>{}),upInfo=h('p',{class:'d'});
+
+ const doUp=async()=>{const f=up.files[0];if(!f){toast('Choose a sound file first',1);return}upInfo.textContent='Converting…';try{const r=+rate.value||11025;const wav=await toWav(f,r,15);const nm=f.name.replace(/\.[^.]+$/,'').replace(/[^\w-]+/g,'_').slice(0,20)+'.wav';
+
+  const fd=new FormData();fd.append('file',wav,nm);upInfo.textContent=`Uploading ${(wav.size/1024).toFixed(0)} KB…`;await api('/api/upload?dir=/snd&name='+nm,{body:fd});upInfo.textContent='';toast('Clip added');await loadSounds();render()}catch(e){upInfo.textContent='';toast(e.message,1)}};
+
+ return[sec('Speaker','Turn this on after wiring the MAX98357 amplifier (see WIRING.md).',F('audio.installed','Speaker installed','bool',false),F('audio.vol','Volume','range',40,{min:0,max:100}),F('audio.muted','Mute','bool',false),
+
+   F('audio.theme','Sound style','sel','cute',{o:[['cute','Cute (soft)'],['robot','Robot (buzzy)'],['retro','Retro (8-bit)']]}),F('audio.fav','Favourite sound (for the "play favourite" action)','sound','mel:0')),
+
+  sec('Voice',ST.audio&&!ST.audio.tts?'This firmware was built without the voice library, so Emo babbles instead of speaking.':'Robot voice used for messages, the time and card read-outs.',
+
+   F('audio.voice','Voice','sel','sam',{o:[['sam','Sam'],['elf','Elf'],['robot','Robot'],['stuffy','Stuffy'],['oldlady','Old lady'],['et','Alien']]}),
+
+   F('audio.speed','Speed (0 = voice default)','range',0,{min:0,max:150}),F('audio.pitch','Pitch (0 = voice default)','range',0,{min:0,max:150}),
+
+   h('div',{class:'navrow',style:'margin-top:8px'},say,h('button',{class:'btn pri',onclick:()=>say.value&&post('/api/say',{text:say.value})},'Speak'))),
+
+  sec('When Emo makes sounds',null,F('audio.quiet','Quiet hours','bool',false),F('audio.qFrom','Quiet from','time','22:00'),F('audio.qTo','Quiet until','time','07:00'),
+
+   ev.map(([k,l])=>F('audio.ev.'+k,l,'bool',true)),F('msgSpeak','Read incoming messages aloud','bool',false)),
+
+  sec('Try sounds',null,h('h3',{},'Effects'),h('div',{class:'gest'},SND.sfx.map(s=>h('button',{class:'btn sm ghost',onclick:()=>post('/api/sound',{spec:'sfx:'+s})},s))),
+
+   h('h3',{},'Melodies'),h('div',{class:'gest'},SND.mel.map((m,i)=>h('button',{class:'btn sm ghost',onclick:()=>post('/api/sound',{spec:'mel:'+i})},m))),
+
+   h('h3',{},'Sleep sounds'),h('div',{class:'gest'},['white','pink','brown','rain','ocean'].map((n,i)=>h('button',{class:'btn sm ghost',onclick:()=>post('/api/sound',{noise:i,min:30})},n)),
+
+    h('button',{class:'btn sm danger',onclick:()=>post('/api/sound',{stop:true})},'Stop'))),
+
+  sec('Your clips','Upload MP3, WAV, OGG or M4A. Your browser converts it to a small WAV (first 15 seconds) before sending.',
+
+   h('div',{class:'row'},h('div',{class:'lab'},'Quality'),rate),h('div',{class:'navrow'},up,h('button',{class:'btn pri',onclick:doUp},'Convert and upload')),upInfo,
+
+   SND.files.map(f=>h('div',{class:'row'},h('div',{class:'lab'},f),h('button',{class:'btn sm',onclick:()=>post('/api/sound',{spec:'file:/snd/'+f})},'Play'),
+
+    h('button',{class:'btn sm danger',onclick:async()=>{if(!confirm('Delete '+f+'?'))return;await api('/api/file?path=/snd/'+f,{method:'DELETE'});await loadSounds();render()}},'Delete')))),
+
+  sec('Custom melodies','Paste ringtones in RTTTL format, e.g. name:d=4,o=5,b=120:c,e,g,2c6. Please use tunes you are allowed to use.',
+
+   field(CFG,'audio.melodies','Melodies','objs',[],{f:[P('n','text','Name',''),P('r','text','RTTTL','')]},()=>{cfgChanged();setTimeout(loadSounds,1500)}))]},
+
+
+
+alarms(){return[sec('Alarms','Alarms ring until you tap. Hold the pad to snooze.',F('alarmsOn','Alarms on','bool',true),F('alarmSnooze','Snooze (min)','range',9,{min:1,max:30}),F('audio.ramp','Start quiet and get louder','bool',true),
+
+   field(CFG,'alarms','','objs',[],{f:[P('t','time','Time','07:00'),P('label','text','Label','Wake up'),P('days','days','Days',127),P('tone','sound','Sound','sfx:alarm'),P('speak','bool','Read the briefing after stopping',true),P('once','bool','Only once',false),P('en','bool','On',true)]})),
+
+  sec('Reminders','Repeating nudges like "drink water", or one daily time.',field(CFG,'reminders','','objs',[],{f:[P('label','text','Reminder','Drink water'),P('mode','sel','Repeat','every',{o:[['every','Every few minutes'],['at','Once a day at']]}),
+
+   P('every','num','Every (min)',60),P('at','time','At','14:00'),P('from','time','Between','09:00'),P('to','time','and','21:00'),P('days','days','Days',127),P('tone','sound','Sound','sfx:chime'),P('speak','bool','Read aloud',true),P('en','bool','On',true)]})),
+
+  sec('Hourly chime',null,F('chime.en','Chime on the hour','bool',false),F('chime.style','Style','sel','beep',{o:[['beep','Beep'],['bell','Bell'],['cuckoo','Cuckoo'],['westminster','Westminster'],['speak','Speak the time']]}),
+
+   F('chime.from','From hour','range',8,{min:0,max:23}),F('chime.to','To hour','range',22,{min:0,max:23})),
+
+  sec('Morning briefing','Time, weather, tasks and messages, read aloud.',F('brief.en','Daily briefing','bool',false),F('brief.time','Time','time','07:30'),F('brief.days','Days','days',127),
+
+   h('button',{class:'btn sm',onclick:()=>post('/api/brief')},'Play it now'))]},
+
+
+
+display(){return[sec('Screen',null,F('display.bright','Brightness','range',200,{min:1,max:255}),F('display.flip','Upside down','bool',false),F('display.invert','Inverted colours','bool',false),
+
+   F('display.burn','Shift pixels slightly to prevent burn-in','bool',true),F('display.offIdle','Screen off when idle (min)','range',0,{min:0,max:120,fmt:x=>x||'never'})),
+
+  sec('Night',null,F('display.nightDim','Dim at night','bool',true),F('display.nightFrom','From','time','22:00'),F('display.nightTo','Until','time','07:00'),F('display.nightBright','Night brightness','range',10,{min:1,max:255}),
+
+   F('display.nightOff','Screen off while Emo sleeps','bool',false)),
+
+  sec('Status light','The small blue LED on the board.',F('led.en','Use the LED','bool',true),F('led.bright','Brightness','range',60,{min:1,max:255}),F('led.notify','Blink for alerts','bool',true),
+
+   F('led.breathe','Breathe while Emo sleeps','bool',true),F('led.beat','Heartbeat while awake','bool',false))]},
+
+
+
+power(){const p=ST.power||{},bat=p.bat??-1;
+
+ const cell=bat>=0?h('div',{class:'batt'},h('div',{class:'cell'+(bat<=15?' low':'')},h('i',{style:`width:${bat}%`})),h('b',{},bat+'%'),
+
+   h('span',{class:'hint'},`${((p.mv||0)/1000).toFixed(2)} V · saver ${p.saver?'on':'off'}${p.mode==='auto'?' (automatic)':''}`))
+
+  :h('p',{class:'d'},'No battery reading. Wire a 1:2 divider (two 100k resistors) from the battery to GPIO0 to use the automatic modes.');
+
+ const tog=h('button',{class:'btn '+(p.saver?'':'pri'),onclick:()=>{const m=p.saver?'off':'on';sp(CFG,'power.saver',m);post('/api/power?a='+m).then(()=>setTimeout(()=>status().then(render),1300))}},p.saver?'Turn saver off':'Turn saver on now');
+
+ return[sec('Battery',null,cell,h('div',{class:'gest',style:'margin-top:8px'},tog,
+
+   h('button',{class:'btn',onclick:()=>confirm('Put Emo into deep sleep? Touch the pad to wake it. The dashboard stops working until then.')&&post('/api/power?a=sleep').then(()=>toast('Sleeping. Touch the pad to wake.'))},'Deep sleep now'))),
+
+  sec('Battery saver','Stretches the battery: slower processor, fewer frames, a dimmer screen and less network traffic. Alarms still ring.',
+
+   F('power.saver','Battery saver','sel','off',{o:[['off','Off'],['auto','On when the battery is low'],['on','Always on']]}),
+
+   F('power.at','Low battery means (%)','range',25,{min:5,max:80,fmt:x=>x+'%',hint:'Turns off again 5% above this'}),
+
+   F('power.cpu','Slow the processor to 80 MHz','bool',true),F('power.fps','Frame rate while saving','range',10,{min:2,max:30,fmt:x=>x+' fps'}),
+
+   F('power.dim','Brightest screen while saving','range',40,{min:1,max:255}),F('power.offMin','Screen off when idle (min)','range',2,{min:0,max:30,fmt:x=>x||'never'}),
+
+   F('power.slowNet','Refresh online data 3× less often','bool',true),F('power.ble','Pause Bluetooth scanning','bool',true),
+
+   F('power.led','Status light off','bool',true),F('power.quiet','Mute sounds except alarms','bool',false)),
+
+  sec('Low battery',null,F('power.lowAlert','Warn me at 15%','bool',true),
+
+   F('power.critPct','Deep sleep when the battery reaches','range',5,{min:0,max:20,fmt:x=>x?x+'%':'never',hint:'Protects the cell. Touch the pad to wake.'}),
+
+   F('sys.batInterval','Read the battery every (s)','range',5,{min:1,max:60}),
+
+   F('sys.batMax','Battery 100% Voltage (mV)','num',4200),
+
+   F('sys.batMin','Battery 0% Voltage (mV)','num',3300)),
+
+  sec('Night sleep','Emo switches almost everything off overnight and wakes by itself, a little early for any alarm. Touch the pad to wake it sooner.',
+
+   F('power.night','Deep sleep at night','bool',false),F('power.nFrom','From','time','01:00'),F('power.nTo','Until','time','06:30'),
+
+   h('p',{class:'d'},'It only sleeps after 5 minutes without touches or an open dashboard. While asleep the dashboard and Telegram can not reach it.'))]},
+
+
+
+controls(){const G=[['tap','Tap'],['double','Double-tap'],['triple','Triple-tap'],['long','Hold'],['vlong','Long hold (3 s)']];
+
+ const dT={tap:'next',double:'prev',triple:'home',long:'speak',vlong:'mute'},dB={tap:'volup',double:'voldown',triple:'profile',long:'screen',vlong:'rotate'};
+
+ const bEn=gp(CFG,'boot.en')!==false;
+
+ return[sec('Touch pad','Cards can claim gestures first: Emo uses tap for pokes, timers use double-tap and hold, games use every touch. Everything else does this:',
+
+   G.map(([g,l])=>F('gest.'+g,l,'sel',dT[g],{o:ACTIONS}))),
+
+  sec('BOOT button','The physical BOOT button (GPIO 9) on the ESP32-C3 Super Mini.',
+
+   F('boot.en','Enable physical BOOT button','bool',true),
+
+   bEn?G.map(([g,l])=>F('boot.'+g,l,'sel',dB[g],{o:ACTIONS})):h('div',{class:'note',style:'margin-top:8px;'},'BOOT button is disabled. Pressing it on the board will do nothing.')),
+
+  sec('Timing',null,F('input.longMs','Hold length (ms)','range',700,{min:300,max:1500,step:50}),F('input.multiMs','Double-tap window (ms)','range',320,{min:150,max:600,step:10}),
+
+   F('input.vlongMs','Long hold length (ms)','range',3000,{min:1500,max:6000,step:100}))]},
+
+
+
+connect(){const bt=Intl.DateTimeFormat().resolvedOptions().timeZone,m=TZ.find(t=>t[2].split(' ').includes(bt));
+
+ const tzHint=m&&gp(CFG,'time.tz')!==m[1]?h('div',{class:'note'},`Your browser is set to ${bt}. `,h('button',{class:'btn sm',onclick:()=>{sp(CFG,'time.tz',m[1]);sp(CFG,'time.tzName',bt);cfgChanged();render()}},'Use it')):null;
+
+ const locSet=(v,x)=>{CFG.loc=v||{};if(x&&x.timezone){const t=TZ.find(z=>z[2].split(' ').includes(x.timezone));if(t){sp(CFG,'time.tz',t[1]);sp(CFG,'time.tzName',x.timezone)}}cfgChanged();setTimeout(render,50)};
+
+ return[sec('Location and time','Used for weather, sunrise and the clock.',h('div',{class:'row col'},h('div',{class:'lab'},'Home location'),locPick(CFG.loc&&CFG.loc.lat!=null?CFG.loc:null,locSet,true)),tzHint,
+
+   F('time.tz','Time zone','tz','UTC0'),F('time.h24','24-hour clock','bool',false),F('time.weekMon','Weeks start on Monday','bool',true),F('units','Units','sel','metric',{o:[['metric','°C, km/h'],['imperial','°F, mph']]})),
+
+  sec('Sports (Cricket & Football)','Scores come from your EmoDesk sports match server. Emo checks during live matches and periodically otherwise.',
+
+   F('cric.url','Match server address','text','',{ph:'https://your-server.onrender.com/api/cricket',hint:'Add ?key=… if you set API_KEY on the server. Football cards use the same server.'}),
+
+   gp(CFG,'cric.url')&&h('div',{class:'gest'},h('a',{class:'btn sm',href:gp(CFG,'cric.url').replace(/\/api\/cricket.*$/,'/api/cricket/debug')+(gp(CFG,'cric.url').includes('key=')?'?'+gp(CFG,'cric.url').split('?')[1]:''),target:'_blank',rel:'noopener'},'Test the server')),F('cric.team','Your team(s)','match','',{sport:'cricket',ph:'e.g. India, Australia (blank = all)',hint:'Separate multiple teams with commas: e.g. India, Australia or CSK, RCB'}),F('cric.liveSec','Check during live matches','range',gp(CFG,'cric.liveSec')||(gp(CFG,'cric.liveMin')?gp(CFG,'cric.liveMin')*60:30),{min:5,max:300,step:5,fmt:x=>x<60?x+'s':(x%60===0?(x/60)+'m':Math.floor(x/60)+'m '+(x%60)+'s')}),F('cric.idleMin','Check otherwise (min)','range',60,{min:15,max:240,step:15}),
+
+   F('cric.wicket','Wicket alerts','bool',true),F('cric.result','Result alerts','bool',true),F('cric.speak','Read alerts aloud','bool',false),
+
+   ST.cric&&h('p',{class:'d'},`Status: ${ST.cric.err||'OK'}`)),
+
+  sec('Sports Animations','Play custom 128×64 animations (uploaded GIFs in the Media tab) during live sports alerts.',
+
+   F('sports.animGoal','Goal animation (Football)','file','',{dir:'/anim'}),
+
+   F('sports.animWicket','Wicket animation (Cricket)','file','',{dir:'/anim'}),
+
+   F('sports.animResult','Result animation (Cricket)','file','',{dir:'/anim'})),
+
+  sec('Other keys',null,F('keys.youtube','YouTube Data API key','text','')),
+
+  sec('Telegram','Message @BotFather to create a bot, paste its token, then send your bot any message. The first chat to write becomes the owner.',
+
+   (()=>{const c=gp(CFG,'tg.chat'),en=gp(CFG,'tg.en');
+
+    const st=c?h('div',{class:'note'},'✅ Paired with chat ID: '+c,h('button',{class:'btn sm danger',style:'margin-left:8px',onclick:async()=>{sp(CFG,'tg.chat','');await saveCfg();toast('Unpaired chat');render()}},'Unpair chat'))
+
+     :(en?h('div',{class:'note'},'⏳ Waiting to pair: send /start or any message to your bot on Telegram.'):null);
+
+    const inp=h('input',{type:'text',placeholder:'Type a message to send to Telegram...',style:'flex:1'});
+
+    const snd=h('div',{class:'navrow',style:'margin-top:8px'},inp,h('button',{class:'btn sm pri',onclick:async()=>{if(!inp.value.trim())return;await post('/api/telegram',{text:inp.value});inp.value='';toast('Sent to Telegram')}},'Send to Telegram'));
+
+    return h('div',{},st,snd)
+
+   })(),
+
+   F('tg.en','Use Telegram','bool',false),F('tg.token','Bot token','text',''),F('tg.chat','Paired chat ID','text','',{hint:'Clear it to pair a different chat'}),F('tg.poll','Check every (s)','range',8,{min:3,max:60}),
+
+   F('tg.ack','Reply when a message arrives','bool',true),
+
+   F('tg.cric','Forward cricket wickets & results to Telegram','bool',false),
+
+   F('tg.bat','Send low battery alert to Telegram','bool',false),
+
+   F('tg.alarm','Send ringing alarm alert to Telegram','bool',false),
+
+   h('p',{class:'d',style:'margin-top:12px'},'Telegram Commands: /status, /screen, /brief, /next, /prev, /home, /cards, /goto <n>, /feed, /pet, /sleep, /wake, /vol [0-100], /mute, /say <text>, /bright <0-255>, /rotate, /reboot, /help')),
+
+  sec('MQTT and Home Assistant',`Topics: ${(gp(CFG,'mqtt.base')||'emodesk')}/cmd/message, /say, /emo, /play, /stop, /notify (JSON). State is published to ${(gp(CFG,'mqtt.base')||'emodesk')}/state.`,
+
+   F('mqtt.en','Use MQTT','bool',false),F('mqtt.host','Broker address','text','',{ph:'192.168.1.10'}),F('mqtt.port','Port','num',1883),F('mqtt.user','Username','text',''),F('mqtt.pass','Password','pass',''),F('mqtt.base','Base topic','text','emodesk'),
+
+   h('p',{class:'d'},ST.mqtt?'Connected.':'Not connected.')),
+
+  sec('PC companion','Run tools/pc_companion.py on your computer for the PC stats and Now playing cards.',h('p',{class:'d'},'pip install psutil requests, then: python pc_companion.py --host '+(location.hostname||'emo.local')),
+
+   h('p',{class:'d'},ST.pc?'Your PC is sending data.':'No PC connected right now.')),
+
+  sec('Bluetooth',`Status: ${ST.ble||'unknown'}. Needs ENABLE_BLE 1 in config.h (uses the BLE library built into the ESP32 core, about 45 KB of RAM). Restart after changing the mode.`,
+
+   gp(CFG,'ble.crashed')&&h('div',{class:'note warn'},'Bluetooth crashed while starting, so it was switched off to keep Emo running.',
+
+    h('button',{class:'btn sm',onclick:async()=>{delete CFG.ble.crashed;await saveCfg();post('/api/reboot').then(()=>toast('Restarting…'))}},'Try again')),
+
+   F('ble.mode','Mode','sel','off',{o:[['off','Off'],['presence','Notice when my phone or watch is near'],['remote','Media remote for my PC or phone']]}),
+
+   F('ble.target','Device name or address to look for','text',''),F('ble.rssi','How close (dBm)','range',-80,{min:-100,max:-40}),F('ble.greet','Greet me when I arrive','bool',true),
+
+   F('ble.awayMin','Away after (min)','range',10,{min:1,max:60}),F('ble.awaySleep','Sleep while I am away','bool',false)),
+
+  sec('Profiles','Cards can be limited to profiles, such as Work or Night.',field(CFG,'profiles','Profiles','list',['Default','Work','Night'],{},()=>{cfgChanged()}))]},
+
+
+
+media(){FILES.files=FILES.files||[];const used=FILES.used/(FILES.total||1);const thumbs=h('div',{class:'thumbs'});
+
+ FILES.files.filter(f=>f.dir==='/img'||f.dir==='/anim').forEach(async f=>{const cv=h('canvas',{width:128,height:64});thumbs.append(h('div',{class:'thumb'},cv,h('div',{},h('span',{},f.name),
+
+  f.dir==='/img'&&h('button',{class:'btn sm ghost',onclick:async()=>{PE.bits=xbmToBits(new Uint8Array(await api('/api/file?path='+f.path)),0);PE.name=f.name.replace(/\.bin$/,'');render()}},'Edit'),
+
+  h('button',{class:'btn sm danger',onclick:async()=>{if(!confirm('Delete '+f.name+'?'))return;await api('/api/file?path='+f.path,{method:'DELETE'});await loadFiles();render()}},'Delete'))));
+
+  try{const b=new Uint8Array(await api('/api/file?path='+f.path));paintBits(cv,xbmToBits(b,f.dir==='/anim'?8:0))}catch(e){}});
+
+ const fileIn=h('input',{type:'file',accept:'image/*'}),prev=h('canvas',{class:'pix',width:128,height:64}),opts={fit:'contain',thr:128,dither:true,inv:false};let srcImg=null,bits=null;
+
+ const redo=()=>{if(!srcImg)return;bits=imgToBits(srcImg,opts);paintBits(prev,bits)};
+
+ fileIn.onchange=async()=>{const f=fileIn.files[0];if(!f)return;if(f.type==='image/gif'){srcImg=null;await gifFlow(f);return}srcImg=await loadImg(f);redo()};
+
+ const nm=h('input',{type:'text',placeholder:'Name',value:'picture'});
+
+ return[sec('Storage',`${(FILES.used/1024).toFixed(0)} KB of ${(FILES.total/1024).toFixed(0)} KB used`,h('div',{class:'meter'},h('i',{style:`width:${(used*100).toFixed(1)}%`})),thumbs),
+
+  sec('Add a picture','Photos and logos are turned into 128×64 black and white. GIFs become animations for the Animation card.',fileIn,prev,
+
+   field(opts,'fit','Fit','sel','contain',{o:[['contain','Whole image'],['cover','Fill the screen'],['stretch','Stretch']]},redo),field(opts,'dither','Dither (better for photos)','bool',true,{},redo),
+
+   field(opts,'thr','Threshold','range',128,{min:10,max:245},redo),field(opts,'inv','Invert','bool',false,{},redo),
+
+   h('div',{class:'navrow'},nm,h('button',{class:'btn pri',onclick:async()=>{if(!bits){toast('Choose an image first',1);return}await uploadBits(bits,nm.value);}},'Save to Emo'))),
+
+  pixelEditor()]},
+
+
+
+system(){const pass=h('input',{type:'password',placeholder:'Password'}),ss=h('input',{type:'text',placeholder:'Primary Network name',value:gp(CFG,'wifi.ssid')||''}),list=h('div',{class:'results'});
+ const pass2=h('input',{type:'password',placeholder:'Backup Password'}),ss2=h('input',{type:'text',placeholder:'Backup Hotspot name',value:gp(CFG,'wifi.ssid2')||''});
+
+ const ota=h('input',{type:'file',accept:'.bin'}),otaMsg=h('p',{class:'d'}),rest=h('input',{type:'file',accept:'.json'});
+
+ return[sec('Wi-Fi',`Connected to ${ST.ssid||'nothing'} as ${ST.ip||'?'}. Auto-switches to backup hotspot if primary Wi-Fi is lost.`,h('div',{class:'navrow'},ss,h('button',{class:'btn sm',onclick:async()=>{list.textContent='Scanning...';try{const r=await api('/api/scan');list.replaceChildren(...r.map(n=>h('button',{onclick:()=>{if(!ss.value)ss.value=n.s;else ss2.value=n.s}},`${n.s}  ${n.r} dBm${n.e?'':' (open)'}`)))}catch(e){list.textContent=e.message}}},'Scan')),list,h('div',{class:'row'},h('div',{class:'lab'},'Primary Pass'),pass),h('div',{class:'row'},h('div',{class:'lab'},'Backup / Hotspot'),ss2),h('div',{class:'row'},h('div',{class:'lab'},'Backup Pass'),pass2),h('div',{class:'gest',style:'margin-top:8px'},h('button',{class:'btn pri',onclick:()=>{if((ss.value||ss2.value)&&confirm('Save and restart?'))post('/api/wifi',{ssid:ss.value,pass:pass.value||'********',ssid2:ss2.value,pass2:pass2.value||'********'}).then(()=>toast('Restarting...'))}},'Save and restart')),F('wifi.txLow','Low transmit power (fixes flaky Super Mini boards)','bool',true),F('host','Network name (emo → http://emo.local)','text','emo')),
+
+  sec('Health','Updated when you open this tab.',ST.safe&&h('div',{class:'note warn'},'Safe mode: Emo crashed several times in a row, so Bluetooth, MQTT and the speaker are off until the next restart. Check the log below.'),
+
+   h('div',{class:'kv'},[['Free memory',kb(ST.heap)],['Largest block',kb(ST.block)],['Lowest ever',kb(ST.minHeap)],['Processor',(ST.cpu||'?')+' MHz'],
+
+    ['Chip',(ST.chipTemp||0).toFixed(0)+' °C'],['Up for',upTxt(ST.up)],['Last restart',ST.reset||'?'],['Stack left (net)',kb(ST.stackNet)],['Stack left (main)',kb(ST.stackLoop)],
+
+    ['Stack left (audio)',ST.stackAudio?kb(ST.stackAudio):'not running']].map(([l,v])=>h('div',{},h('small',{},l),h('b',{title:v},v))))),
+
+  sec('Firmware',`Version ${ST.fw||'?'}.`,
+
+   h('div',{class:'row'},h('div',{class:'lab'},'Update file'),ota),
+
+   h('div',{class:'navrow'},h('button',{class:'btn pri',onclick:async()=>{const f=ota.files[0];if(!f)return;const fd=new FormData();fd.append('fw',f,f.name);otaMsg.textContent='Uploading… keep this page open.';
+
+    try{await api('/api/update',{body:fd});otaMsg.textContent='Done. Emo is restarting.'}catch(e){otaMsg.textContent='Update failed: '+e.message}}},'Install update')),otaMsg),
+
+  (()=>{
+
+    const bkStat=h('p',{class:'d',style:'margin-top:6px;display:none'});
+
+    const dlFull=h('button',{class:'btn pri',onclick:async()=>{
+
+      dlFull.disabled=true;bkStat.style.display='block';bkStat.textContent='Preparing full backup…';
+
+      try{
+
+        const b=await api('/api/backup');
+
+        b.exportedAt=new Date().toISOString();b.version='1.2.0';
+
+        bkStat.textContent='Checking pictures and audio clips…';
+
+        const fl=await api('/api/files').catch(()=>({files:[]}));
+
+        b.files=[];
+
+        if(fl&&fl.files&&fl.files.length){
+
+          for(let i=0;i<fl.files.length;i++){
+
+            const f=fl.files[i];
+
+            bkStat.textContent=`Backing up media file ${i+1} of ${fl.files.length} (${f.name})…`;
+
+            try{
+
+              const ab=await api('/api/file?path='+encodeURIComponent(f.path));
+
+              b.files.push({path:f.path,dir:f.dir,name:f.name,size:f.size,data:abToBase64(ab)});
+
+            }catch(e){}
+
+          }
+
+        }
+
+        bkStat.textContent='Downloading backup file…';
+
+        const nm=(b.config?.name||'emodesk').toLowerCase().replace(/[^\w-]+/g,'_');
+
+        const dt=new Date().toISOString().slice(0,10);
+
+        const fn=`emodesk-backup-${nm}-${dt}.json`;
+
+        const blob=new Blob([JSON.stringify(b,null,2)],{type:'application/json'});
+
+        const u=URL.createObjectURL(blob);
+
+        const a=h('a',{href:u,download:fn});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);
+
+        bkStat.textContent=`Saved ${fn} (${(blob.size/1024).toFixed(1)} KB, includes URLs, keys, cards${b.files.length?`, and ${b.files.length} media files`:''}).`;
+
+        toast('Backup downloaded!');
+
+      }catch(e){bkStat.textContent='Backup failed: '+e.message;toast(e.message,1)}
+
+      finally{dlFull.disabled=false}
+
+    }},'Download full backup (all URLs, keys, cards & media)');
+
+
+
+    const prevBox=h('div',{style:'display:none;margin-top:8px'});
+
+    const restStat=h('p',{class:'d',style:'margin-top:6px;display:none'});
+
+    let rData=null;
+
+    const restBtn=h('button',{class:'btn pri',disabled:true,onclick:async()=>{
+
+      if(!rData)return;
+
+      if(!confirm('Restore this backup to EmoDesk? All settings, URLs, keys, and cards will be uploaded back and Emo will restart.'))return;
+
+      restBtn.disabled=true;restStat.style.display='block';
+
+      try{
+
+        if(rData.files&&rData.files.length){
+
+          for(let i=0;i<rData.files.length;i++){
+
+            const f=rData.files[i];
+
+            restStat.textContent=`Uploading media file ${i+1} of ${rData.files.length} (${f.name})…`;
+
+            const dir=f.dir||(f.path?.startsWith('/anim')?'/anim':(f.path?.startsWith('/snd')?'/snd':'/img'));
+
+            const fd=new FormData();
+
+            fd.append('file',new Blob([base64ToUint8(f.data)]),f.name);
+
+            await api(`/api/upload?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(f.name)}`,{body:fd});
+
+          }
+
+        }
+
+        restStat.textContent='Uploading settings, keys, and cards…';
+
+        const payload={config:rData.config,cards:rData.cards,state:rData.state||{}};
+
+        const fd=new FormData();
+
+        fd.append('backup',new Blob([JSON.stringify(payload)],{type:'application/json'}),'restore.json');
+
+        await api('/api/restore',{body:fd});
+
+        restStat.textContent='Restore complete! EmoDesk is restarting now…';
+
+        toast('Restored successfully! Restarting…');
+
+        setTimeout(()=>location.reload(),4000);
+
+      }catch(e){restStat.textContent='Restore failed: '+e.message;toast(e.message,1);restBtn.disabled=false}
+
+    }},'Upload and restore to Emo');
+
+
+
+    rest.onchange=async()=>{
+
+      const f=rest.files[0];
+
+      if(!f){prevBox.style.display='none';restBtn.disabled=true;rData=null;return}
+
+      try{
+
+        const data=JSON.parse(await f.text());
+
+        if(!data.config||(!data.cards&&!data.cards?.cards))throw new Error('Missing config or cards in backup');
+
+        rData=data;
+
+        const cl=Array.isArray(data.cards)?data.cards:(data.cards?.cards||[]);
+
+        const cfgO=data.config||{};
+
+        const u=[];
+
+        if(cfgO.cric?.url)u.push(`Match server: ${cfgO.cric.url}`);
+
+        if(cfgO.mqtt?.host)u.push(`MQTT broker: ${cfgO.mqtt.host}`);
+
+        cl.forEach(c=>{if(c.p?.url)u.push(`${c.name||c.type} URL: ${c.p.url}`)});
+
+        const k=[];
+
+        if(cfgO.keys?.youtube)k.push('YouTube API key');
+
+        if(cfgO.tg?.token)k.push('Telegram bot token');
+
+        if(cfgO.wifi?.ssid)k.push(`Wi-Fi: ${cfgO.wifi.ssid}${cfgO.wifi?.pass&&cfgO.wifi.pass!=='********'?' (password included)':''}`);
+
+        if(cfgO.mqtt?.user||cfgO.mqtt?.pass)k.push('MQTT login');
+
+        cl.forEach(c=>{if(c.p?.key)k.push(`${c.name||c.type} key`);if(c.p?.token)k.push(`${c.name||c.type} token`)});
+
+        const fn=(data.files&&Array.isArray(data.files))?data.files.length:0;
+
+        prevBox.innerHTML='';prevBox.style.display='block';
+
+        prevBox.append(h('div',{class:'note',style:'flex-direction:column;align-items:flex-start;gap:4px'},
+
+          h('b',{},`Ready to restore: ${f.name} (${(f.size/1024).toFixed(1)} KB)`),
+
+          h('div',{},`• Device: ${cfgO.name||'Emo'} (FW ${data.fw||'1.x'})`),
+
+          h('div',{},`• Cards: ${cl.length} cards (${cl.map(c=>c.name||(T[c.type]||{}).n||c.type).slice(0,5).join(', ')}${cl.length>5?'…':''})`),
+
+          h('div',{},`• URLs found: ${u.length?u.join('; '):'None'}`),
+
+          h('div',{},`• Keys & logins: ${k.length?k.join(', '):'None'}`),
+
+          h('div',{},`• Media files: ${fn?`${fn} pictures/clips`: 'None in backup'}`)));
+
+        restBtn.disabled=false;
+
+      }catch(e){
+
+        prevBox.innerHTML='';prevBox.style.display='block';
+
+        prevBox.append(h('div',{class:'note warn'},'Invalid backup: '+e.message));
+
+        restBtn.disabled=true;rData=null;
+
+      }
+
+    };
+
+
+
+    return sec('Backup and restore','Backup everything on EmoDesk — server URLs, API keys & tokens, all configured cards, pet care data, and custom media files. You can upload the backup file back at any time.',
+
+      h('div',{class:'row col'},
+
+        h('div',{class:'lab'},'Download backup','Full backup includes all settings, keys, cards, and pictures/animations/audio clips.'),
+
+        h('div',{class:'gest'},dlFull,h('a',{class:'btn ghost',href:'/api/backup',download:'emodesk-backup.json'},'Quick backup (settings & cards only)')),
+
+        bkStat),
+
+      h('div',{class:'row col',style:'margin-top:12px;padding-top:12px;border-top:1px solid var(--line)'},
+
+        h('div',{class:'lab'},'Upload & restore backup','Choose a backup .json file to inspect and upload back to EmoDesk.'),
+
+        rest,prevBox,
+
+        h('div',{class:'gest',style:'margin-top:8px'},restBtn),
+
+        restStat));
+
+  })(),
+
+  createTerminalSection(),
+
+  sec('Restart and reset','Reboot device or erase settings. You can lock reset buttons to avoid accidental wipes.',
+
+   F('lockReset','Disable / Lock reset buttons in dashboard','bool',false),
+
+   (()=>{
+
+     const locked=gp(CFG,'lockReset')===true;
+
+     if(locked){
+
+       return h('div',{class:'note warn',style:'margin-top:10px;'},'🔒 Reset functionality is disabled. Uncheck "Disable / Lock reset buttons" above to enable resetting.');
+
+     }
+
+     return h('div',{class:'gest',style:'margin-top:10px;'},
+
+       h('button',{class:'btn',onclick:()=>post('/api/reboot').then(()=>toast('Restarting…'))},'Restart'),
+
+       h('button',{class:'btn danger',onclick:()=>confirm('Erase settings and cards? Pictures and clips stay.')&&post('/api/factory').then(()=>toast('Reset. Restarting…'))},'Reset settings'),
+
+       h('button',{class:'btn danger',onclick:()=>confirm('Erase EVERYTHING including pictures and clips?')&&post('/api/factory?full=1').then(()=>toast('Erased. Restarting…'))},'Erase everything'));
+
+   })())]}
+
+};
+
+
+
+const kb=v=>v==null?'?':(v/1024).toFixed(v<10240?1:0)+' KB';
+
+const upTxt=s=>{s=s||0;const d=Math.floor(s/86400),hh=Math.floor(s/3600)%24,m=Math.floor(s/60)%60;return d?`${d}d ${hh}h`:(hh?`${hh}h ${m}m`:`${m}m`)};
+
+
+
+/* ------------------------------------------------------------ card editor */
+
+const newId=()=>'c'+Math.random().toString(16).slice(2,8);
+
+function openModal(t,...k){$('#mtitle').textContent=t;$('#mbody').replaceChildren(...k);const m=$('#modal');if(!m.open)m.showModal()}
+
+function closeModal(){document.body.append($('#toast'));$('#modal').close();if(TAB==='cards')render()}
+
+function library(){const q=h('input',{type:'text',placeholder:'Search cards',style:'width:100%'}),out=h('div');
+
+ const draw=()=>{out.replaceChildren(...CATS.map(cat=>{const items=Object.entries(T).filter(([k,t])=>t.c===cat&&(t.n+t.d).toLowerCase().includes(q.value.toLowerCase()));
+
+  return items.length?[h('h3',{},cat),h('div',{class:'grid'},items.map(([k,t])=>h('button',{class:'tile',onclick:()=>{const c={id:newId(),type:k,en:true,dur:t.dur,days:127,p:{}};
+
+   t.p.forEach(p=>{if(p.d!==null&&p.d!==undefined)c.p[p.k]=JSON.parse(JSON.stringify(p.d))});CARDS.cards.push(c);saveCards('Card added');editCard(c)}},h('b',{},t.n),h('small',{},t.d))))]:[]}).flat())};
+
+ q.oninput=draw;draw();openModal('Add a card',q,out)}
+
+function editCard(c){const t=T[c.type]||{n:c.type,d:'',p:[]};c.p=c.p||{};let dirty=false;const ch=()=>{dirty=true};
+
+ const profs=CFG.profiles||['Default'],pf=h('div',{class:'gest'},profs.map(p=>{const b=h('button',{type:'button',class:'btn sm '+((c.pf||[]).includes(p)?'pri':'ghost'),
+
+  onclick:()=>{c.pf=c.pf||[];const i=c.pf.indexOf(p);if(i<0)c.pf.push(p);else c.pf.splice(i,1);b.className='btn sm '+(i<0?'pri':'ghost');ch()}},p);return b}));
+
+ const E=(o,k,l,ty,d,op)=>field(o,k,l,ty,d,op||{},ch);
+
+ openModal(t.n,h('p',{class:'d'},t.d),
+
+  t.p.length?h('section',{},t.p.map(p=>E(c.p,p.k,p.l,p.t,p.d,p.o))):h('p',{class:'d'},'Nothing to set up for this card.'),
+
+  h('h3',{},'When to show it'),E(c,'name','Label','text','',{ph:t.n}),E(c,'en','Show this card','bool',true),E(c,'dur','Seconds on screen (0 = default)','num',0),
+
+  h('div',{class:'row col'},h('div',{class:'lab'},'Only in profiles',h('small',{},'None selected means every profile')),pf),E(c,'days','Days','days',127),
+
+  E(c,'from','Only from','time',''),E(c,'to','until','time',''),
+
+  h('div',{class:'gest',style:'margin-top:14px'},h('button',{class:'btn pri',onclick:async()=>{await saveCards('Card saved');post('/api/refresh?i='+CARDS.cards.indexOf(c));closeModal()}},'Save card'),
+
+   h('button',{class:'btn',onclick:async()=>{await saveCards(false);post('/api/goto?i='+CARDS.cards.indexOf(c))}},'Save and show')))}
+
+
+
+/* ------------------------------------------------------------ pictures */
+
+function loadImg(f){return new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>no(new Error('Could not read that image'));i.src=URL.createObjectURL(f)})}
+
+function imgToBits(src,o){const c=document.createElement('canvas');c.width=128;c.height=64;const g=c.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,128,64);
+
+ const sw=src.displayWidth||src.naturalWidth||src.width,sh=src.displayHeight||src.naturalHeight||src.height;let w=128,hh=64,x=0,y=0;
+
+ if(o.fit!=='stretch'){const s=o.fit==='cover'?Math.max(128/sw,64/sh):Math.min(128/sw,64/sh);w=sw*s;hh=sh*s;x=(128-w)/2;y=(64-hh)/2}g.drawImage(src,x,y,w,hh);
+
+ const d=g.getImageData(0,0,128,64).data,gr=new Float32Array(8192);for(let i=0;i<8192;i++)gr[i]=d[i*4]*.299+d[i*4+1]*.587+d[i*4+2]*.114;const out=new Uint8Array(8192);
+
+ for(let yy=0;yy<64;yy++)for(let xx=0;xx<128;xx++){const i=yy*128+xx,on=gr[i]>=o.thr;out[i]=on?1:0;if(o.dither){const e=gr[i]-(on?255:0);
+
+  if(xx<127)gr[i+1]+=e*7/16;if(yy<63){if(xx>0)gr[i+127]+=e*3/16;gr[i+128]+=e*5/16;if(xx<127)gr[i+129]+=e/16}}}
+
+ if(o.inv)for(let i=0;i<8192;i++)out[i]^=1;return out}
+
+function bitsToXbm(b){const o=new Uint8Array(1024);for(let i=0;i<8192;i++)if(b[i])o[(i>>7)*16+((i&127)>>3)]|=1<<(i&7);return o}
+
+function xbmToBits(x,off){const b=new Uint8Array(8192);for(let i=0;i<8192;i++)b[i]=(x[off+(i>>7)*16+((i&127)>>3)]>>(i&7))&1;return b}
+
+function paintBits(cv,b){const g=cv.getContext('2d'),d=g.createImageData(128,64);for(let i=0;i<8192;i++){d.data[i*4]=b[i]?143:5;d.data[i*4+1]=b[i]?240:6;d.data[i*4+2]=b[i]?255:10;d.data[i*4+3]=255}g.putImageData(d,0,0)}
+
+async function uploadBits(b,name){const nm=(name||'picture').replace(/[^\w-]+/g,'_').slice(0,20)+'.bin';const fd=new FormData();fd.append('file',new Blob([bitsToXbm(b)]),nm);
+
+ try{await api('/api/upload?dir=/img&name='+nm,{body:fd});toast('Saved to Emo');await loadFiles();render()}catch(e){toast(e.message,1)}}
+
+async function gifFlow(f){try{const frames=[];let delay=100;
+
+ if('ImageDecoder' in window){
+
+  const dec=new ImageDecoder({data:await f.arrayBuffer(),type:f.type});await dec.tracks.ready;
+
+  for(let i=0;i<120;i++){try{const{image}=await dec.decode({frameIndex:i});if(i===0&&image.duration)delay=Math.max(30,Math.round(image.duration/1000));
+
+  frames.push(bitsToXbm(imgToBits(image,{fit:'contain',thr:128,dither:false,inv:false})));image.close()}catch(e){break}}
+
+ }else{
+
+  if(typeof GifReader==='undefined'){await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/omggif@1.0.10/omggif.js';s.onload=res;s.onerror=()=>rej(new Error('Need internet for GIF decoder.'));document.head.appendChild(s)})}
+
+  const gr=new GifReader(new Uint8Array(await f.arrayBuffer()));const c=document.createElement('canvas');c.width=gr.width;c.height=gr.height;
+
+  const ctx=c.getContext('2d'),d=ctx.createImageData(gr.width,gr.height);const n=Math.min(gr.numFrames(),120);
+
+  if(n>0)delay=Math.max(30,(gr.frameInfo(0).delay||10)*10);
+
+  for(let i=0;i<n;i++){gr.decodeAndBlitFrameRGBA(i,d.data);ctx.putImageData(d,0,0);frames.push(bitsToXbm(imgToBits(c,{fit:'contain',thr:128,dither:false,inv:false})))}
+
+ }
+
+ const n=frames.length;if(!n)throw new Error('No frames decoded');
+
+ const out=new Uint8Array(8+n*1024);out.set([69,77,79,65,n&255,n>>8,delay&255,delay>>8]);frames.forEach((fr,i)=>out.set(fr,8+i*1024));
+
+ const nm=f.name.replace(/\.[^.]+$/,'').replace(/[^\w-]+/g,'_').slice(0,20)+'.emoa';if(!confirm(`Upload ${n} frames (${(out.length/1024).toFixed(0)} KB) as ${nm}?`))return;
+
+ const fd=new FormData();fd.append('file',new Blob([out]),nm);await api('/api/upload?dir=/anim&name='+nm,{body:fd});toast('Animation saved. Add an Animation card to play it.');await loadFiles();render()}
+
+ catch(e){toast('GIF failed: '+e.message,1)}}
+
+const PE={bits:new Uint8Array(8192),pen:1,name:'drawing'};
+
+function pixelEditor(){const cv=h('canvas',{class:'pix',width:128,height:64,style:'touch-action:none;cursor:crosshair'});setTimeout(()=>paintBits(cv,PE.bits));let drawing=false;
+
+ const at=e=>{const r=cv.getBoundingClientRect();const x=Math.floor((e.clientX-r.left)/r.width*128),y=Math.floor((e.clientY-r.top)/r.height*64);if(x<0||y<0||x>127||y>63)return;
+
+  for(let dy=0;dy<PE.size;dy++)for(let dx=0;dx<PE.size;dx++){const X=x+dx,Y=y+dy;if(X<128&&Y<64)PE.bits[Y*128+X]=PE.pen}paintBits(cv,PE.bits)};PE.size=PE.size||1;
+
+ cv.onpointerdown=e=>{drawing=true;cv.setPointerCapture(e.pointerId);at(e)};cv.onpointermove=e=>{if(drawing)at(e)};cv.onpointerup=()=>drawing=false;
+
+ const nm=h('input',{type:'text',value:PE.name,onchange:e=>PE.name=e.target.value});
+
+ const tool=(l,f)=>h('button',{class:'btn sm ghost',type:'button',onclick:f},l);
+
+ return sec('Draw','Click or drag to paint pixels. Save it and add a Pictures card to show it.',cv,
+
+  h('div',{class:'gest',style:'margin-top:8px'},tool('Pen',()=>PE.pen=1),tool('Eraser',()=>PE.pen=0),tool('Thin',()=>PE.size=1),tool('Thick',()=>PE.size=3),
+
+   tool('Clear',()=>{PE.bits.fill(0);paintBits(cv,PE.bits)}),tool('Invert',()=>{PE.bits.forEach((v,i)=>PE.bits[i]=v^1);paintBits(cv,PE.bits)}),
+
+   tool('Copy the live screen',async()=>{const b=new Uint8Array(await api('/api/screen'));for(let i=0;i<8192;i++){const x=i&127,y=i>>7;PE.bits[i]=(b[(y>>3)*128+x]>>(y&7))&1}paintBits(cv,PE.bits)})),
+
+  h('div',{class:'navrow',style:'margin-top:8px'},nm,h('button',{class:'btn pri',onclick:()=>uploadBits(PE.bits,nm.value)},'Save drawing')))}
+
+
+
+/* ------------------------------------------------------------ audio conversion */
+
+async function toWav(file,rate,maxSec){const ab=await file.arrayBuffer();const AC=window.AudioContext||window.webkitAudioContext;const ctx=new AC();const buf=await ctx.decodeAudioData(ab);ctx.close&&ctx.close();
+
+ const dur=Math.min(buf.duration,maxSec),len=Math.ceil(dur*rate);const off=new OfflineAudioContext(1,len,rate);const s=off.createBufferSource();s.buffer=buf;s.connect(off.destination);s.start();
+
+ const d=(await off.startRendering()).getChannelData(0);let pk=0;for(const v of d)pk=Math.max(pk,Math.abs(v));const g=pk>0?.95/pk:1;
+
+ const w=new Uint8Array(44+len),dv=new DataView(w.buffer);const str=(o,t)=>[...t].forEach((c,i)=>w[o+i]=c.charCodeAt(0));
+
+ str(0,'RIFF');dv.setUint32(4,36+len,true);str(8,'WAVEfmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);dv.setUint32(24,rate,true);dv.setUint32(28,rate,true);
+
+ dv.setUint16(32,1,true);dv.setUint16(34,8,true);str(36,'data');dv.setUint32(40,len,true);for(let i=0;i<len;i++)w[44+i]=Math.max(0,Math.min(255,Math.round(d[i]*g*127+128)));
+
+ return new Blob([w],{type:'audio/wav'})}
+
+
+
+/* ------------------------------------------------------------ backup helpers */
+
+function abToBase64(buf){const b=new Uint8Array(buf);let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode.apply(null,b.subarray(i,i+8192));return btoa(s)}
+
+function base64ToUint8(str){const s=atob(str),b=new Uint8Array(s.length);for(let i=0;i<s.length;i++)b[i]=s.charCodeAt(i);return b}
+
+
+
+/* ------------------------------------------------------------ boot */
+
+const loadSounds=async()=>{try{SND=await api('/api/sounds')}catch(e){}};
+
+const loadFiles=async()=>{try{FILES=await api('/api/files')}catch(e){}};
+
+(async()=>{tabs();try{[CFG,CARDS]=await Promise.all([api('/api/config'),api('/api/cards')])}catch(e){toast('Could not load settings: '+e.message,1)}
+
+ await Promise.all([loadSounds(),loadFiles(),status()]);render();pollScreen();setInterval(status,4000)})();
+
+</script>
+
+</body>
+
+</html>
+
