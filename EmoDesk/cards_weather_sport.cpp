@@ -777,14 +777,72 @@ struct FMatch {
   char hForm[10], aForm[10];
   char hScorers[64], aScorers[64];
   time_t t;
+  uint8_t hPoss, aPoss;
+  uint8_t hShots, aShots;
+  uint8_t hSot, aSot;
+  uint8_t hCorn, aCorn;
+  uint8_t hFouls, aFouls;
+  bool hasStats;
+  int8_t hPos, aPos;
+  int8_t hLivePos, aLivePos;
 };
 struct FootData { bool ok; uint8_t n; FMatch m[6]; };
 
 static int scoreOf(JsonVariant v) { return v.is<const char*>() ? atoi(v.as<const char*>()) : v.as<int>(); }
 
+struct OldMatch {
+  char h[8], a[8], hn[24];
+  int8_t hs, as;
+};
+
+static void parseFMatch(JsonObject ev, FMatch& m) {
+  memset(&m, 0, sizeof(m));
+  const char* st = ev["status"] | "scheduled";
+  m.state = !strcmp(st, "live") ? 1 : (!strcmp(st, "finished") ? 2 : 0);
+  m.t = parseISO(ev["startTime"] | "");
+  if (m.state == 1) safeCopy(m.clock, ev["clock"] | "", sizeof(m.clock));
+  else safeCopy(m.clock, m.state == 2 ? "FT" : "", sizeof(m.clock));
+  
+  safeCopy(m.hn, ev["home"]["name"] | "", sizeof(m.hn));
+  cleanShortName(ev["home"]["short"] | "", m.hn, m.h, sizeof(m.h));
+  m.hs = ev["home"]["score"] | 0;
+
+  safeCopy(m.an, ev["away"]["name"] | "", sizeof(m.an));
+  cleanShortName(ev["away"]["short"] | "", m.an, m.a, sizeof(m.a));
+  m.as = ev["away"]["score"] | 0;
+
+  safeCopy(m.statusText, ev["statusText"] | "", sizeof(m.statusText));
+  safeCopy(m.venue, ev["venue"] | "", sizeof(m.venue));
+  safeCopy(m.league, ev["league"] | "", sizeof(m.league));
+  safeCopy(m.hForm, ev["home"]["form"] | "", sizeof(m.hForm));
+  safeCopy(m.aForm, ev["away"]["form"] | "", sizeof(m.aForm));
+  safeCopy(m.hScorers, ev["home"]["scorers"] | "", sizeof(m.hScorers));
+  safeCopy(m.aScorers, ev["away"]["scorers"] | "", sizeof(m.aScorers));
+  if (ev["stats"].is<JsonObject>()) {
+    JsonObject st = ev["stats"];
+    m.hPoss = st["poss"][0] | 0;
+    m.aPoss = st["poss"][1] | 0;
+    m.hShots = st["shots"][0] | 0;
+    m.aShots = st["shots"][1] | 0;
+    m.hSot = st["sot"][0] | 0;
+    m.aSot = st["sot"][1] | 0;
+    m.hCorn = st["corn"][0] | 0;
+    m.aCorn = st["corn"][1] | 0;
+    m.hFouls = st["fouls"][0] | 0;
+    m.aFouls = st["fouls"][1] | 0;
+    m.hasStats = (m.hPoss > 0 || m.aPoss > 0 || m.hShots > 0 || m.aShots > 0);
+  }
+  if (m.state == 1 && !m.clock[0] && ev["statusText"].is<const char*>()) {
+    safeCopy(m.clock, ev["statusText"] | "", sizeof(m.clock));
+  }
+  m.hPos = ev["home"]["pos"] | 0;
+  m.hLivePos = ev["home"]["livePos"] | m.hPos;
+  m.aPos = ev["away"]["pos"] | 0;
+  m.aLivePos = ev["away"]["livePos"] | m.aPos;
+}
+
 static bool football_fetch(JsonObject p, void* d) {
   FootData* fd = (FootData*)d;
-  const FootData& old = *fd;
   String league = p["league"] | "eng.1";
   String team = p["teams"].is<const char*>() ? (p["teams"] | "") : (p["team"] | "");
   String show = p["show"] | "all";
@@ -811,87 +869,141 @@ static bool football_fetch(JsonObject p, void* d) {
   e["home"]["score"] = true;
   e["home"]["form"] = true;
   e["home"]["scorers"] = true;
+  e["home"]["pos"] = true;
+  e["home"]["livePos"] = true;
   e["away"]["short"] = true;
   e["away"]["name"] = true;
   e["away"]["score"] = true;
   e["away"]["form"] = true;
   e["away"]["scorers"] = true;
+  e["away"]["pos"] = true;
+  e["away"]["livePos"] = true;
+  e["stats"]["poss"][0] = true;
+  e["stats"]["poss"][1] = true;
+  e["stats"]["shots"][0] = true;
+  e["stats"]["shots"][1] = true;
+  e["stats"]["sot"][0] = true;
+  e["stats"]["sot"][1] = true;
+  e["stats"]["corn"][0] = true;
+  e["stats"]["corn"][1] = true;
+  e["stats"]["fouls"][0] = true;
+  e["stats"]["fouls"][1] = true;
   JsonDocument doc;
   bool ok = httpJson(url, doc, &filter);
   if (!ok || !doc.is<JsonArray>()) return false;
 
-  FootData* nd = (FootData*)calloc(1, sizeof(FootData));
-  if (!nd) return false;
-  FMatch* all = (FMatch*)calloc(20, sizeof(FMatch));
-  if (!all) { free(nd); return false; }
-
-  int na = 0;
-  time_t now = time(nullptr);
-  for (JsonObject ev : doc.as<JsonArray>()) {
-    if (na >= 20) break;
-    FMatch& m = all[na];
-    memset(&m, 0, sizeof(m));
-    const char* st = ev["status"] | "scheduled";
-    m.state = !strcmp(st, "live") ? 1 : (!strcmp(st, "finished") ? 2 : 0);
-    m.t = parseISO(ev["startTime"] | "");
-    if (m.state == 1) safeCopy(m.clock, ev["clock"] | "", sizeof(m.clock));
-    else safeCopy(m.clock, m.state == 2 ? "FT" : "", sizeof(m.clock));
-    
-    safeCopy(m.hn, ev["home"]["name"] | "", sizeof(m.hn));
-    cleanShortName(ev["home"]["short"] | "", m.hn, m.h, sizeof(m.h));
-    m.hs = ev["home"]["score"] | 0;
-
-    safeCopy(m.an, ev["away"]["name"] | "", sizeof(m.an));
-    cleanShortName(ev["away"]["short"] | "", m.an, m.a, sizeof(m.a));
-    m.as = ev["away"]["score"] | 0;
-
-    safeCopy(m.statusText, ev["statusText"] | "", sizeof(m.statusText));
-    safeCopy(m.venue, ev["venue"] | "", sizeof(m.venue));
-    safeCopy(m.league, ev["league"] | "", sizeof(m.league));
-    safeCopy(m.hForm, ev["home"]["form"] | "", sizeof(m.hForm));
-    safeCopy(m.aForm, ev["away"]["form"] | "", sizeof(m.aForm));
-    safeCopy(m.hScorers, ev["home"]["scorers"] | "", sizeof(m.hScorers));
-    safeCopy(m.aScorers, ev["away"]["scorers"] | "", sizeof(m.aScorers));
-    if (m.state == 1 && !m.clock[0] && ev["statusText"].is<const char*>()) {
-      safeCopy(m.clock, ev["statusText"] | "", sizeof(m.clock));
+  // Snapshot old match scores for goal alerting before modifying fd
+  OldMatch oldM[6];
+  uint8_t oldN = 0;
+  bool oldOk = fd->ok;
+  if (oldOk && alerts) {
+    oldN = fd->n;
+    if (oldN > 6) oldN = 6;
+    for (int j = 0; j < oldN; j++) {
+      safeCopy(oldM[j].h, fd->m[j].h, sizeof(oldM[j].h));
+      safeCopy(oldM[j].a, fd->m[j].a, sizeof(oldM[j].a));
+      safeCopy(oldM[j].hn, fd->m[j].hn, sizeof(oldM[j].hn));
+      oldM[j].hs = fd->m[j].hs;
+      oldM[j].as = fd->m[j].as;
     }
-
-    if (team.length() && !(teamMatch(m.hn, team.c_str()) || teamMatch(m.an, team.c_str()) ||
-                           teamMatch(m.h, team.c_str()) || teamMatch(m.a, team.c_str())))
-      continue;
-    na++;
   }
 
+  time_t now = time(nullptr);
   bool anyLive = false;
   bool startingSoon = false;
-  for (int i = 0; i < na; i++) {
-    if (all[i].state == 1) anyLive = true;
-    else if (all[i].state == 0) {
-      int32_t diff = all[i].t - now;
-      if (diff >= -600 && diff <= 1800) startingSoon = true;
-    }
-  }
-  if (team.length() && show == "all") {
-    int live = -1, next = -1, last = -1;
-    for (int i = 0; i < na; i++) {
-      if (all[i].state == 1) live = i;
-      else if (all[i].state == 0 && all[i].t > now && (next < 0 || all[i].t < all[next].t)) next = i;
-      else if (all[i].state == 2 && (last < 0 || all[i].t > all[last].t)) last = i;
-    }
-    for (int i : {live, next, last}) if (i >= 0 && nd->n < 6) nd->m[nd->n++] = all[i];
-  } else {
-    for (int i = 0; i < na && nd->n < 6; i++) if (all[i].state == 1) nd->m[nd->n++] = all[i];
-    for (int i = 0; i < na && nd->n < 6; i++) if (all[i].state != 1) nd->m[nd->n++] = all[i];
-  }
-static char alertedGoals[8][48];
-static uint8_t alertedGoalIdx = 0;
+  JsonArray arr = doc.as<JsonArray>();
 
-  for (int i = 0; i < nd->n; i++) {
-    FMatch& m = nd->m[i];
+  if (team.length() && show == "all") {
+    FMatch liveM, nextM, lastM;
+    bool hasLive = false, hasNext = false, hasLast = false;
+    for (JsonObject ev : arr) {
+      const char* hn = ev["home"]["name"] | "";
+      const char* an = ev["away"]["name"] | "";
+      const char* hs = ev["home"]["short"] | "";
+      const char* as = ev["away"]["short"] | "";
+      if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
+            teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
+        continue;
+
+      FMatch tmp;
+      parseFMatch(ev, tmp);
+      if (tmp.state == 1) {
+        anyLive = true;
+        liveM = tmp;
+        hasLive = true;
+      } else if (tmp.state == 0) {
+        int32_t diff = tmp.t - now;
+        if (diff >= -600 && diff <= 1800) startingSoon = true;
+        if (tmp.t > now && (!hasNext || tmp.t < nextM.t)) {
+          nextM = tmp;
+          hasNext = true;
+        }
+      } else if (tmp.state == 2) {
+        if (!hasLast || tmp.t > lastM.t) {
+          lastM = tmp;
+          hasLast = true;
+        }
+      }
+    }
+    fd->n = 0;
+    if (hasLive && fd->n < 6) fd->m[fd->n++] = liveM;
+    if (hasNext && fd->n < 6) fd->m[fd->n++] = nextM;
+    if (hasLast && fd->n < 6) fd->m[fd->n++] = lastM;
+  } else {
+    fd->n = 0;
+    // Pass 1: live matches
+    for (JsonObject ev : arr) {
+      if (team.length()) {
+        const char* hn = ev["home"]["name"] | "";
+        const char* an = ev["away"]["name"] | "";
+        const char* hs = ev["home"]["short"] | "";
+        const char* as = ev["away"]["short"] | "";
+        if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
+              teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
+          continue;
+      }
+      const char* st = ev["status"] | "scheduled";
+      bool isLive = !strcmp(st, "live");
+      time_t t = parseISO(ev["startTime"] | "");
+      if (isLive) anyLive = true;
+      else if (!strcmp(st, "scheduled")) {
+        int32_t diff = t - now;
+        if (diff >= -600 && diff <= 1800) startingSoon = true;
+      }
+      if (isLive && fd->n < 6) {
+        parseFMatch(ev, fd->m[fd->n++]);
+      }
+    }
+    // Pass 2: upcoming / finished matches
+    if (fd->n < 6) {
+      for (JsonObject ev : arr) {
+        if (team.length()) {
+          const char* hn = ev["home"]["name"] | "";
+          const char* an = ev["away"]["name"] | "";
+          const char* hs = ev["home"]["short"] | "";
+          const char* as = ev["away"]["short"] | "";
+          if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
+                teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
+            continue;
+        }
+        const char* st = ev["status"] | "scheduled";
+        if (strcmp(st, "live") != 0) {
+          parseFMatch(ev, fd->m[fd->n++]);
+          if (fd->n >= 6) break;
+        }
+      }
+    }
+  }
+
+  static char alertedGoals[8][48];
+  static uint8_t alertedGoalIdx = 0;
+
+  for (int i = 0; i < fd->n; i++) {
+    FMatch& m = fd->m[i];
     if (m.state == 1) anyLive = true;
-    if (!old.ok || !alerts) continue;
-    for (int j = 0; j < old.n; j++) {
-      const FMatch& o = old.m[j];
+    if (!oldOk || !alerts) continue;
+    for (int j = 0; j < oldN; j++) {
+      const OldMatch& o = oldM[j];
       if (strcmp(o.h, m.h) || strcmp(o.a, m.a) || strcmp(o.hn, m.hn) || m.state != 1) continue;
       if (m.hs + m.as > o.hs + o.as) {
         char gKey[48];
@@ -927,10 +1039,7 @@ static uint8_t alertedGoalIdx = 0;
   UNLOCK();
   if (liveSec < 5) liveSec = 5;
   gFetchNext = anyLive ? liveSec : (startingSoon ? 120 : 900);
-  nd->ok = true;
-  *fd = *nd;
-  free(all);
-  free(nd);
+  fd->ok = true;
   return true;
 }
 
@@ -954,8 +1063,22 @@ static void football_draw(CardCtx& c) {
   int totalToShow = f->n;
   int sel = (c.st[0] + (millis() - c.t0) / 6000) % totalToShow;
   FMatch& m = f->m[sel];
+
+  const char* rBadge = nullptr;
+  char kBuf[20];
+  if (m.state == 1) {
+    rBadge = m.clock[0] ? m.clock : "LIVE";
+  } else if (m.state == 2) {
+    rBadge = "FT";
+  } else {
+    fmtKick(m.t, kBuf, sizeof(kBuf));
+    rBadge = kBuf;
+  }
+
+  bool showStats = m.hasStats;
+  int totalPages = showStats ? 3 : 2;
   bool autoCycle = (c.p["cycle"] | true) && !(c.st[2] & 1);
-  uint8_t page = autoCycle ? (((millis() - c.t0) / 4500) % 2) : (c.st[1] % 2);
+  uint8_t page = (autoCycle && totalPages > 1) ? (((millis() - c.t0) / 4500) % totalPages) : 0;
 
   const char* defHdr = m.league[0] ? m.league : (*team ? team : (c.p["league"] | "Football"));
   char hdrTitle[48];
@@ -966,21 +1089,42 @@ static void football_draw(CardCtx& c) {
   }
 
   if (page == 0) {
-    const char* rBadge = nullptr;
-    char kBuf[20];
-    if (m.state == 1) {
-      rBadge = m.clock[0] ? m.clock : "LIVE";
-    } else if (m.state == 2) {
-      rBadge = "FT";
-    } else {
-      fmtKick(m.t, kBuf, sizeof(kBuf));
-      rBadge = kBuf;
-    }
     drawHeader(hdrTitle, rBadge);
 
     u8g2.setFont(F_BOLD);
     u8g2.drawStr(2, 26, m.h);
+    int hw = u8g2.getUTF8Width(m.h);
+
+    int aw = u8g2.getUTF8Width(m.a);
     textRight(126, 26, m.a);
+
+    char hPosStr[12] = "";
+    char aPosStr[12] = "";
+    bool isLive = (m.state == 1);
+
+    if (m.hPos > 0) {
+      if (isLive && m.hLivePos > 0 && m.hLivePos != m.hPos) {
+        snprintf(hPosStr, sizeof(hPosStr), "%d>%d", m.hPos, m.hLivePos);
+      } else {
+        snprintf(hPosStr, sizeof(hPosStr), "#%d", isLive && m.hLivePos > 0 ? m.hLivePos : m.hPos);
+      }
+    }
+    if (m.aPos > 0) {
+      if (isLive && m.aLivePos > 0 && m.aLivePos != m.aPos) {
+        snprintf(aPosStr, sizeof(aPosStr), "%d>%d", m.aPos, m.aLivePos);
+      } else {
+        snprintf(aPosStr, sizeof(aPosStr), "#%d", isLive && m.aLivePos > 0 ? m.aLivePos : m.aPos);
+      }
+    }
+
+    u8g2.setFont(F_TINY);
+    if (hPosStr[0]) {
+      u8g2.drawStr(2 + hw + 2, 26, hPosStr);
+    }
+    if (aPosStr[0]) {
+      int pw = u8g2.getUTF8Width(aPosStr);
+      u8g2.drawStr(124 - aw - pw, 26, aPosStr);
+    }
 
     char scoreStr[20];
     if (m.state == 0) {
@@ -1020,53 +1164,133 @@ static void football_draw(CardCtx& c) {
       drawDottedHLine(0, 47, 128);
     }
 
-    char detail[80] = "";
+    char detail[100] = "";
     if (m.state == 1) {
       const char* stDesc = m.statusText[0] ? m.statusText : (m.clock[0] ? m.clock : "Live");
-      if (m.venue[0]) snprintf(detail, sizeof(detail), "%s · %s", stDesc, m.venue);
-      else safeCopy(detail, stDesc, sizeof(detail));
+      if (m.hPos > 0 && m.aPos > 0) {
+        if (m.hLivePos != m.hPos || m.aLivePos != m.aPos) {
+          snprintf(detail, sizeof(detail), "%s · Live: %s %d>%d, %s %d>%d%s%s",
+                   stDesc, m.h, m.hPos, m.hLivePos, m.a, m.aPos, m.aLivePos,
+                   m.venue[0] ? " · " : "", m.venue[0] ? m.venue : "");
+        } else {
+          snprintf(detail, sizeof(detail), "%s · Table: %s #%d, %s #%d%s%s",
+                   stDesc, m.h, m.hPos, m.a, m.aPos,
+                   m.venue[0] ? " · " : "", m.venue[0] ? m.venue : "");
+        }
+      } else if (m.venue[0]) {
+        snprintf(detail, sizeof(detail), "%s · %s", stDesc, m.venue);
+      } else safeCopy(detail, stDesc, sizeof(detail));
     } else if (m.state == 2) {
-      if (m.venue[0]) snprintf(detail, sizeof(detail), "FT · %s", m.venue);
-      else strcpy(detail, "Full Time · Final Result");
+      if (m.hPos > 0 && m.aPos > 0) {
+        snprintf(detail, sizeof(detail), "FT · %s #%d, %s #%d%s%s",
+                 m.h, m.hPos, m.a, m.aPos,
+                 m.venue[0] ? " · " : "", m.venue[0] ? m.venue : "");
+      } else if (m.venue[0]) {
+        snprintf(detail, sizeof(detail), "FT · %s", m.venue);
+      } else strcpy(detail, "Full Time · Final Result");
     } else {
       char k2[24];
       fmtKick(m.t, k2, sizeof(k2));
-      if (m.venue[0]) snprintf(detail, sizeof(detail), "%s · %s", k2, m.venue);
-      else snprintf(detail, sizeof(detail), "Kickoff: %s", k2);
+      if (m.hPos > 0 && m.aPos > 0) {
+        snprintf(detail, sizeof(detail), "%s · %s #%d vs %s #%d%s%s",
+                 k2, m.h, m.hPos, m.a, m.aPos,
+                 m.venue[0] ? " · " : "", m.venue[0] ? m.venue : "");
+      } else if (m.venue[0]) {
+        snprintf(detail, sizeof(detail), "%s · %s", k2, m.venue);
+      } else snprintf(detail, sizeof(detail), "Kickoff: %s", k2);
     }
 
     u8g2.setFont(F_TINY);
     marquee(0, 60, autoCycle ? 104 : 126, detail, c.t0, 22);
-    if (autoCycle) drawBadge(127, 61, "1/2");
+    char badgeBuf[8];
+    snprintf(badgeBuf, sizeof(badgeBuf), "1/%d", totalPages);
+    if (autoCycle) drawBadge(127, 61, badgeBuf);
 
-  } else {
-    drawHeader("Match Details", m.clock[0] ? m.clock : (m.state == 2 ? "FT" : "Info"));
+  } else if (showStats && page == 1) {
+    drawHeader("Match Stats", rBadge);
+
+    u8g2.setFont(F_BOLD);
+    u8g2.drawStr(2, 21, m.h);
+    textRight(126, 21, m.a);
+
+    char scoreStr[16];
+    snprintf(scoreStr, sizeof(scoreStr), "%d - %d", m.hs, m.as);
+    u8g2.setFont(F_MED);
+    textCenter(21, scoreStr);
 
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(2, 21, "Venue:");
-    marquee(36, 21, 90, m.venue[0] ? m.venue : "Stadium TBD", c.t0, 22);
+    char pL[8], pR[8];
+    snprintf(pL, sizeof(pL), "%d%%", m.hPoss ? m.hPoss : 50);
+    snprintf(pR, sizeof(pR), "%d%%", m.aPoss ? m.aPoss : 50);
+    u8g2.drawStr(2, 32, "Poss");
+    u8g2.drawStr(25, 32, pL);
+    textRight(102, 32, pR);
+    float frac = (float)(m.hPoss ? m.hPoss : 50) / 100.0f;
+    drawBar(44, 28, 38, 5, frac);
 
-    u8g2.drawStr(2, 33, "Form:");
+    char shotsStr[44];
+    snprintf(shotsStr, sizeof(shotsStr), "Shots(OT): %d(%d) - %d(%d)", m.hShots, m.hSot, m.aShots, m.aSot);
+    u8g2.setFont(F_SMALL);
+    textCenter(43, shotsStr);
+
+    char cfStr[44];
+    snprintf(cfStr, sizeof(cfStr), "Corners: %d-%d   Fouls: %d-%d", m.hCorn, m.aCorn, m.hFouls, m.aFouls);
+    u8g2.setFont(F_TINY);
+    textCenter(53, cfStr);
+
+    drawDottedHLine(0, 56, 128);
+
+    const char* stDesc = m.statusText[0] ? m.statusText : (m.state == 2 ? "Full Time" : "Live Match Stats");
+    marquee(2, 63, autoCycle ? 104 : 126, stDesc, c.t0, 22);
+    if (autoCycle) drawBadge(127, 63, "2/3");
+
+  } else {
+    drawHeader("Match Details", rBadge);
+
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(2, 20, "Venue:");
+    marquee(36, 20, 90, m.venue[0] ? m.venue : "Stadium TBD", c.t0, 22);
+
+    u8g2.drawStr(2, 31, "Form:");
     char formStr[40];
     snprintf(formStr, sizeof(formStr), "%s: %s  |  %s: %s",
              m.h, m.hForm[0] ? m.hForm : "N/A",
              m.a, m.aForm[0] ? m.aForm : "N/A");
     u8g2.setFont(F_SMALL);
-    u8g2.drawStr(36, 33, formStr);
+    u8g2.drawStr(36, 31, formStr);
 
-    drawDottedHLine(0, 46, 128);
+    if (m.hPos > 0 || m.aPos > 0) {
+      u8g2.setFont(F_TINY);
+      u8g2.drawStr(2, 43, "Table:");
+      char tabStr[56];
+      if (m.state == 1 && (m.hLivePos != m.hPos || m.aLivePos != m.aPos)) {
+        snprintf(tabStr, sizeof(tabStr), "%s #%d>%d (Live) | %s #%d>%d",
+                 m.h, m.hPos, m.hLivePos, m.a, m.aPos, m.aLivePos);
+      } else {
+        snprintf(tabStr, sizeof(tabStr), "%s #%d  |  %s #%d",
+                 m.h, m.hPos, m.a, m.aPos);
+      }
+      u8g2.setFont(F_SMALL);
+      u8g2.drawStr(36, 43, tabStr);
+      drawDottedHLine(0, 48, 128);
+    } else {
+      drawDottedHLine(0, 46, 128);
+    }
 
     u8g2.setFont(F_TINY);
     if (m.state == 0) {
       char k2[24];
       fmtKick(m.t, k2, sizeof(k2));
-      snprintf(formStr, sizeof(formStr), "Kickoff: %s", k2);
-      u8g2.drawStr(2, 59, formStr);
+      char kickStr[32];
+      snprintf(kickStr, sizeof(kickStr), "Kickoff: %s", k2);
+      u8g2.drawStr(2, 59, kickStr);
     } else {
       const char* stDesc = m.statusText[0] ? m.statusText : (m.state == 2 ? "Full Time" : "Live in match");
       marquee(2, 59, 96, stDesc, c.t0, 24);
     }
-    drawBadge(127, 61, "2/2");
+    char badgeBuf[8];
+    snprintf(badgeBuf, sizeof(badgeBuf), "%d/%d", totalPages, totalPages);
+    if (autoCycle) drawBadge(127, 61, badgeBuf);
   }
 }
 
@@ -1093,7 +1317,12 @@ static void football_speak(CardCtx& c, String& s) {
   const char* hName = m.hn[0] ? m.hn : m.h;
   const char* aName = m.an[0] ? m.an : m.a;
   if (m.state == 0) s = String("Next match, ") + hName + " versus " + aName + ".";
-  else s = String(hName) + " " + String(m.hs) + ", " + aName + " " + String(m.as) + (m.state == 1 ? (String(". Live in the ") + (m.clock[0] ? m.clock : "match") + ".") : ". Full time.");
+  else {
+    s = String(hName) + " " + String(m.hs) + ", " + aName + " " + String(m.as) + (m.state == 1 ? (String(". Live in the ") + (m.clock[0] ? m.clock : "match") + ".") : ". Full time.");
+    if (m.state == 1 && m.hPos > 0 && m.hLivePos > 0 && m.hLivePos != m.hPos) {
+      s += String(" As it stands, ") + hName + " moves to position " + String(m.hLivePos) + ".";
+    }
+  }
 }
 const CardType CT_football = {"football", sizeof(FootData), 900, 0, nullptr, football_draw, football_input, football_fetch, football_speak, nullptr};
 

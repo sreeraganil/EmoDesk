@@ -1,5 +1,6 @@
 #include "power.h"
 #include "cards.h"
+#include "services.h"
 
 // Replace common UTF-8 punctuation / HTML entities with ASCII the OLED fonts can show
 static void cleanText(char* s) {
@@ -303,12 +304,12 @@ static int readUntil(Stream& s, char* out, int cap, const char* end, uint32_t& b
 }
 
 static bool news_fetch(JsonObject p, void* d) {
-  NewsData* nd = (NewsData*)malloc(sizeof(NewsData));
+  NewsData* nd = (NewsData*)d;
   if (!nd) return false;
   memset(nd, 0, sizeof(NewsData));
   int want = constrain((int)(p["count"] | 6), 1, 8);
   String url = p["url"] | "http://feeds.bbci.co.uk/news/world/rss.xml";
-  char buf[400];
+  char buf[256];
   httpGet(url, [&](Stream& s) {
     uint32_t budget = 300000;
     int seen = 0;
@@ -328,10 +329,7 @@ static bool news_fetch(JsonObject p, void* d) {
     return nd->n > 0;
   }, nullptr, nullptr, true);
   nd->ok = nd->n > 0;
-  bool ok = nd->ok;
-  if (ok) memcpy(d, nd, sizeof(NewsData));
-  free(nd);
-  return ok;
+  return nd->ok;
 }
 static int newsIdx(CardCtx& c, NewsData* n) { return (c.st[0] + (millis() - c.t0) / 9000) % n->n; }
 static void news_draw(CardCtx& c) {
@@ -531,51 +529,338 @@ static void iss_speak(CardCtx& c, String& s) {
 const CardType CT_iss = {"iss", sizeof(IssData), 30, 0, nullptr, iss_draw, nullptr, iss_fetch, iss_speak, nullptr};
 
 // ================================================================== YouTube
-struct YtData { bool ok; double subs, views; uint32_t videos; };
+struct YtMedia {
+  bool ok;
+  bool isShort;
+  bool isNew;
+  char title[72];
+  char age[16];
+  double views;
+};
+
+struct YtData {
+  bool ok;
+  char title[32];
+  double subs, views;
+  uint32_t videos;
+  uint32_t nextMilestone;
+  uint32_t toMilestone;
+  uint8_t milestonePct;
+  YtMedia latestVideo;
+  YtMedia latestShort;
+};
+
+static uint32_t parseIsoDuration(const char* s) {
+  if (!s || s[0] != 'P') return 0;
+  uint32_t sec = 0, cur = 0;
+  for (const char* p = s; *p; p++) {
+    if (isdigit((unsigned char)*p)) {
+      cur = cur * 10 + (*p - '0');
+    } else if (*p == 'H') {
+      sec += cur * 3600;
+      cur = 0;
+    } else if (*p == 'M') {
+      sec += cur * 60;
+      cur = 0;
+    } else if (*p == 'S') {
+      sec += cur;
+      cur = 0;
+    }
+  }
+  return sec;
+}
+
+static bool hasShortTag(const char* title) {
+  if (!title) return false;
+  String t = title;
+  t.toLowerCase();
+  return (t.indexOf("#short") >= 0);
+}
+
+struct TempUpload {
+  char id[16];
+  char title[72];
+  char age[16];
+  bool isNew;
+};
+
 static bool youtube_fetch(JsonObject p, void* d) {
   String ch = p["channel"] | "", key = p["key"] | "";
   if (!key.length()) { LOCK(); key = cfg["keys"]["youtube"] | ""; UNLOCK(); }
+  ch.trim();
   if (!ch.length() || !key.length()) return false;
+
+  String url = "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&fields=" + urlEncode("items(snippet(title),statistics(subscriberCount,viewCount,videoCount),contentDetails(relatedPlaylists(uploads)))") + "&key=" + key;
+  if (ch.startsWith("UC") && ch.length() == 24) {
+    url += "&id=" + ch;
+  } else {
+    String handle = ch;
+    if (handle.startsWith("@")) handle = handle.substring(1);
+    url += "&forHandle=" + handle;
+  }
+
   JsonDocument doc;
-  if (!httpJson("https://www.googleapis.com/youtube/v3/channels?part=statistics&id=" + ch + "&key=" + key, doc)) return false;
-  JsonObject st = doc["items"][0]["statistics"];
+  if (!httpJson(url, doc)) return false;
+  JsonObject item = doc["items"][0];
+  if (item.isNull()) return false;
+
+  JsonObject st = item["statistics"];
+  JsonObject sn = item["snippet"];
   if (st.isNull()) return false;
+
   YtData* y = (YtData*)d;
   double old = y->subs;
+
+  if (!sn.isNull()) {
+    safeCopy(y->title, sn["title"] | "", sizeof(y->title));
+  } else {
+    safeCopy(y->title, "YouTube", sizeof(y->title));
+  }
+
   y->subs = atof(st["subscriberCount"] | "0");
   y->views = atof(st["viewCount"] | "0");
   y->videos = atol(st["videoCount"] | "0");
-  int ms = p["milestone"] | 1000;
-  if (y->ok && ms > 0 && floor(y->subs / ms) > floor(old / ms)) {
-    char b[48];
-    snprintf(b, sizeof(b), "%s subscribers!", fmtNum(floor(y->subs / ms) * ms).c_str());
-    notify("Milestone!", b, E_EXCITED, "sfx:cheer", EV_NOTIFY, true, 15);
+  y->ok = true;
+
+  // Milestone calculation
+  uint32_t userStep = p["milestone"] | 0;
+  uint32_t s = (uint32_t)y->subs;
+  uint32_t step = userStep;
+  if (step < 100) {
+    if (s < 1000) step = 100;
+    else if (s < 10000) step = 1000;
+    else if (s < 50000) step = 5000;
+    else if (s < 100000) step = 10000;
+    else if (s < 1000000) step = 50000;
+    else step = 100000;
   }
+  y->nextMilestone = ((s / step) + 1) * step;
+  uint32_t prevM = y->nextMilestone - step;
+  uint32_t curProg = (s > prevM) ? (s - prevM) : 0;
+  float frac = step > 0 ? ((float)curProg / (float)step) : 0.0f;
+  if (frac < 0.0f) frac = 0.0f;
+  if (frac > 1.0f) frac = 1.0f;
+  y->milestonePct = (uint8_t)(frac * 100.0f);
+  y->toMilestone = (y->nextMilestone > s) ? (y->nextMilestone - s) : 0;
+
+  // Milestone celebration alert
+  if (y->ok && old > 0 && s > (uint32_t)old && (s / step) > ((uint32_t)old / step)) {
+    char b[48];
+    snprintf(b, sizeof(b), "%s reached %s subs!", y->title[0] ? y->title : "Channel", fmtNum((s / step) * step).c_str());
+    notify("MILESTONE!", b, E_EXCITED, "sfx:cheer", EV_NOTIFY, true, 15);
+  }
+
+  // Reset latest media
+  memset(&y->latestVideo, 0, sizeof(y->latestVideo));
+  memset(&y->latestShort, 0, sizeof(y->latestShort));
+
+  String uploadsId = item["contentDetails"]["relatedPlaylists"]["uploads"] | "";
+  if (!uploadsId.length() && ch.startsWith("UC") && ch.length() == 24) {
+    uploadsId = "UU" + ch.substring(2);
+  }
+
+  // Free channel doc heap before subsequent TLS requests
+  doc.clear();
+
+  if (uploadsId.length()) {
+    String plUrl = "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=" + uploadsId +
+                   "&maxResults=4&fields=" + urlEncode("items(snippet(title,publishedAt,resourceId(videoId)))") +
+                   "&key=" + key;
+    JsonDocument plDoc;
+    JsonDocument plFilter;
+    plFilter["items"][0]["snippet"]["title"] = true;
+    plFilter["items"][0]["snippet"]["publishedAt"] = true;
+    plFilter["items"][0]["snippet"]["resourceId"]["videoId"] = true;
+
+    TempUpload tmp[4];
+    int nTmp = 0;
+    String idList = "";
+
+    if (httpJson(plUrl, plDoc, &plFilter)) {
+      JsonArray arr = plDoc["items"].as<JsonArray>();
+      for (JsonObject plItem : arr) {
+        if (nTmp >= 4) break;
+        JsonObject snip = plItem["snippet"];
+        String vId = snip["resourceId"]["videoId"] | "";
+        if (!vId.length()) continue;
+
+        safeCopy(tmp[nTmp].id, vId.c_str(), sizeof(tmp[nTmp].id));
+        safeCopy(tmp[nTmp].title, snip["title"] | "", sizeof(tmp[nTmp].title));
+
+        const char* pubAt = snip["publishedAt"] | "";
+        tmp[nTmp].age[0] = '\0';
+        tmp[nTmp].isNew = false;
+        if (pubAt[0]) {
+          time_t pubT = parseISO(pubAt);
+          time_t now = time(nullptr);
+          int32_t diff = (int32_t)(now - pubT);
+          if (diff < 0) diff = 0;
+          if (diff < 3600) snprintf(tmp[nTmp].age, sizeof(tmp[nTmp].age), "%dm ago", max(1, (int)(diff / 60)));
+          else if (diff < 86400) snprintf(tmp[nTmp].age, sizeof(tmp[nTmp].age), "%dh ago", (int)(diff / 3600));
+          else if (diff < 7 * 86400) snprintf(tmp[nTmp].age, sizeof(tmp[nTmp].age), "%dd ago", (int)(diff / 86400));
+          else if (diff < 30 * 86400) snprintf(tmp[nTmp].age, sizeof(tmp[nTmp].age), "%dw ago", (int)(diff / (7 * 86400)));
+          else snprintf(tmp[nTmp].age, sizeof(tmp[nTmp].age), "%dmo ago", (int)(diff / (30 * 86400)));
+          tmp[nTmp].isNew = (diff <= 48 * 3600);
+        }
+
+        if (idList.length()) idList += ",";
+        idList += vId;
+        nTmp++;
+      }
+    }
+
+    plDoc.clear(); // Free heap before next TLS call
+
+    if (idList.length()) {
+      String vUrl = "https://www.googleapis.com/youtube/v3/videos?part=contentDetails,statistics&id=" + idList +
+                    "&fields=" + urlEncode("items(id,statistics(viewCount),contentDetails(duration))") +
+                    "&key=" + key;
+      JsonDocument vDoc;
+      JsonDocument vFilter;
+      vFilter["items"][0]["id"] = true;
+      vFilter["items"][0]["statistics"]["viewCount"] = true;
+      vFilter["items"][0]["contentDetails"]["duration"] = true;
+
+      if (httpJson(vUrl, vDoc, &vFilter)) {
+        JsonArray vItems = vDoc["items"].as<JsonArray>();
+        for (JsonObject vObj : vItems) {
+          const char* curId = vObj["id"] | "";
+          if (!curId[0]) continue;
+
+          int idx = -1;
+          for (int i = 0; i < nTmp; i++) {
+            if (strcmp(tmp[i].id, curId) == 0) { idx = i; break; }
+          }
+          if (idx < 0) continue;
+
+          double vCount = vObj["statistics"]["viewCount"].as<double>();
+          const char* durStr = vObj["contentDetails"]["duration"] | "";
+          uint32_t dur = parseIsoDuration(durStr);
+          bool isShort = (dur > 0 && dur <= 180) || hasShortTag(tmp[idx].title);
+
+          if (isShort && !y->latestShort.ok) {
+            y->latestShort.ok = true;
+            y->latestShort.isShort = true;
+            y->latestShort.views = vCount;
+            y->latestShort.isNew = tmp[idx].isNew;
+            safeCopy(y->latestShort.title, tmp[idx].title, sizeof(y->latestShort.title));
+            safeCopy(y->latestShort.age, tmp[idx].age, sizeof(y->latestShort.age));
+          } else if (!isShort && !y->latestVideo.ok) {
+            y->latestVideo.ok = true;
+            y->latestVideo.isShort = false;
+            y->latestVideo.views = vCount;
+            y->latestVideo.isNew = tmp[idx].isNew;
+            safeCopy(y->latestVideo.title, tmp[idx].title, sizeof(y->latestVideo.title));
+            safeCopy(y->latestVideo.age, tmp[idx].age, sizeof(y->latestVideo.age));
+          }
+        }
+      }
+    }
+
+    // Fallback if neither video nor short was categorized but items were retrieved
+    if (nTmp > 0 && !y->latestVideo.ok && !y->latestShort.ok) {
+      y->latestVideo.ok = true;
+      y->latestVideo.isShort = false;
+      safeCopy(y->latestVideo.title, tmp[0].title, sizeof(y->latestVideo.title));
+      safeCopy(y->latestVideo.age, tmp[0].age, sizeof(y->latestVideo.age));
+      y->latestVideo.isNew = tmp[0].isNew;
+    }
+  }
+
   y->ok = true;
   return true;
 }
+
+static void drawMediaPage(CardCtx& c, const char* chName, const char* rBadge, const YtMedia& m) {
+  drawHeader(chName, rBadge);
+
+  u8g2.setFont(F_TINY);
+  u8g2.drawStr(2, 21, m.isShort ? "Latest Short:" : "Latest Video:");
+
+  if (m.isNew) {
+    drawBadge(126, 21, "NEW");
+  } else {
+    drawBadge(126, 21, m.isShort ? "SHORT" : "VIDEO");
+  }
+
+  u8g2.setFont(F_SMALL);
+  marquee(2, 33, 124, m.title, c.t0, 24);
+
+  drawDottedHLine(0, 46, 128);
+
+  u8g2.setFont(F_SMALL);
+  char vRow[48];
+  snprintf(vRow, sizeof(vRow), "%s views  |  %s", fmtNum(m.views).c_str(), m.age[0] ? m.age : "Recent");
+  textCenter(58, vRow);
+}
+
 static void youtube_draw(CardCtx& c) {
   YtData* y = (YtData*)c.d;
-  if (!(c.p["channel"] | "")[0]) { drawCenteredMsg("Set channel ID + key", "in the card settings"); return; }
+  if (!(c.p["channel"] | "")[0]) { drawCenteredMsg("Set channel ID or handle", "in card settings"); return; }
   if (!dataGate(y->ok, "YouTube stats")) return;
-  drawTitle(c, "YouTube");
-  u8g2.drawRBox(2, 16, 22, 16, 4);
-  u8g2.setDrawColor(0);
-  u8g2.drawTriangle(10, 20, 10, 28, 17, 24);
-  u8g2.setDrawColor(1);
-  u8g2.setFont(F_HELV14);
-  String s = y->subs < 100000 ? String((long)y->subs) : fmtNum(y->subs);
-  u8g2.drawStr(30, 32, s.c_str());
-  u8g2.setFont(F_SMALL);
-  u8g2.drawStr(30, 41, "subscribers");
-  char b[40];
-  snprintf(b, sizeof(b), "%s views  %lu videos", fmtNum(y->views).c_str(), (unsigned long)y->videos);
-  textCenter(58, b);
+
+  int mediaPages = (y->latestVideo.ok ? 1 : 0) + (y->latestShort.ok ? 1 : 0);
+  int totalPages = 1 + mediaPages;
+  bool autoCycle = (c.p["cycle"] | true);
+  uint8_t page = (autoCycle && totalPages > 1) ? (((millis() - c.t0) / 4500) % totalPages) : 0;
+
+  const char* chName = y->title[0] ? y->title : "YouTube";
+  char pBuf[8];
+  snprintf(pBuf, sizeof(pBuf), "%d/%d", page + 1, totalPages);
+  const char* rBadge = (totalPages > 1) ? pBuf : "Stats";
+
+  if (page == 0) {
+    drawHeader(chName, rBadge);
+
+    // YouTube Red Play Button icon
+    u8g2.drawRBox(2, 16, 22, 16, 4);
+    u8g2.setDrawColor(0);
+    u8g2.drawTriangle(10, 20, 10, 28, 17, 24);
+    u8g2.setDrawColor(1);
+
+    u8g2.setFont(F_HELV14);
+    String s = y->subs < 100000 ? String((long)y->subs) : fmtNum(y->subs);
+    u8g2.drawStr(29, 31, s.c_str());
+
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(29, 41, "subscribers");
+
+    drawDottedHLine(0, 47, 128);
+
+    u8g2.setFont(F_SMALL);
+    char b[48];
+    snprintf(b, sizeof(b), "%s views  |  %lu vids", fmtNum(y->views).c_str(), (unsigned long)y->videos);
+    textCenter(58, b);
+
+  } else {
+    // Media subpages (Latest Video and/or Latest Short)
+    if (y->latestVideo.ok && y->latestShort.ok) {
+      if (page == 1) {
+        drawMediaPage(c, chName, rBadge, y->latestVideo);
+      } else {
+        drawMediaPage(c, chName, rBadge, y->latestShort);
+      }
+    } else if (y->latestVideo.ok) {
+      drawMediaPage(c, chName, rBadge, y->latestVideo);
+    } else if (y->latestShort.ok) {
+      drawMediaPage(c, chName, rBadge, y->latestShort);
+    }
+  }
 }
+
 static void youtube_speak(CardCtx& c, String& s) {
   YtData* y = (YtData*)c.d;
-  if (y->ok) s = "The channel has " + numWords((long)y->subs) + " subscribers.";
+  if (!y || !y->ok) { s = "YouTube data not available."; return; }
+  s = (y->title[0] ? String(y->title) : "YouTube channel") + " has " + numWords((long)y->subs) + " subscribers and " +
+      fmtNum(y->views) + " total views across " + String(y->videos) + " videos.";
+  if (y->latestVideo.ok) {
+    s += " Latest video, " + String(y->latestVideo.title) + ", has " + fmtNum(y->latestVideo.views) + " views.";
+  }
+  if (y->latestShort.ok) {
+    s += " Latest short, " + String(y->latestShort.title) + ", has " + fmtNum(y->latestShort.views) + " views.";
+  }
 }
+
 const CardType CT_youtube = {"youtube", sizeof(YtData), 1800, 0, nullptr, youtube_draw, nullptr, youtube_fetch, youtube_speak, nullptr};
 
 // ================================================================== GitHub

@@ -3,7 +3,6 @@
 #include "core.h"
 
 extern U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
-extern uint8_t shadowBuf[1024];   // copy of last frame for the live preview
 extern int8_t burnX, burnY;        // burn-in protection offset for static cards
 
 #define F_TINY   u8g2_font_4x6_tf

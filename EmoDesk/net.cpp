@@ -33,15 +33,21 @@ void timeApply() {
 
 static void beginSta(int profile = 0) {
   if (profile == 1 || profile == 2) netActiveProfile = profile;
-  String ssid = (netActiveProfile == 2) ? (cfg["wifi"]["ssid2"] | "") : (cfg["wifi"]["ssid"] | "");
-  String pass = (netActiveProfile == 2) ? (cfg["wifi"]["pass2"] | "") : (cfg["wifi"]["pass"] | "");
+  String ssid, pass;
+  bool txLow = true;
+  LOCK();
+  ssid = (netActiveProfile == 2) ? (cfg["wifi"]["ssid2"] | "") : (cfg["wifi"]["ssid"] | "");
+  pass = (netActiveProfile == 2) ? (cfg["wifi"]["pass2"] | "") : (cfg["wifi"]["pass"] | "");
   if (ssid.length() == 0 && netActiveProfile == 2) {
     netActiveProfile = 1;
     ssid = cfg["wifi"]["ssid"] | "";
     pass = cfg["wifi"]["pass"] | "";
   }
+  txLow = cfg["wifi"]["txLow"] | true;
+  UNLOCK();
+  WiFi.setSleep(false);
   WiFi.begin(ssid.c_str(), pass.c_str());
-  if (cfg["wifi"]["txLow"] | true) WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  if (txLow) WiFi.setTxPower(WIFI_POWER_8_5dBm);
 }
 
 static void startPortal() {
@@ -50,6 +56,7 @@ static void startPortal() {
   dns.start(53, "*", WiFi.softAPIP());
   portal = true;
   portalStart = millis();
+  lastRetry = millis();
   if (netHasCreds()) beginSta(1);
   logf("[NET] Setup AP 'EmoDesk-Setup' at %s", WiFi.softAPIP().toString().c_str());
 }
@@ -84,9 +91,9 @@ void netBegin() {
   String host = cfg["host"] | DEFAULT_HOST;
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.setHostname(host.c_str());
   WiFi.setAutoReconnect(true);
-  timeApply();
   if (!netHasCreds()) { startPortal(); return; }
 
   String s1 = cfg["wifi"]["ssid"] | "";
@@ -96,10 +103,14 @@ void netBegin() {
   if (s1.length() > 0) {
     beginSta(1);
     uint32_t t0 = millis();
-    uint32_t waitMs = (s2.length() > 0) ? 9000 : 18000;
+    uint32_t waitMs = (s2.length() > 0) ? 5000 : 8000;
+    uint32_t lastDraw = 0;
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < waitMs) {
-      drawConnecting(s1.c_str(), t0);
-      delay(60);
+      if (millis() - lastDraw >= 200) {
+        lastDraw = millis();
+        drawConnecting(s1.c_str(), t0);
+      }
+      delay(20);
     }
   }
 
@@ -107,12 +118,16 @@ void netBegin() {
   if (WiFi.status() != WL_CONNECTED && s2.length() > 0) {
     logf("[NET] Primary Wi-Fi '%s' not reached, trying backup '%s'...", s1.c_str(), s2.c_str());
     WiFi.disconnect();
-    delay(100);
+    delay(50);
     beginSta(2);
     uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) {
-      drawConnecting(s2.c_str(), t0);
-      delay(60);
+    uint32_t lastDraw = 0;
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) {
+      if (millis() - lastDraw >= 200) {
+        lastDraw = millis();
+        drawConnecting(s2.c_str(), t0);
+      }
+      delay(20);
     }
   }
 
@@ -121,6 +136,7 @@ void netBegin() {
   } else {
     logf("WiFi connection failed - setup AP started, will retry in background");
     startPortal();
+    lastRetry = millis();
   }
 }
 
@@ -128,8 +144,24 @@ void netLoop() {
   if (portal) dns.processNextRequest();
   bool c = WiFi.status() == WL_CONNECTED;
   if (c && !online) onConnect();
-  if (!c && online) { online = false; logf("[NET] Wi-Fi lost"); }
+
+  uint32_t retrySec = 60;
+  LOCK();
+  if (!cfg["wifi"]["retrySec"].isNull()) retrySec = cfg["wifi"]["retrySec"].as<uint32_t>();
+  else if (!cfg["wifi"]["retryMin"].isNull()) retrySec = cfg["wifi"]["retryMin"].as<uint32_t>() * 60;
+  UNLOCK();
+  if (retrySec < 5) retrySec = 5;
+  if (retrySec > 3600) retrySec = 3600;
+  uint32_t retryMs = retrySec * 1000UL;
+
   uint32_t now = millis();
+
+  if (!c && online) {
+    online = false;
+    logf("[NET] Wi-Fi lost, will retry reconnect every %us", (unsigned)retrySec);
+    lastRetry = now;
+  }
+
   if (portal && c && netHasCreds() && now - portalStart > 90000) {
     dns.stop();
     WiFi.softAPdisconnect(true);
@@ -137,16 +169,22 @@ void netLoop() {
     portal = false;
     logf("[NET] Setup AP closed");
   }
-  if (!c && netHasCreds() && now - lastRetry > 20000) {
+
+  if (!c && netHasCreds() && now - lastRetry > retryMs) {
     lastRetry = now;
-    String s1 = cfg["wifi"]["ssid"] | "";
-    String s2 = cfg["wifi"]["ssid2"] | "";
+    String s1, s2;
+    LOCK();
+    s1 = cfg["wifi"]["ssid"] | "";
+    s2 = cfg["wifi"]["ssid2"] | "";
+    UNLOCK();
     if (s1.length() > 0 && s2.length() > 0) {
       netActiveProfile = (netActiveProfile == 1) ? 2 : 1;
-      logf("[NET] Retrying with profile #%d (%s)...", netActiveProfile, netActiveProfile == 2 ? s2.c_str() : s1.c_str());
+      logf("[NET] Retrying Wi-Fi with profile #%d (%s) (retry interval: %us)...",
+           netActiveProfile, netActiveProfile == 2 ? s2.c_str() : s1.c_str(), (unsigned)retrySec);
       beginSta(netActiveProfile);
     } else {
-      if (portal) beginSta(1); else WiFi.reconnect();
+      logf("[NET] Retrying Wi-Fi connection to '%s' (retry interval: %us)...", s1.c_str(), (unsigned)retrySec);
+      beginSta(1);
     }
   }
 }
@@ -192,23 +230,28 @@ int httpGet(const String& url, std::function<bool(Stream&)> cb, const char* hNam
   bool ok;
   if (tls) {
     sc = new WiFiClientSecure();
+    if (!sc) { gNetBusy = false; return -4; }
     sc->setInsecure();
     ok = http.begin(*sc, url);
   } else {
     pc = new WiFiClient();
+    if (!pc) { gNetBusy = false; return -4; }
     ok = http.begin(*pc, url);
   }
   int code = -1;
   if (ok) {
     http.useHTTP10(true);
-    http.setTimeout(20000);
-    http.setConnectTimeout(15000);
+    http.setTimeout(5000);
+    http.setConnectTimeout(4000);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setUserAgent(browserUA ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
                                 : "EmoDesk/1.0 (ESP32)");
     if (hName && hVal) http.addHeader(hName, hVal);
     code = http.GET();
-    if (code == 200 && cb && !cb(http.getStream())) code = -2;
+    if (code == 200 && cb) {
+      http.getStream().setTimeout(4000);
+      if (!cb(http.getStream())) code = -2;
+    }
     http.end();
   }
   delete sc;
@@ -246,14 +289,16 @@ String urlEncode(const char* s) {
 
 // ------------------------------------------------------------------ task
 static void netTask(void*) {
-  vTaskDelay(pdMS_TO_TICKS(2500));
+  vTaskDelay(pdMS_TO_TICKS(150));
   for (;;) {
     if (!otaBusy && online) {
-      feedsLoop();
+      // Prioritize active visible card first
       cardsFetchLoop();
+      // Background feeds run after visible card is serviced
+      feedsLoop();
     }
     gNetStackFree = uxTaskGetStackHighWaterMark(NULL);
-    vTaskDelay(pdMS_TO_TICKS(150));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 

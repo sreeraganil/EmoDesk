@@ -212,7 +212,9 @@ static void hCardsPost() {
 static void hScreen() {
   powerActivity();
   server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/octet-stream", (const char*)shadowBuf, sizeof(shadowBuf));
+  LOCK();
+  server.send_P(200, "application/octet-stream", (const char*)u8g2.getBufferPtr(), 1024);
+  UNLOCK();
 }
 
 static void hInput() {

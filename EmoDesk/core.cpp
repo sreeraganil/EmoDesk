@@ -87,8 +87,12 @@ bool saveJson(const char* path, JsonDocument& d) {
   String tmp = String(path) + ".tmp";
   File f = LittleFS.open(tmp, "w");
   if (!f) return false;
-  serializeJson(d, f);
+  size_t written = serializeJson(d, f);
   f.close();
+  if (written == 0) {
+    LittleFS.remove(tmp);
+    return false;
+  }
   LittleFS.remove(path);
   return LittleFS.rename(tmp, path);
 }
@@ -173,12 +177,13 @@ void coreLoop() {
 }
 
 // ------------------------------------------------------------------ log
-#define LOG_LINES 64
-static char logBuf[LOG_LINES][128];
+#define LOG_LINES 32
+#define LOG_LINE_LEN 96
+static char logBuf[LOG_LINES][LOG_LINE_LEN];
 static uint8_t logHead = 0, logCount = 0;
 
 void logf(const char* fmt, ...) {
-  char tmp[140];
+  char tmp[LOG_LINE_LEN];
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(tmp, sizeof(tmp), fmt, ap);
@@ -193,11 +198,13 @@ void logf(const char* fmt, ...) {
   }
 #endif
   struct tm t;
-  char ts[12] = "--:--:--";
+  char ts[10] = "--:--:--";
   if (nowTm(t)) strftime(ts, sizeof(ts), "%H:%M:%S", &t);
+  LOCK();
   snprintf(logBuf[logHead], sizeof(logBuf[0]), "%s %s", ts, tmp);
   logHead = (logHead + 1) % LOG_LINES;
   if (logCount < LOG_LINES) logCount++;
+  UNLOCK();
 }
 
 String logDump() {
@@ -383,15 +390,18 @@ void notify(const char* title, const char* text, int emo, const char* snd, uint8
   static char lastTitle[24] = "";
   static char lastText[64] = "";
   static uint32_t lastNotifyAt = 0;
+  LOCK();
   uint32_t now = millis();
   if (kind != NK_ALARM && (now - lastNotifyAt < 8000) &&
       !strcmp(lastTitle, title ? title : "") &&
       !strcmp(lastText, text ? text : "")) {
+    UNLOCK();
     return;
   }
   safeCopy(lastTitle, title ? title : "", sizeof(lastTitle));
   safeCopy(lastText, text ? text : "", sizeof(lastText));
   lastNotifyAt = now;
+  UNLOCK();
 
   Notif n;
   memset(&n, 0, sizeof(n));

@@ -154,5 +154,5 @@ void loop() {
     lastFrame = now;
     render();
   }
-  delay(powerSaver() ? 6 : 1);   // longer idle slices let the CPU nap between frames
+  delay(!displayIsOn() ? 20 : (powerSaver() ? 6 : 1));   // longer idle slices let the CPU nap between frames
 }

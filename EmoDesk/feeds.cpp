@@ -342,7 +342,10 @@ static void cricLoop(uint32_t now) {
     return;
   }
   CricData* nd = (CricData*)calloc(1, sizeof(CricData));
-  if (!nd) return;
+  if (!nd) {
+    nextCric = now + 15000UL;
+    return;
+  }
   JsonArray arr = doc.as<JsonArray>();
 
   for (int pass = 0; pass < 5; pass++) {

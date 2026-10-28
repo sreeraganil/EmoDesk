@@ -2,7 +2,6 @@
 #include <Wire.h>
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SDA);
-uint8_t shadowBuf[1024];
 int8_t burnX = 0, burnY = 0;
 static bool dispOn = true;
 static uint32_t lastBurn = 0;
@@ -38,7 +37,6 @@ void displaySend() {
     }
   } else { burnX = burnY = 0; }
   if (dispOn) u8g2.sendBuffer();
-  memcpy(shadowBuf, u8g2.getBufferPtr(), 1024);
 }
 
 void displayPower(bool on) {
@@ -165,14 +163,19 @@ void drawHeader(const char* title, const char* right) {
         char buf[64];
         safeCopy(buf, title, sizeof(buf));
         int len = strlen(buf);
+        int avgW = max(1, tw / max(1, len));
+        int targetLen = max(2, min(len - 2, (maxTitleW - 6) / avgW));
+        while (len > targetLen) {
+          len--;
+          while (len > 0 && ((uint8_t)buf[len] & 0xC0) == 0x80) len--;
+          buf[len] = '\0';
+        }
+        if (len >= 2) { buf[len - 1] = '.'; buf[len - 2] = '.'; }
         while (len > 2 && u8g2.getUTF8Width(buf) > maxTitleW) {
           len--;
           while (len > 0 && ((uint8_t)buf[len] & 0xC0) == 0x80) len--;
           buf[len] = '\0';
-          if (len >= 2) {
-            buf[len - 1] = '.';
-            buf[len - 2] = '.';
-          }
+          if (len >= 2) { buf[len - 1] = '.'; buf[len - 2] = '.'; }
         }
         u8g2.drawUTF8(1, 8, buf);
       }

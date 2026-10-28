@@ -85,7 +85,6 @@ bool cardVisible(int i) {
 
 // ------------------------------------------------------------------ slide transition
 static uint8_t oldBuf[1024];
-static uint8_t newBuf[1024];
 static uint32_t transStart = 0;
 static int transDir = 1;
 static bool inTrans = false;
@@ -117,7 +116,8 @@ static void enterCard(int i) {
   inputSetRaw(ci[i].t->flags & CF_RAW);
   if (ci[i].t->enter) { CardCtx c = cardCtx(i); ci[i].t->enter(c); }
   if (ci[i].t->fetch) {
-    if (ci[i].nextFetch == 0 || (int32_t)(ci[i].nextFetch - millis()) > 5000) {
+    bool hasData = ci[i].d && ((bool*)ci[i].d)[0];
+    if (!hasData || (int32_t)(millis() - ci[i].nextFetch) >= 0) {
       ci[i].nextFetch = millis();
     }
   }
@@ -279,7 +279,7 @@ void cardsLoop() {
 }
 
 void cardsDraw() {
-  if (!cn || !cardVisible(cur)) {
+  if (!cn || cur < 0 || cur >= cn || !cardVisible(cur) || !ci[cur].t || !ci[cur].t->draw) {
     drawCenteredMsg("No cards to show", "Add cards in the dashboard");
     return;
   }
@@ -290,9 +290,8 @@ void cardsDraw() {
     uint32_t elapsed = millis() - transStart;
     const uint32_t TRANS_MS = 160;
     if (elapsed < TRANS_MS) {
-      // 1. Draw new card to u8g2 buffer and capture it
+      // 1. Draw new card to u8g2 buffer
       ci[cur].t->draw(c);
-      memcpy(newBuf, u8g2.getBufferPtr(), 1024);
 
       // 2. Compute smooth ease-out horizontal shift
       float prog = (float)elapsed / (float)TRANS_MS;
@@ -302,21 +301,22 @@ void cardsDraw() {
       if (shift < 0) shift = 0;
       if (shift > 128) shift = 128;
 
-      // 3. Composite horizontal slide into u8g2 buffer (8 vertical pages of 128 bytes)
+      // 3. Composite horizontal slide directly without intermediate 1KB buffer
       uint8_t* dst = u8g2.getBufferPtr();
+      uint8_t tmpLine[128];
       for (int p = 0; p < 8; p++) {
         uint8_t* dPage = dst + p * 128;
         const uint8_t* oPage = oldBuf + p * 128;
-        const uint8_t* nPage = newBuf + p * 128;
         if (transDir > 0) {
           // Slide left: old exits left, new enters from right
-          for (int x = 0; x < 128 - shift; x++) dPage[x] = oPage[x + shift];
-          for (int x = 128 - shift; x < 128; x++) dPage[x] = nPage[x - (128 - shift)];
+          for (int x = 0; x < 128 - shift; x++) tmpLine[x] = oPage[x + shift];
+          for (int x = 128 - shift; x < 128; x++) tmpLine[x] = dPage[x - (128 - shift)];
         } else {
           // Slide right: old exits right, new enters from left
-          for (int x = 0; x < shift; x++) dPage[x] = nPage[128 - shift + x];
-          for (int x = shift; x < 128; x++) dPage[x] = oPage[x - shift];
+          for (int x = 0; x < shift; x++) tmpLine[x] = dPage[128 - shift + x];
+          for (int x = shift; x < 128; x++) tmpLine[x] = oPage[x - shift];
         }
+        memcpy(dPage, tmpLine, 128);
       }
       return;
     } else {
@@ -362,9 +362,13 @@ void cardsFetchLoop() {
   uint32_t now = millis();
   LOCK();
   if (cur < 0 || cur >= cn) { UNLOCK(); return; }
+  
+  // Only fetch the currently active card to reduce RAM usage and power consumption
+  if (!ci[cur].t->fetch || !(cardObj(cur)["en"] | true) || (int32_t)(now - ci[cur].nextFetch) < 0) {
+    UNLOCK();
+    return;
+  }
   int pick = cur;
-  if (!ci[pick].t->fetch || !(cardObj(pick)["en"] | true)) { UNLOCK(); return; }
-  if ((int32_t)(now - ci[pick].nextFetch) < 0) { UNLOCK(); return; }
   uint32_t g = gen;
   const CardType* t = ci[pick].t;
   JsonDocument pd;
@@ -376,12 +380,12 @@ void cardsFetchLoop() {
   UNLOCK();
 
   gFetchNext = 0;
-  logf("[FETCH] Card #%d [%s] fetching...", pick, t->id);
+  logf("[FETCH] Active Card #%d [%s] fetching...", pick, t->id);
   bool ok = t->fetch(pd.as<JsonObject>(), tmp);
   uint32_t next = gFetchNext ? gFetchNext : (refreshMin > 0 ? refreshMin * 60 : t->refresh);
   if (!ok) next = 30;
   else next *= powerScale();   // battery saver: fetch less often
-  logf("[FETCH] Card #%d [%s] %s (next in %us)", pick, t->id, ok ? "OK" : "FAILED", (unsigned)next);
+  logf("[FETCH] Active Card #%d [%s] %s (next in %us)", pick, t->id, ok ? "OK" : "FAILED", (unsigned)next);
 
   LOCK();
   if (g == gen) {
