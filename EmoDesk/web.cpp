@@ -1,5 +1,8 @@
 #include "web.h"
 #include <WebServer.h>
+#include <WiFiServer.h>
+#include <SHA1Builder.h>
+#include <base64.h>
 #include <Update.h>
 #include <WiFi.h>
 #include "cards.h"
@@ -703,6 +706,183 @@ static void hFactory() {
 }
 
 // ------------------------------------------------------------------ setup
+
+// ------------------------------------------------------------------ WebSocket Server (port 81)
+static WiFiServer wsServer(81);
+
+struct WsConn {
+  WiFiClient client;
+  bool active = false;
+};
+static const int MAX_WS_CLIENTS = 2;
+static WsConn wsClients[MAX_WS_CLIENTS];
+static uint32_t lastWsPush = 0;
+static uint8_t lastWsFrameBuf[1024];
+static bool hasLastFrame = false;
+
+static String computeWsAccept(const String& key) {
+  String combined = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  SHA1Builder sha;
+  sha.begin();
+  sha.add(combined);
+  sha.calculate();
+  uint8_t hash[20];
+  sha.getBytes(hash);
+  return base64::encode(hash, 20);
+}
+
+static void handleNewWsClient(WiFiClient c) {
+  c.setTimeout(150);
+  String key = "";
+  uint32_t start = millis();
+  while (c.connected() && millis() - start < 1000) {
+    if (c.available()) {
+      String line = c.readStringUntil('\n');
+      line.trim();
+      if (line.length() == 0) break;
+      if (line.startsWith("Sec-WebSocket-Key:") || line.startsWith("sec-websocket-key:")) {
+        key = line.substring(line.indexOf(':') + 1);
+        key.trim();
+      }
+    } else {
+      delay(5);
+    }
+  }
+
+  if (key.length() > 0) {
+    String accept = computeWsAccept(key);
+    String resp = "HTTP/1.1 101 Switching Protocols\r\n"
+                  "Upgrade: websocket\r\n"
+                  "Connection: Upgrade\r\n"
+                  "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
+    c.print(resp);
+    c.flush();
+    c.setNoDelay(true);
+
+    int slot = -1;
+    for (int i = 0; i < MAX_WS_CLIENTS; i++) {
+      if (!wsClients[i].active || !wsClients[i].client.connected()) {
+        if (wsClients[i].active) wsClients[i].client.stop();
+        slot = i;
+        break;
+      }
+    }
+    if (slot >= 0) {
+      wsClients[slot].client = c;
+      wsClients[slot].active = true;
+      logf("[WS] Client connected on slot %d", slot);
+
+      LOCK();
+      const uint8_t* ptr = (const uint8_t*)u8g2.getBufferPtr();
+      if (ptr) {
+        uint8_t hdr[4] = { 0x82, 0x7E, 0x04, 0x00 };
+        wsClients[slot].client.write(hdr, 4);
+        wsClients[slot].client.write(ptr, 1024);
+        wsClients[slot].client.flush();
+      }
+      UNLOCK();
+    } else {
+      c.stop();
+    }
+  } else {
+    c.stop();
+  }
+}
+
+static void pollWsClients() {
+  if (wsServer.hasClient()) {
+    WiFiClient c = wsServer.accept();
+    if (c) handleNewWsClient(c);
+  }
+
+  int activeCount = 0;
+  for (int i = 0; i < MAX_WS_CLIENTS; i++) {
+    if (!wsClients[i].active) continue;
+    if (!wsClients[i].client.connected()) {
+      wsClients[i].client.stop();
+      wsClients[i].active = false;
+      logf("[WS] Client on slot %d disconnected", i);
+      continue;
+    }
+    activeCount++;
+
+    while (wsClients[i].client.available() >= 2) {
+      uint8_t b0 = wsClients[i].client.read();
+      uint8_t b1 = wsClients[i].client.read();
+      uint8_t opcode = b0 & 0x0F;
+      bool masked = (b1 & 0x80) != 0;
+      uint64_t len = b1 & 0x7F;
+
+      if (len == 126) {
+        if (wsClients[i].client.available() < 2) break;
+        len = (wsClients[i].client.read() << 8) | wsClients[i].client.read();
+      } else if (len == 127) {
+        for (int k = 0; k < 8; k++) wsClients[i].client.read();
+        len = 0;
+      }
+
+      uint8_t mask[4] = {0};
+      if (masked) {
+        for (int k = 0; k < 4; k++) mask[k] = wsClients[i].client.read();
+      }
+
+      if (opcode == 0x08) { // Close
+        wsClients[i].client.stop();
+        wsClients[i].active = false;
+        break;
+      } else if (opcode == 0x09) { // Ping
+        uint8_t pong[2] = { 0x8A, 0x00 };
+        wsClients[i].client.write(pong, 2);
+        wsClients[i].client.flush();
+      } else if (opcode == 0x01 && len > 0 && len < 64) { // Text gesture/action
+        char msgBuf[64];
+        for (size_t k = 0; k < len; k++) {
+          uint8_t ch = wsClients[i].client.read();
+          msgBuf[k] = masked ? (ch ^ mask[k % 4]) : ch;
+        }
+        msgBuf[len] = '\0';
+        String g = String(msgBuf);
+        g.trim();
+        if (g == "next" || g == "prev" || g == "home" || g == "pet" || g == "feed") {
+          doAction(g.c_str());
+        } else {
+          uint8_t gv = G_NONE;
+          for (uint8_t gi = G_PRESS; gi <= G_VLONG; gi++) {
+            if (g == gestureName(gi)) gv = gi;
+          }
+          if (gv != G_NONE) cardsHandleGesture(gv);
+          else doAction(g.c_str());
+        }
+      } else {
+        for (size_t k = 0; k < len; k++) wsClients[i].client.read();
+      }
+    }
+  }
+
+  uint32_t now = millis();
+  if (activeCount > 0 && now - lastWsPush >= 80) {
+    lastWsPush = now;
+    LOCK();
+    const uint8_t* ptr = (const uint8_t*)u8g2.getBufferPtr();
+    if (ptr) {
+      bool changed = !hasLastFrame || (memcmp(ptr, lastWsFrameBuf, 1024) != 0);
+      if (changed) {
+        memcpy(lastWsFrameBuf, ptr, 1024);
+        hasLastFrame = true;
+        uint8_t hdr[4] = { 0x82, 0x7E, 0x04, 0x00 };
+        for (int i = 0; i < MAX_WS_CLIENTS; i++) {
+          if (wsClients[i].active && wsClients[i].client.connected()) {
+            wsClients[i].client.write(hdr, 4);
+            wsClients[i].client.write(ptr, 1024);
+            wsClients[i].client.flush();
+          }
+        }
+      }
+    }
+    UNLOCK();
+  }
+}
+
 void webBegin() {
   server.on("/", HTTP_GET, [] {
     if (netPortal() && !netHasCreds() && !server.hasArg("full")) { redirectSetup(); return; }
@@ -792,11 +972,13 @@ void webBegin() {
     fail(404, "not found");
   });
   server.begin();
-  logf("Web server ready");
+  wsServer.begin();
+  logf("Web server ready (HTTP port 80, WebSocket port 81)");
 }
 
 void webLoop() {
   server.handleClient();
+  pollWsClients();
   if (restartAt && (int32_t)(millis() - restartAt) > 0) {
     saveNow();
     delay(100);

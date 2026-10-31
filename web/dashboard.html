@@ -513,7 +513,7 @@ async function saveCfg(){try{const r=await api('/api/config',{body:CFG});toast(r
 
 async function saveCards(msg){try{await api('/api/cards',{body:CARDS});if(msg!==false)toast(msg||'Cards saved')}catch(e){toast('Not saved: '+e.message,1)}}
 
-const act=a=>post('/api/action?a='+a).then(status);
+const act=a=>{if(ws&&ws.readyState===1)ws.send(a);else post('/api/action?a='+a);setTimeout(status,300);};
 
 const gest=g=>post('/api/input?g='+g).then(()=>setTimeout(status,400));
 
@@ -958,7 +958,44 @@ function drawFrame(buf){
  }
 }
 
+let ws, wsTry=0, lastWsFrame=0;
+function connectWs(){
+ if(location.protocol==='file:')return;
+ const wsHost=location.hostname;
+ try{
+  ws=new WebSocket('ws://'+wsHost+':81/');
+  ws.binaryType='arraybuffer';
+  ws.onopen=()=>{
+   wsTry=0;
+   const t=$('#liveTag');if(t)t.textContent='live';
+  };
+  ws.onmessage=e=>{
+   lastWsFrame=Date.now();
+   if(e.data instanceof ArrayBuffer){
+    drawFrame(e.data);
+    const c=CARDS.cards.find(x=>x.id===ST.cardId);
+    const name=c?(c.name||(T[c.type]||{}).n||c.type):'—';
+    const m=$('#cardNow');if(m)m.textContent='Showing '+name;
+    const t=$('#liveTag');if(t)t.textContent='live';
+   }
+  };
+  ws.onclose=()=>{
+   const t=$('#liveTag');if(t)t.textContent='reconnecting...';
+   setTimeout(connectWs,Math.min(10000,1000*(2**Math.min(wsTry++,4))));
+  };
+  ws.onerror=()=>{if(ws)ws.close()};
+ }catch(_){
+  setTimeout(connectWs,5000);
+ }
+}
+connectWs();
+
 async function pollScreen(){
+ if(ws&&ws.readyState===1&&Date.now()-lastWsFrame<4000){
+  // WebSocket is streaming frames smoothly; skip HTTP polling
+  setTimeout(pollScreen,800);
+  return;
+ }
  if(document.visibilityState==='visible'){
   try{
    const b=await api('/api/screen');
@@ -966,15 +1003,19 @@ async function pollScreen(){
    const c=CARDS.cards.find(x=>x.id===ST.cardId);
    const name=c?(c.name||(T[c.type]||{}).n||c.type):'—';
    const m=$('#cardNow');if(m)m.textContent='Showing '+name;
-   const t=$('#liveTag');if(t)t.textContent='live';
+   const t=$('#liveTag');if(t)t.textContent='live (http)';
   }catch(e){
    const t=$('#liveTag');if(t)t.textContent='offline';
   }
  }
- setTimeout(pollScreen,220);
+ setTimeout(pollScreen,280);
 }
 
-(()=>{const pad=$('#pad');let down=0,taps=0,tm,lt;const send=g=>gest(g);
+(()=>{const pad=$('#pad');let down=0,taps=0,tm,lt;
+ const send=g=>{
+  if(ws&&ws.readyState===1)ws.send(g);
+  else gest(g);
+ };
 
  pad.onpointerdown=e=>{e.preventDefault();down=Date.now();pad.classList.add('down');clearTimeout(tm);lt=setTimeout(()=>{if(down){send('vlong');down=0;pad.classList.remove('down')}},3000)};
 
