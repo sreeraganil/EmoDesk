@@ -34,5 +34,12 @@ void drawHeader(const char* title, const char* right = nullptr);
 void drawSpark(int x, int y, int w, int h, const float* v, int n);
 void drawWeatherIcon(int x, int y, int s, int code, bool day);
 void drawCenteredMsg(const char* l1, const char* l2 = nullptr);
+void drawQRCode(int x, int y, const char* text, uint8_t scale = 2);
+void drawIconBall(int cx, int cy, int r, uint8_t fg = 1);
+void drawIconBell(int x, int y);
+void drawIconMail(int x, int y);
+void drawIconBat(int x, int y, int pct);
+void drawPageDots(int xr, int y, int n, int cur);
+
 const char* wmoText(int code);
 int  wmoClass(int code);           // 0 clear 1 partly 2 cloudy 3 fog 4 rain 5 snow 6 thunder

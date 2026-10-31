@@ -1,3 +1,4 @@
+#include "qrcode.h"
 #include "display.h"
 #include <Wire.h>
 
@@ -26,7 +27,13 @@ void displaySetContrast(uint8_t c) {
   if (c == last) return;
   last = c;
   u8g2.setContrast(c);
+  // Lower pre-charge and VCOMH for truly deep night mode; restore otherwise
+  if (c < 16) { u8g2.sendF("ca", 0xD9, 0x11); u8g2.sendF("ca", 0xDB, 0x00); }
+  else { u8g2.sendF("ca", 0xD9, 0xF1); u8g2.sendF("ca", 0xDB, 0x40); }
 }
+
+static uint8_t sentFrame[1024];
+static bool haveSentFrame = false;
 
 void displaySend() {
   if (cfg["display"]["burn"] | true) {
@@ -36,7 +43,30 @@ void displaySend() {
       burnY = (int8_t)(esp_random() % 3) - 1;
     }
   } else { burnX = burnY = 0; }
-  if (dispOn) u8g2.sendBuffer();
+  if (!dispOn) return;
+
+  uint8_t* buf = u8g2.getBufferPtr();
+  if (!haveSentFrame) {
+    u8g2.sendBuffer();
+    memcpy(sentFrame, buf, 1024);
+    haveSentFrame = true;
+    return;
+  }
+  // 8x8 Tile dirty tracking: only push modified tile strips over I2C
+  for (int ty = 0; ty < 8; ty++) {
+    int first = -1, last = -1;
+    for (int tx = 0; tx < 16; tx++) {
+      int off = ty * 128 + tx * 8;
+      if (memcmp(buf + off, sentFrame + off, 8)) {
+        if (first < 0) first = tx;
+        last = tx;
+      }
+    }
+    if (first >= 0) {
+      u8g2.updateDisplayArea(first, ty, last - first + 1, 1);
+      memcpy(sentFrame + ty * 128 + first * 8, buf + ty * 128 + first * 8, (last - first + 1) * 8);
+    }
+  }
 }
 
 void displayPower(bool on) {
@@ -335,5 +365,73 @@ void drawWeatherIcon(int x, int y, int s, int code, bool day) {
       u8g2.drawLine(cx + 2, ty + 5, cx - 2, ty + 11);
       break;
     }
+  }
+}
+
+
+void drawQRCode(int x, int y, const char* text, uint8_t scale) {
+  if (!text || !*text) return;
+  QRCode qr;
+  uint8_t data[qrcode_getBufferSize(4)];
+  int ok = -1;
+  for (int v = 2; v <= 4 && ok != 0; v++) ok = qrcode_initText(&qr, data, v, ECC_LOW, text);
+  if (ok != 0) return;
+  int px = qr.size * scale;
+  u8g2.setDrawColor(1);
+  u8g2.drawBox(x - 2, y - 2, px + 4, px + 4);
+  u8g2.setDrawColor(0);
+  for (int yy = 0; yy < qr.size; yy++) {
+    for (int xx = 0; xx < qr.size; xx++) {
+      if (qrcode_getModule(&qr, xx, yy)) {
+        u8g2.drawBox(x + xx * scale, y + yy * scale, scale, scale);
+      }
+    }
+  }
+  u8g2.setDrawColor(1);
+}
+
+void drawIconBall(int cx, int cy, int r, uint8_t fg) {
+  u8g2.setDrawColor(fg);
+  u8g2.drawDisc(cx, cy, r);
+  u8g2.setDrawColor(!fg);
+  u8g2.drawDisc(cx, cy, r - 1);
+  u8g2.setDrawColor(fg);
+  int pr = max(1, r / 3);
+  u8g2.drawDisc(cx, cy, pr);
+  for (int i = 0; i < 5; i++) {
+    float a = -PI / 2.0f + i * 2.0f * PI / 5.0f;
+    u8g2.drawLine(cx + cosf(a) * pr, cy + sinf(a) * pr, cx + cosf(a) * (r - 1), cy + sinf(a) * (r - 1));
+  }
+  u8g2.setDrawColor(1);
+}
+
+void drawIconBell(int x, int y) {
+  u8g2.drawDisc(x + 5, y + 4, 4, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  u8g2.drawBox(x + 1, y + 4, 9, 4);
+  u8g2.drawBox(x, y + 8, 11, 2);
+  u8g2.drawBox(x + 4, y + 10, 3, 2);
+  u8g2.drawPixel(x + 5, y);
+}
+
+void drawIconMail(int x, int y) {
+  u8g2.drawFrame(x, y, 13, 9);
+  u8g2.drawLine(x, y, x + 6, y + 5);
+  u8g2.drawLine(x + 12, y, x + 6, y + 5);
+}
+
+void drawIconBat(int x, int y, int pct) {
+  u8g2.drawFrame(x, y, 11, 6);
+  u8g2.drawBox(x + 11, y + 2, 1, 2);
+  int w = constrain(pct, 0, 100) * 9 / 100;
+  if (w > 0) u8g2.drawBox(x + 1, y + 1, w, 4);
+}
+
+void drawPageDots(int xr, int y, int n, int cur) {
+  if (n < 2) return;
+  if (n > 8) n = 8;
+  int x = xr - (n - 1) * 4;
+  for (int i = 0; i < n; i++) {
+    if (i == cur) u8g2.drawBox(x + i * 4 - 1, y - 1, 3, 3);
+    else u8g2.drawPixel(x + i * 4, y);
   }
 }

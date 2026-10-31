@@ -66,11 +66,11 @@ static void onConnect() {
   String curSSID = WiFi.SSID();
   logf("[NET] Wi-Fi connected to '%s' (Profile #%d), IP %s (RSSI: %d dBm)",
        curSSID.c_str(), netActiveProfile, WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  if (!mdnsOk) {
-    String host = cfg["host"] | DEFAULT_HOST;
-    mdnsOk = MDNS.begin(host.c_str());
-    if (mdnsOk) MDNS.addService("http", "tcp", 80);
-  }
+  // Always refresh mDNS on every new connection/IP so emo.local stays reachable
+  MDNS.end();
+  String host = cfg["host"] | DEFAULT_HOST;
+  mdnsOk = MDNS.begin(host.c_str());
+  if (mdnsOk) MDNS.addService("http", "tcp", 80);
   timeApply();
   feedsRefresh();
 }
@@ -93,7 +93,7 @@ void netBegin() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setHostname(host.c_str());
-  WiFi.setAutoReconnect(true);
+  WiFi.setAutoReconnect(false);
   if (!netHasCreds()) { startPortal(); return; }
 
   String s1 = cfg["wifi"]["ssid"] | "";
@@ -162,12 +162,19 @@ void netLoop() {
     lastRetry = now;
   }
 
+  // If a phone is actively connected to the setup AP, pause retries so user can configure
+  if (portal && WiFi.softAPgetStationNum() > 0) {
+    lastRetry = now;
+  }
+
   if (portal && c && netHasCreds() && now - portalStart > 90000) {
-    dns.stop();
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_STA);
-    portal = false;
-    logf("[NET] Setup AP closed");
+    if (WiFi.softAPgetStationNum() == 0) {
+      dns.stop();
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_STA);
+      portal = false;
+      logf("[NET] Setup AP closed");
+    }
   }
 
   if (!c && netHasCreds() && now - lastRetry > retryMs) {
