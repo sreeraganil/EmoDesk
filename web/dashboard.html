@@ -114,15 +114,18 @@ header h1 { font-size: 20px; margin: 0; font-weight: 700; letter-spacing: -0.02e
 
 .device { position: sticky; top: 90px; background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 16px; }
 
-.bezel { background: var(--oled); border-radius: 16px; padding: 16px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); }
+.bezel { background: #121824; border-radius: 20px; padding: 18px 18px 16px; box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 18px 40px -24px rgba(10,20,40,0.6); }
 
-#scr { width: 100%; aspect-ratio: 2/1; display: block; image-rendering: pixelated; background: var(--oled); border-radius: 4px; filter: drop-shadow(0 0 4px rgba(143,240,255,0.3)); }
+#scr { width: 100%; aspect-ratio: 2/1; display: block; image-rendering: pixelated; background: #050a12; border-radius: 6px; box-shadow: inset 0 0 14px rgba(0,0,0,0.85), 0 0 16px rgba(143,240,255,0.18); }
+
+.screen-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; color: #8592a8; font-size: 12px; font-weight: 550; }
 
 .under { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 
-.pad { width: 64px; height: 64px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; touch-action: none; user-select: none; font-size: 13px; font-weight: 600; flex: none; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); transition: transform 0.1s, box-shadow 0.1s; }
+.pad { width: 64px; height: 64px; border-radius: 50%; border: none; cursor: pointer; touch-action: none; user-select: none;
+  background: radial-gradient(circle at 50% 38%, #3a4558, #232b38 70%); box-shadow: 0 2px 0 #0a0e15, 0 0 0 3px #2a3342; transition: transform 0.08s, box-shadow 0.08s; color: #bfe6ff; font-weight: 600; font-size: 13px; flex: none; }
 
-.pad.down { transform: translateY(2px); box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3); }
+.pad.down { transform: translateY(2px) scale(0.97); box-shadow: 0 0 0 3px var(--accent, #3b82f6), 0 0 16px 2px rgba(59,130,246,0.45); }
 
 .nav { display: flex; flex-direction: column; gap: 12px; flex: 1; min-width: 0; }
 
@@ -422,7 +425,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); }
 
     <div class="body">
 
-      <div class="bezel"><canvas id="scr" width="128" height="64" aria-label="Live copy of the OLED screen"></canvas></div>
+      <div class="bezel"><canvas id="scr" width="512" height="256" aria-label="Live copy of the OLED screen"></canvas><div class="screen-meta"><span id="cardNow">-</span><span id="liveTag">live</span></div></div>
 
       <div class="under">
 
@@ -942,11 +945,34 @@ const sec=(title,desc,...rows)=>h('section',{class:'grp'},h('h2',{},title),desc&
 
 /* ------------------------------------------------------------ live screen + pad */
 
-const scr=$('#scr').getContext('2d'),img=scr.createImageData(128,64);
+const scrCv=$('#scr'),scrCx=scrCv.getContext('2d');
 
-async function pollScreen(){if(document.visibilityState==='visible'){try{const b=new Uint8Array(await api('/api/screen'));for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=b[p*128+x];for(let k=0;k<8;k++){const i=((p*8+k)*128+x)*4,on=(v>>k)&1;
+function drawFrame(buf){
+ const b=new Uint8Array(buf);if(b.length<1024)return;
+ scrCx.fillStyle='#050a12';scrCx.fillRect(0,0,512,256);scrCx.fillStyle='#bfe6ff';
+ for(let p=0;p<8;p++){
+  for(let x=0;x<128;x++){
+   const v=b[p*128+x];if(!v)continue;
+   for(let k=0;k<8;k++)if(v&(1<<k))scrCx.fillRect(x*4,(p*8+k)*4,3,3);
+  }
+ }
+}
 
- img.data[i]=on?143:5;img.data[i+1]=on?240:6;img.data[i+2]=on?255:10;img.data[i+3]=255}}scr.putImageData(img,0,0)}catch(e){}}setTimeout(pollScreen,280)}
+async function pollScreen(){
+ if(document.visibilityState==='visible'){
+  try{
+   const b=await api('/api/screen');
+   drawFrame(b);
+   const c=CARDS.cards.find(x=>x.id===ST.cardId);
+   const name=c?(c.name||(T[c.type]||{}).n||c.type):'—';
+   const m=$('#cardNow');if(m)m.textContent='Showing '+name;
+   const t=$('#liveTag');if(t)t.textContent='live';
+  }catch(e){
+   const t=$('#liveTag');if(t)t.textContent='offline';
+  }
+ }
+ setTimeout(pollScreen,220);
+}
 
 (()=>{const pad=$('#pad');let down=0,taps=0,tm,lt;const send=g=>gest(g);
 
