@@ -77,7 +77,7 @@ String terminalExecute(const String& cmdLine, bool ansi) {
     out += "  screen [on|off|toggle|bright <0-255>] - OLED display controls\r\n";
     out += "  saver [on|off]         - Toggle battery saver mode\r\n";
     out += "  wifi                   - Show Wi-Fi details\r\n";
-    out += "  wifi <ssid> <pass>     - Change Wi-Fi credentials and reconnect\r\n";
+    out += "  wifi <ssid> <pass>     - Change Wi-Fi (use quotes if spaces: wifi \"My Net\" pass)\r\n";
     out += "  scan                   - Scan for nearby Wi-Fi access points\r\n";
     out += "  action <action>        - Run internal action (pet, feed, brief, refresh...)\r\n";
     out += "  media <play|next|prev|volup|voldown|mute> - Send PC media controls (USB/BLE)\r\n";
@@ -257,9 +257,66 @@ String terminalExecute(const String& cmdLine, bool ansi) {
       out += "  Signal:     " + String(netRSSI()) + " dBm\r\n";
       return out;
     }
-    int sp2 = arg.indexOf(' ');
-    String ssid = (sp2 >= 0) ? arg.substring(0, sp2) : arg;
-    String pass = (sp2 >= 0) ? arg.substring(sp2 + 1) : "";
+    String ssid = "";
+    String pass = "";
+    arg.trim();
+    if (arg.length() > 0) {
+      if (arg.charAt(0) == '"' || arg.charAt(0) == '\'') {
+        // Quoted SSID: wifi "SSID Name" password
+        char q = arg.charAt(0);
+        int q2 = arg.indexOf(q, 1);
+        if (q2 > 0) {
+          ssid = arg.substring(1, q2);
+          String rest = arg.substring(q2 + 1);
+          rest.trim();
+          if (rest.length() > 0) {
+            if (rest.charAt(0) == '"' || rest.charAt(0) == '\'') {
+              char qRest = rest.charAt(0);
+              int q3 = rest.indexOf(qRest, 1);
+              pass = (q3 > 0) ? rest.substring(1, q3) : rest.substring(1);
+            } else {
+              pass = rest;
+            }
+          }
+        } else {
+          ssid = arg.substring(1);
+        }
+      } else {
+        // Check if arg starts with any existing saved SSID (e.g. "VALIYAMADATHIL NETWORK <pass>")
+        bool matchedExisting = false;
+        for (int p = 1; p <= 3; p++) {
+          String s = netSSID(p);
+          if (s.length() > 0 && arg.length() > s.length() && arg.startsWith(s) && arg.charAt(s.length()) == ' ') {
+            ssid = s;
+            String rest = arg.substring(s.length() + 1);
+            rest.trim();
+            if (rest.length() > 0 && (rest.charAt(0) == '"' || rest.charAt(0) == '\'')) {
+              char q = rest.charAt(0);
+              int q3 = rest.indexOf(q, 1);
+              pass = (q3 > 0) ? rest.substring(1, q3) : rest.substring(1);
+            } else {
+              pass = rest;
+            }
+            matchedExisting = true;
+            break;
+          }
+        }
+
+        if (!matchedExisting) {
+          int sp2 = arg.indexOf(' ');
+          ssid = (sp2 >= 0) ? arg.substring(0, sp2) : arg;
+          String rest = (sp2 >= 0) ? arg.substring(sp2 + 1) : "";
+          rest.trim();
+          if (rest.length() > 0 && (rest.charAt(0) == '"' || rest.charAt(0) == '\'')) {
+            char q = rest.charAt(0);
+            int q3 = rest.indexOf(q, 1);
+            pass = (q3 > 0) ? rest.substring(1, q3) : rest.substring(1);
+          } else {
+            pass = rest;
+          }
+        }
+      }
+    }
     LOCK();
     cfg["wifi"]["ssid"] = ssid;
     cfg["wifi"]["pass"] = pass;
