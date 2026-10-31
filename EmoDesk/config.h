@@ -9,6 +9,41 @@
 #define DEFAULT_SPORTS_SERVER "https://emo-sports-server.onrender.com"
 #define DEFAULT_HUB_URL       "https://emodeskpro.onrender.com"
 
+// ---------------- Predefined Wi-Fi Networks ----------------
+// Set your Wi-Fi credentials here to auto-connect without web setup.
+#ifndef DEFAULT_WIFI_SSID
+#define DEFAULT_WIFI_SSID       ""             // Primary Wi-Fi SSID
+#define DEFAULT_WIFI_PASS       ""             // Primary Wi-Fi Password
+#endif
+
+#ifndef DEFAULT_WIFI_SSID2
+#define DEFAULT_WIFI_SSID2      ""             // Backup Hotspot 1 SSID
+#define DEFAULT_WIFI_PASS2      ""             // Backup Hotspot 1 Password
+#endif
+
+#ifndef DEFAULT_WIFI_SSID3
+#define DEFAULT_WIFI_SSID3      ""             // Backup Hotspot 2 SSID
+#define DEFAULT_WIFI_PASS3      ""             // Backup Hotspot 2 Password
+#endif
+
+// Wi-Fi Transmit Power: 0 = 8.5 dBm (recommended for Super Mini), 1 = 11 dBm, 2 = 15 dBm, 3 = 19.5 dBm
+#define DEFAULT_WIFI_TX_POWER   0
+
+// ---------------- Favorite Sports Teams ----------------
+// Default comma-separated list of teams to track (e.g. "India, CSK, RCB", "Arsenal, Real Madrid")
+#ifndef DEFAULT_CRIC_TEAMS
+#define DEFAULT_CRIC_TEAMS      "India"
+#endif
+
+#ifndef DEFAULT_FOOTBALL_TEAMS
+#define DEFAULT_FOOTBALL_TEAMS  "Arsenal"
+#endif
+
+#ifndef DEFAULT_FOOTBALL_LEAGUE
+#define DEFAULT_FOOTBALL_LEAGUE "eng.1"
+#endif
+
+
 // ---------------- Pins (see WIRING.md) ----------------
 #define PIN_SDA         4
 #define PIN_SCL         5

@@ -15,11 +15,43 @@ static bool mdnsOk = false;
 static uint32_t portalStart = 0, lastRetry = 0;
 
 static int netActiveProfile = 1;
+static const wifi_power_t TXP[] = {WIFI_POWER_8_5dBm, WIFI_POWER_11dBm, WIFI_POWER_15dBm, WIFI_POWER_19_5dBm};
+
+void netApplyTxPower() {
+  int p = DEFAULT_WIFI_TX_POWER;
+  if (!cfg["wifi"]["txPower"].isNull()) {
+    p = cfg["wifi"]["txPower"].as<int>();
+  } else if (!cfg["wifi"]["txDb"].isNull()) {
+    float db = cfg["wifi"]["txDb"].as<float>();
+    if (db >= 19.0f) p = 3;
+    else if (db >= 14.5f) p = 2;
+    else if (db >= 10.5f) p = 1;
+    else p = 0;
+  } else if (!cfg["wifi"]["txLow"].isNull()) {
+    p = (cfg["wifi"]["txLow"] | true) ? 0 : 3;
+  }
+  p = constrain(p, 0, 3);
+  WiFi.setTxPower(TXP[p]);
+}
+
+String netSSID(int p) {
+  const char* defSsid = (p == 1) ? DEFAULT_WIFI_SSID : (p == 2 ? DEFAULT_WIFI_SSID2 : DEFAULT_WIFI_SSID3);
+  const char* key = (p == 1) ? "ssid" : (p == 2 ? "ssid2" : "ssid3");
+  String s = cfg["wifi"][key] | "";
+  if (!s.length() && defSsid && *defSsid) s = defSsid;
+  return s;
+}
+
+String netPass(int p) {
+  const char* defPass = (p == 1) ? DEFAULT_WIFI_PASS : (p == 2 ? DEFAULT_WIFI_PASS2 : DEFAULT_WIFI_PASS3);
+  const char* key = (p == 1) ? "pass" : (p == 2 ? "pass2" : "pass3");
+  String s = cfg["wifi"][key] | "";
+  if (!s.length() && defPass && *defPass) s = defPass;
+  return s;
+}
 
 bool netHasCreds() {
-  const char* s1 = cfg["wifi"]["ssid"] | "";
-  const char* s2 = cfg["wifi"]["ssid2"] | "";
-  return s1[0] != 0 || s2[0] != 0;
+  return netSSID(1).length() > 0 || netSSID(2).length() > 0 || netSSID(3).length() > 0;
 }
 bool netOnline() { return online; }
 bool netPortal() { return portal; }
@@ -32,22 +64,18 @@ void timeApply() {
 }
 
 static void beginSta(int profile = 0) {
-  if (profile == 1 || profile == 2) netActiveProfile = profile;
-  String ssid, pass;
-  bool txLow = true;
-  LOCK();
-  ssid = (netActiveProfile == 2) ? (cfg["wifi"]["ssid2"] | "") : (cfg["wifi"]["ssid"] | "");
-  pass = (netActiveProfile == 2) ? (cfg["wifi"]["pass2"] | "") : (cfg["wifi"]["pass"] | "");
-  if (ssid.length() == 0 && netActiveProfile == 2) {
-    netActiveProfile = 1;
-    ssid = cfg["wifi"]["ssid"] | "";
-    pass = cfg["wifi"]["pass"] | "";
+  if (profile >= 1 && profile <= 3) netActiveProfile = profile;
+  String ssid = netSSID(netActiveProfile);
+  String pass = netPass(netActiveProfile);
+  if (!ssid.length()) {
+    for (int p = 1; p <= 3; p++) {
+      ssid = netSSID(p);
+      if (ssid.length()) { netActiveProfile = p; pass = netPass(p); break; }
+    }
   }
-  txLow = cfg["wifi"]["txLow"] | true;
-  UNLOCK();
   WiFi.setSleep(false);
   WiFi.begin(ssid.c_str(), pass.c_str());
-  if (txLow) WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  netApplyTxPower();
 }
 
 static void startPortal() {
@@ -96,38 +124,28 @@ void netBegin() {
   WiFi.setAutoReconnect(true);
   if (!netHasCreds()) { startPortal(); return; }
 
-  String s1 = cfg["wifi"]["ssid"] | "";
-  String s2 = cfg["wifi"]["ssid2"] | "";
+  netApplyTxPower();
   netActiveProfile = 1;
 
-  if (s1.length() > 0) {
-    beginSta(1);
+  // Try each configured or predefined network (profiles 1, 2, 3)
+  for (int p = 1; p <= 3; p++) {
+    String s = netSSID(p);
+    if (!s.length()) continue;
+    if (WiFi.status() == WL_CONNECTED) break;
+    beginSta(p);
     uint32_t t0 = millis();
-    uint32_t waitMs = (s2.length() > 0) ? 5000 : 8000;
+    uint32_t waitMs = 6000;
     uint32_t lastDraw = 0;
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < waitMs) {
       if (millis() - lastDraw >= 200) {
         lastDraw = millis();
-        drawConnecting(s1.c_str(), t0);
+        drawConnecting(s.c_str(), t0);
       }
       delay(20);
     }
-  }
-
-  // If primary Wi-Fi is unreachable and backup hotspot is set, try backup
-  if (WiFi.status() != WL_CONNECTED && s2.length() > 0) {
-    logf("[NET] Primary Wi-Fi '%s' not reached, trying backup '%s'...", s1.c_str(), s2.c_str());
-    WiFi.disconnect();
-    delay(50);
-    beginSta(2);
-    uint32_t t0 = millis();
-    uint32_t lastDraw = 0;
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) {
-      if (millis() - lastDraw >= 200) {
-        lastDraw = millis();
-        drawConnecting(s2.c_str(), t0);
-      }
-      delay(20);
+    if (WiFi.status() != WL_CONNECTED) {
+      WiFi.disconnect();
+      delay(50);
     }
   }
 
@@ -179,20 +197,15 @@ void netLoop() {
 
   if (!c && netHasCreds() && now - lastRetry > retryMs) {
     lastRetry = now;
-    String s1, s2;
-    LOCK();
-    s1 = cfg["wifi"]["ssid"] | "";
-    s2 = cfg["wifi"]["ssid2"] | "";
-    UNLOCK();
-    if (s1.length() > 0 && s2.length() > 0) {
-      netActiveProfile = (netActiveProfile == 1) ? 2 : 1;
-      logf("[NET] Retrying Wi-Fi with profile #%d (%s) (retry interval: %us)...",
-           netActiveProfile, netActiveProfile == 2 ? s2.c_str() : s1.c_str(), (unsigned)retrySec);
-      beginSta(netActiveProfile);
-    } else {
-      logf("[NET] Retrying Wi-Fi connection to '%s' (retry interval: %us)...", s1.c_str(), (unsigned)retrySec);
-      beginSta(1);
+    int nextP = (netActiveProfile % 3) + 1;
+    for (int i = 0; i < 3; i++) {
+      if (netSSID(nextP).length() > 0) break;
+      nextP = (nextP % 3) + 1;
     }
+    String s = netSSID(nextP);
+    logf("[NET] Retrying Wi-Fi with profile #%d (%s) (retry interval: %us)...",
+         nextP, s.c_str(), (unsigned)retrySec);
+    beginSta(nextP);
   }
 }
 

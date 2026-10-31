@@ -241,6 +241,7 @@ static void cricLoop(uint32_t now) {
   LOCK();
   String url = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
   String team = cfg["cric"]["teams"].is<const char*>() ? (cfg["cric"]["teams"] | "") : (cfg["cric"]["team"] | "");
+  if (!team.length()) team = DEFAULT_CRIC_TEAMS;
   String targetMatchId = cfg["cric"]["matchId"].is<const char*>() ? (cfg["cric"]["matchId"] | "") : "";
   String targetMatchTitle = cfg["cric"]["match"].is<const char*>() ? (cfg["cric"]["match"] | "") : "";
   String wAnim = cfg["sports"]["animWicket"] | "";

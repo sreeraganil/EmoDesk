@@ -175,7 +175,7 @@ static const char* cricTeam(CardCtx& c) {
   if (cfg["cric"]["teams"].is<const char*>() && cfg["cric"]["teams"].as<const char*>()[0]) {
     return cfg["cric"]["teams"].as<const char*>();
   }
-  return "";
+  return DEFAULT_CRIC_TEAMS;
 }
 static void cricOversStr(float o, char* out, size_t n) {
   int w = (int)o;
@@ -843,8 +843,14 @@ static void parseFMatch(JsonObject ev, FMatch& m) {
 
 static bool football_fetch(JsonObject p, void* d) {
   FootData* fd = (FootData*)d;
-  String league = p["league"] | "eng.1";
+  String league = p["league"] | DEFAULT_FOOTBALL_LEAGUE;
   String team = p["teams"].is<const char*>() ? (p["teams"] | "") : (p["team"] | "");
+  if (!team.length()) {
+    team = cfg["football"]["teams"].is<const char*>() ? (cfg["football"]["teams"] | "") : (cfg["football"]["team"] | "");
+  }
+  if (!team.length()) {
+    team = DEFAULT_FOOTBALL_TEAMS;
+  }
   String show = p["show"] | "all";
   bool alerts = p["alerts"] | true;
   String serverUrl = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;

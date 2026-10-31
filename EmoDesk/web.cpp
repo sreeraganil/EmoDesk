@@ -567,12 +567,15 @@ static void hScan() {
 
 static void hWifi() {
   JsonDocument d;
-  if (!body(d) || (!strlen(d["ssid"] | "") && !strlen(d["ssid2"] | ""))) { fail(400, "network name missing"); return; }
+  if (!body(d) || (!strlen(d["ssid"] | "") && !strlen(d["ssid2"] | "") && !strlen(d["ssid3"] | ""))) { fail(400, "network name missing"); return; }
   LOCK();
   if (d["ssid"].is<const char*>()) cfg["wifi"]["ssid"] = d["ssid"] | "";
   if (d["pass"].is<const char*>() && strcmp(d["pass"] | "", MASK)) cfg["wifi"]["pass"] = d["pass"] | "";
   if (d["ssid2"].is<const char*>()) cfg["wifi"]["ssid2"] = d["ssid2"] | "";
   if (d["pass2"].is<const char*>() && strcmp(d["pass2"] | "", MASK)) cfg["wifi"]["pass2"] = d["pass2"] | "";
+  if (d["ssid3"].is<const char*>()) cfg["wifi"]["ssid3"] = d["ssid3"] | "";
+  if (d["pass3"].is<const char*>() && strcmp(d["pass3"] | "", MASK)) cfg["wifi"]["pass3"] = d["pass3"] | "";
+  if (!d["txPower"].isNull()) cfg["wifi"]["txPower"] = d["txPower"].as<int>();
   UNLOCK();
   markDirty(DIRTY_CFG);
   saveNow();
