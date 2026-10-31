@@ -14,6 +14,7 @@ extern int8_t burnX, burnY;        // burn-in protection offset for static cards
 #define F_NUM16  u8g2_font_logisoso16_tr
 #define F_NUM24  u8g2_font_logisoso24_tn
 #define F_NUM32  u8g2_font_logisoso32_tn
+#define F_NUM42  u8g2_font_logisoso42_tn
 
 void displayBegin();
 void displayApply();               // flip / invert / contrast from cfg

@@ -56,16 +56,23 @@ const CardType CT_pet = {"pet", 0, 0, 0, nullptr, pet_draw, pet_input, nullptr, 
 // ================================================================== digital clock
 static void clock_draw(CardCtx& c) {
   struct tm t;
-  if (!needTime(t)) return;
+  int bx = burnX, by = burnY;
+  if (!nowTm(t)) {
+    u8g2.setFont(F_NUM32);
+    textCenter(38 + by, "--:--");
+    u8g2.setFont(F_MED);
+    textCenter(56 + by, netOnline() ? "Getting the time..." : "Waiting for Wi-Fi");
+    return;
+  }
   const char* style = c.p["style"] | "big";
   bool h24 = cfgH24();
-  char hm[8], date[28];
+  char hm[8], date[32];
   fmtHM(hm, t.tm_hour, t.tm_min, h24);
   snprintf(date, sizeof(date), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-  int bx = burnX, by = burnY;
   const char* ap = t.tm_hour < 12 ? "AM" : "PM";
+
   if (!strcmp(style, "minimal")) {
-    u8g2.setFont(F_NUM32);
+    u8g2.setFont(F_NUM42);
     int w = u8g2.getStrWidth(hm);
     u8g2.drawStr((128 - w) / 2 + bx, 48 + by, hm);
   } else if (!strcmp(style, "seconds")) {
@@ -81,9 +88,8 @@ static void clock_draw(CardCtx& c) {
     u8g2.setFont(F_NUM16);
     u8g2.drawStr(x0 + w + 2, 38 + by, s);
     if (!h24) {
-      u8g2.setFont(F_TINY);
-      u8g2.drawRFrame(x0 + w + 4, 13 + by, 16, 9, 2);
-      u8g2.drawStr(x0 + w + 7, 20 + by, ap);
+      u8g2.setFont(F_SMALL);
+      u8g2.drawStr(x0 + w + ws + 4, 20 + by, t.tm_hour < 12 ? "am" : "pm");
     }
     drawDottedHLine(14, 46 + by, 100);
     u8g2.setFont(F_MED);
@@ -99,18 +105,57 @@ static void clock_draw(CardCtx& c) {
     u8g2.setFont(F_MED);
     textCenter(60 + by, d2);
   } else {
-    u8g2.setFont(F_NUM32);
-    int w = u8g2.getStrWidth(hm);
-    int x0 = (128 - w) / 2 + bx - (h24 ? 0 : 8);
-    u8g2.drawStr(x0, 42 + by, hm);
+    // v3.O Big Clock Style (Sweeping hairline seconds, weather corner, guaranteed zero AM/PM overlap)
+    int h = t.tm_hour;
+    if (!h24) { h %= 12; if (!h) h = 12; }
+    char b[8];
+    snprintf(b, sizeof(b), h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
+
+    u8g2.setFont(F_NUM42);
+    int w = u8g2.getStrWidth(b);
+
     if (!h24) {
-      u8g2.setFont(F_TINY);
-      u8g2.drawRFrame(x0 + w + 4, 17 + by, 16, 9, 2);
-      u8g2.drawStr(x0 + w + 7, 24 + by, ap);
+      const char* apTag = t.tm_hour < 12 ? "am" : "pm";
+      u8g2.setFont(F_SMALL);
+      int apW = u8g2.getStrWidth(apTag);
+      int gap = 5;
+      int totalW = w + gap + apW;
+      int x = (128 - totalW) / 2 + bx;
+      if (x < 2) x = 2;
+
+      // Draw large time digits
+      u8g2.setFont(F_NUM42);
+      u8g2.drawStr(x, 46 + by, b);
+
+      // Draw am/pm superscript with guaranteed clearance (never overlaps)
+      int apX = x + w + gap;
+      if (apX + apW > 126) apX = 126 - apW;
+      u8g2.setFont(F_SMALL);
+      u8g2.drawStr(apX, 16 + by, apTag);
+    } else {
+      u8g2.drawStr((128 - w) / 2 + bx, 46 + by, b);
     }
-    drawDottedHLine(14, 48 + by, 100);
+
+    // Hairline seconds bar sweeping under digits (0 to 127 px)
+    int sw = (t.tm_sec * 128) / 60;
+    if (sw > 0) u8g2.drawHLine(0, 50 + by, sw);
+
+    // Full date string centered at bottom (e.g. "Saturday 31 Oct")
+    char fullDate[32];
+    snprintf(fullDate, sizeof(fullDate), "%s %d %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
     u8g2.setFont(F_MED);
-    textCenter(60 + by, date);
+    if (u8g2.getStrWidth(fullDate) > 124) {
+      snprintf(fullDate, sizeof(fullDate), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    }
+    textCenter(62 + by, fullDate);
+
+    // Corner extra: live temperature if weather is synced
+    if (homeW.ok) {
+      char tb[10];
+      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
+      u8g2.setFont(F_TINY);
+      u8g2.drawUTF8(1 + bx, 6 + by, tb);
+    }
   }
 }
 const CardType CT_clock = {"clock", 0, 0, 0, nullptr, clock_draw, nullptr, nullptr, speakTime, nullptr};
