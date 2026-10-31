@@ -87,7 +87,13 @@ static void beginSta(int profile = 0) {
       if (ssid.length()) { netActiveProfile = p; pass = netPass(p); break; }
     }
   }
+  if (!ssid.length()) return;
+
+  WiFi.disconnect(false, false);
+  delay(100);
+
   WiFi.setSleep(false);
+  netApplyTxPower();
   WiFi.begin(ssid.c_str(), pass.c_str());
   netApplyTxPower();
 }
@@ -99,7 +105,6 @@ static void startPortal() {
   portal = true;
   portalStart = millis();
   lastRetry = millis();
-  if (netHasCreds()) beginSta(1);
   logf("[NET] Setup AP 'EmoDesk-Setup' at %s", WiFi.softAPIP().toString().c_str());
 }
 
@@ -135,10 +140,10 @@ void netBegin() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setHostname(host.c_str());
-  WiFi.setAutoReconnect(true);
+  WiFi.setAutoReconnect(false);
+  netApplyTxPower();
   if (!netHasCreds()) { startPortal(); return; }
 
-  netApplyTxPower();
   netActiveProfile = 1;
 
   // Try each configured or predefined network (profiles 1, 2, 3)
@@ -148,7 +153,7 @@ void netBegin() {
     if (WiFi.status() == WL_CONNECTED) break;
     beginSta(p);
     uint32_t t0 = millis();
-    uint32_t waitMs = 6000;
+    uint32_t waitMs = 9000;
     uint32_t lastDraw = 0;
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < waitMs) {
       if (millis() - lastDraw >= 200) {
@@ -157,10 +162,9 @@ void netBegin() {
       }
       delay(20);
     }
-    if (WiFi.status() != WL_CONNECTED) {
-      WiFi.disconnect();
-      delay(50);
-    }
+    if (WiFi.status() == WL_CONNECTED) break;
+    WiFi.disconnect(false, false);
+    delay(100);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
