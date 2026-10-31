@@ -41,6 +41,7 @@ void inputBegin() {
   btn[1] = {PIN_BOOT, false, false, 0, 0, 0, 0, false, false};
   pinMode(PIN_TOUCH, INPUT);
   pinMode(PIN_BOOT, INPUT_PULLUP);
+  lastAct = millis();
   inputApply();
 }
 

@@ -93,7 +93,7 @@ void netBegin() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setHostname(host.c_str());
-  WiFi.setAutoReconnect(false);
+  WiFi.setAutoReconnect(true);
   if (!netHasCreds()) { startPortal(); return; }
 
   String s1 = cfg["wifi"]["ssid"] | "";

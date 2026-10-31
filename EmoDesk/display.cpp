@@ -27,13 +27,7 @@ void displaySetContrast(uint8_t c) {
   if (c == last) return;
   last = c;
   u8g2.setContrast(c);
-  // Lower pre-charge and VCOMH for truly deep night mode; restore otherwise
-  if (c < 16) { u8g2.sendF("ca", 0xD9, 0x11); u8g2.sendF("ca", 0xDB, 0x00); }
-  else { u8g2.sendF("ca", 0xD9, 0xF1); u8g2.sendF("ca", 0xDB, 0x40); }
 }
-
-static uint8_t sentFrame[1024];
-static bool haveSentFrame = false;
 
 void displaySend() {
   if (cfg["display"]["burn"] | true) {
@@ -43,30 +37,7 @@ void displaySend() {
       burnY = (int8_t)(esp_random() % 3) - 1;
     }
   } else { burnX = burnY = 0; }
-  if (!dispOn) return;
-
-  uint8_t* buf = u8g2.getBufferPtr();
-  if (!haveSentFrame) {
-    u8g2.sendBuffer();
-    memcpy(sentFrame, buf, 1024);
-    haveSentFrame = true;
-    return;
-  }
-  // 8x8 Tile dirty tracking: only push modified tile strips over I2C
-  for (int ty = 0; ty < 8; ty++) {
-    int first = -1, last = -1;
-    for (int tx = 0; tx < 16; tx++) {
-      int off = ty * 128 + tx * 8;
-      if (memcmp(buf + off, sentFrame + off, 8)) {
-        if (first < 0) first = tx;
-        last = tx;
-      }
-    }
-    if (first >= 0) {
-      u8g2.updateDisplayArea(first, ty, last - first + 1, 1);
-      memcpy(sentFrame + ty * 128 + first * 8, buf + ty * 128 + first * 8, (last - first + 1) * 8);
-    }
-  }
+  if (dispOn) u8g2.sendBuffer();
 }
 
 void displayPower(bool on) {
