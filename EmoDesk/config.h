@@ -8,6 +8,7 @@
 #define DEFAULT_HOST    "emo"          // dashboard at http://emo.local
 #define DEFAULT_SPORTS_SERVER "https://emo-sports-server.onrender.com"
 #define DEFAULT_HUB_URL       "https://emodeskpro.onrender.com"
+#define MASK                  "********"
 
 // ---------------- Predefined Wi-Fi Networks ----------------
 // Set your Wi-Fi credentials here to auto-connect without web setup.

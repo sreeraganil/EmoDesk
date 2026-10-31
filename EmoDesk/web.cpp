@@ -10,7 +10,7 @@
 #include "terminal.h"
 
 static WebServer server(80);
-static const char* MASK = "********";
+// MASK defined in config.h
 static uint32_t restartAt = 0;
 static File upFile;
 static String upErr, upPath;
