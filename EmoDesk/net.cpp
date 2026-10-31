@@ -35,6 +35,13 @@ void netApplyTxPower() {
 }
 
 String netSSID(int p) {
+  if (cfg["wifi"]["nets"].is<JsonArray>()) {
+    JsonArray arr = cfg["wifi"]["nets"].as<JsonArray>();
+    if (p >= 1 && p <= (int)arr.size()) {
+      const char* s = arr[p - 1]["ssid"] | "";
+      if (s && *s) return String(s);
+    }
+  }
   const char* defSsid = (p == 1) ? DEFAULT_WIFI_SSID : (p == 2 ? DEFAULT_WIFI_SSID2 : DEFAULT_WIFI_SSID3);
   const char* key = (p == 1) ? "ssid" : (p == 2 ? "ssid2" : "ssid3");
   String s = cfg["wifi"][key] | "";
@@ -43,6 +50,13 @@ String netSSID(int p) {
 }
 
 String netPass(int p) {
+  if (cfg["wifi"]["nets"].is<JsonArray>()) {
+    JsonArray arr = cfg["wifi"]["nets"].as<JsonArray>();
+    if (p >= 1 && p <= (int)arr.size()) {
+      const char* s = arr[p - 1]["pass"] | "";
+      if (s && *s) return String(s);
+    }
+  }
   const char* defPass = (p == 1) ? DEFAULT_WIFI_PASS : (p == 2 ? DEFAULT_WIFI_PASS2 : DEFAULT_WIFI_PASS3);
   const char* key = (p == 1) ? "pass" : (p == 2 ? "pass2" : "pass3");
   String s = cfg["wifi"][key] | "";
