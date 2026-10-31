@@ -850,7 +850,7 @@ static void pollWsClients() {
           for (uint8_t gi = G_PRESS; gi <= G_VLONG; gi++) {
             if (g == gestureName(gi)) gv = gi;
           }
-          if (gv != G_NONE) cardsHandleGesture(gv);
+          if (gv != G_NONE) inputInject(gv, SRC_WEB);
           else doAction(g.c_str());
         }
       } else {
