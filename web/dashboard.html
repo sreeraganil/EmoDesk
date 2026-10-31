@@ -1630,7 +1630,7 @@ connect(){const bt=Intl.DateTimeFormat().resolvedOptions().timeZone,m=TZ.find(t=
 
   sec('Sports (Cricket & Football)','Scores come from your EmoDesk sports match server. Emo checks during live matches and periodically otherwise.',
 
-   F('cric.url','Match server address','text','',{ph:'https://your-server.onrender.com/api/cricket',hint:'Add ?key=… if you set API_KEY on the server. Football cards use the same server.'}),
+   F('cric.url','Match server address','text','',{ph:'https://emo-sports-server.onrender.com',hint:'Default: https://emo-sports-server.onrender.com. Add ?key=… if using a custom server with API_KEY.'}),
 
    gp(CFG,'cric.url')&&h('div',{class:'gest'},h('a',{class:'btn sm',href:gp(CFG,'cric.url').replace(/\/api\/cricket.*$/,'/api/cricket/debug')+(gp(CFG,'cric.url').includes('key=')?'?'+gp(CFG,'cric.url').split('?')[1]:''),target:'_blank',rel:'noopener'},'Test the server')),F('cric.team','Your team(s)','match','',{sport:'cricket',ph:'e.g. India, Australia (blank = all)',hint:'Separate multiple teams with commas: e.g. India, Australia or CSK, RCB'}),F('cric.liveSec','Check during live matches','range',gp(CFG,'cric.liveSec')||(gp(CFG,'cric.liveMin')?gp(CFG,'cric.liveMin')*60:30),{min:5,max:300,step:5,fmt:x=>x<60?x+'s':(x%60===0?(x/60)+'m':Math.floor(x/60)+'m '+(x%60)+'s')}),F('cric.idleMin','Check otherwise (min)','range',60,{min:15,max:240,step:15}),
 

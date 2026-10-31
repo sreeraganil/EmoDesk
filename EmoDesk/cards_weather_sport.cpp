@@ -156,7 +156,7 @@ const CardType CT_aqi = {"aqi", sizeof(AirData), 1800, 0, nullptr, aqi_draw, nul
 
 // ================================================================== cricket
 static bool cricGate() {
-  const char* url = cfg["cric"]["url"] | "";
+  const char* url = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
   if (!*url) { drawCenteredMsg("Set the match server", "Dashboard > Connect"); return false; }
   if (!cric.ok) return dataGate(false, cric.err[0] ? cric.err : "cricket scores");
   if (!cric.n) { drawCenteredMsg("No current matches"); return false; }
@@ -847,7 +847,7 @@ static bool football_fetch(JsonObject p, void* d) {
   String team = p["teams"].is<const char*>() ? (p["teams"] | "") : (p["team"] | "");
   String show = p["show"] | "all";
   bool alerts = p["alerts"] | true;
-  String serverUrl = cfg["cric"]["url"] | "";
+  String serverUrl = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
   while (serverUrl.endsWith("/")) serverUrl = serverUrl.substring(0, serverUrl.length() - 1);
   if (serverUrl.endsWith("/api/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 12);
   if (serverUrl.endsWith("/api/emo/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 16);
@@ -1332,7 +1332,7 @@ struct TableData { bool ok; uint8_t n; TRow r[20]; };
 
 static bool ftable_fetch(JsonObject p, void* d) {
   String league = p["league"] | "eng.1";
-  String serverUrl = cfg["cric"]["url"] | "";
+  String serverUrl = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
   while (serverUrl.endsWith("/")) serverUrl = serverUrl.substring(0, serverUrl.length() - 1);
   if (serverUrl.endsWith("/api/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 12);
   if (serverUrl.endsWith("/api/emo/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 16);

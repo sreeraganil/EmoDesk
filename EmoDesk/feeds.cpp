@@ -239,7 +239,7 @@ static void parseMatch(JsonObject m, CricMatch& c) {
 static void cricLoop(uint32_t now) {
   if ((int32_t)(now - nextCric) < 0) return;
   LOCK();
-  String url = cfg["cric"]["url"] | "";
+  String url = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
   String team = cfg["cric"]["teams"].is<const char*>() ? (cfg["cric"]["teams"] | "") : (cfg["cric"]["team"] | "");
   String targetMatchId = cfg["cric"]["matchId"].is<const char*>() ? (cfg["cric"]["matchId"] | "") : "";
   String targetMatchTitle = cfg["cric"]["match"].is<const char*>() ? (cfg["cric"]["match"] | "") : "";
