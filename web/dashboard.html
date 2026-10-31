@@ -966,13 +966,16 @@ async function status(){try{ST=await api('/api/status')}catch(e){$('#chips').rep
 
  const c=CARDS.cards.find(x=>x.id===ST.cardId);$('#cardname').textContent=c?(c.name||(T[c.type]||{}).n||c.type):'—';
 
- $('#chips').replaceChildren(h('span',{class:'chip '+(ST.online?'ok':'bad')},ST.online?`Wi-Fi ${ST.rssi} dBm`:(ST.portal?'Setup hotspot':'Offline')),
-
-  ST.emo&&h('span',{class:'chip'},ST.emo.mood),ST.audio.installed&&h('span',{class:'chip'},ST.audio.muted?'Muted':`Volume ${ST.audio.vol}`),ST.w&&h('span',{class:'chip'},`${Math.round(ST.w.t)}° ${ST.w.c}`),
-
+ const chips=[
+  h('span',{class:'chip '+(ST.online?'ok':'bad')},ST.online?`Wi-Fi ${ST.rssi} dBm`:(ST.portal?'Setup hotspot':'Offline')),
+  ST.emo&&ST.emo.active&&ST.emo.mood&&h('span',{class:'chip'},`Mood: ${ST.emo.mood}`),
+  ST.audio&&ST.audio.installed&&h('span',{class:'chip'},ST.audio.muted?'Muted':`Vol ${ST.audio.vol}%`),
+  ST.w&&h('span',{class:'chip'},`${Math.round(ST.w.t)}° ${ST.w.c}`),
   ST.power&&ST.power.bat>=0&&h('span',{class:'chip'+(ST.power.bat<=15?' bad':'')},`Battery ${ST.power.bat}%`),
-
-  ST.power&&ST.power.saver&&h('span',{class:'chip warn'},'Saver on'),ST.safe&&h('span',{class:'chip bad'},'Safe mode'));
+  ST.power&&ST.power.saver&&h('span',{class:'chip warn'},'Saver on'),
+  ST.safe&&h('span',{class:'chip bad'},'Safe mode')
+ ].filter(Boolean);
+ $('#chips').replaceChildren(...chips);
 
  document.querySelectorAll('.citem').forEach(e=>e.classList.toggle('cur',e.dataset.id===ST.cardId));
 
@@ -1774,13 +1777,13 @@ system(){let nets=[];
 
  const ota=h('input',{type:'file',accept:'.bin'}),otaMsg=h('p',{class:'d'}),rest=h('input',{type:'file',accept:'.json'});
 
- return[sec('Wi-Fi',`Connected to ${ST.ssid||'nothing'} as ${ST.ip||'?'}. Emo tries these in order. Up to three.`,
-  wifiList,
-  h('div',{class:'navrow'},wSsid,scanBtn),
-  scanList,
-  h('div',{class:'navrow'},wPass,addBtn),
-  h('div',{class:'row'},h('div',{class:'lab'},'Transmit power (dBm)',h('small',{},'Set lower to prevent power brownouts on USB supplies.')),txSel),
-  h('div',{class:'gest',style:'margin-top:12px'},saveWifiBtn),
+ return[sec('Wi-Fi Networks',`Current connection: ${ST.online?ST.ssid+' ('+ST.ip+')':'Not connected'}. Emo tries saved networks in order (up to 3).`,
+  h('div',{class:'row col'},h('div',{class:'lab'},'Saved Networks',h('small',{},'Top network is attempted first. Use "Try first" to reorder.')),wifiList),
+  h('div',{class:'row col'},h('div',{class:'lab'},'Add Network',h('small',{},'Type SSID and password or click Scan to find nearby networks.')),
+    h('div',{class:'navrow'},wSsid,scanBtn),scanList,
+    h('div',{class:'navrow'},wPass,addBtn)),
+  h('div',{class:'row'},h('div',{class:'lab'},'Transmit power (dBm)',h('small',{},'8.5 dBm is recommended for Super Mini to prevent USB brownouts.')),txSel),
+  h('div',{class:'gest',style:'margin:16px 0 8px'},saveWifiBtn),
   F('wifi.retrySec','Auto-reconnect interval when offline','range',gp(CFG,'wifi.retrySec')||60,{min:10,max:300,step:5,fmt:x=>x<60?x+'s':(x%60===0?(x/60)+'m':Math.floor(x/60)+'m '+(x%60)+'s')}),
   F('host','Network name (emo → http://emo.local)','text','emo')),
 
