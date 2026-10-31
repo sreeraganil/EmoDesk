@@ -249,8 +249,9 @@ String terminalExecute(const String& cmdLine, bool ansi) {
       String statusStr = netOnline() ? ("Connected (" + WiFi.SSID() + ")") : (netPortal() ? "Setup AP Active" : "Disconnected");
       String out;
       out += String(C_CYAN) + "=== Wi-Fi Status ===" + C_RST + "\r\n";
-      out += "  Primary:    " + String((const char*)(cfg["wifi"]["ssid"] | "None")) + "\r\n";
-      out += "  Backup:     " + String((const char*)(cfg["wifi"]["ssid2"] | "None")) + "\r\n";
+      out += "  Profile #1: " + netSSID(1) + " (pass: " + (netPass(1).length() > 0 ? "set" : "EMPTY") + ")\r\n";
+      out += "  Profile #2: " + netSSID(2) + " (pass: " + (netPass(2).length() > 0 ? "set" : "EMPTY") + ")\r\n";
+      out += "  Profile #3: " + netSSID(3) + " (pass: " + (netPass(3).length() > 0 ? "set" : "EMPTY") + ")\r\n";
       out += "  Status:     " + statusStr + "\r\n";
       out += "  IP Address: " + netIP() + "\r\n";
       out += "  Signal:     " + String(netRSSI()) + " dBm\r\n";
@@ -262,12 +263,28 @@ String terminalExecute(const String& cmdLine, bool ansi) {
     LOCK();
     cfg["wifi"]["ssid"] = ssid;
     cfg["wifi"]["pass"] = pass;
+    if (cfg["wifi"]["nets"].is<JsonArray>()) {
+      JsonArray arr = cfg["wifi"]["nets"].as<JsonArray>();
+      bool updated = false;
+      for (JsonObject o : arr) {
+        if (ssid.equalsIgnoreCase(o["ssid"] | "")) {
+          o["pass"] = pass;
+          updated = true;
+          break;
+        }
+      }
+      if (!updated && arr.size() > 0) {
+        arr[0]["ssid"] = ssid;
+        arr[0]["pass"] = pass;
+      }
+    }
     UNLOCK();
     markDirty(DIRTY_CFG);
     saveNow();
-    WiFi.disconnect();
+    WiFi.disconnect(false, false);
+    delay(100);
     WiFi.begin(ssid.c_str(), pass.c_str());
-    return String(C_OK) + "[OK] Saved new Wi-Fi credentials for '" + ssid + "'. Reconnecting..." + C_RST + "\r\n";
+    return String(C_OK) + "[OK] Saved Wi-Fi credentials for '" + ssid + "'. Reconnecting..." + C_RST + "\r\n";
   }
 
   if (cmd == "scan") {

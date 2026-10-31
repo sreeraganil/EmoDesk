@@ -14,8 +14,43 @@ static volatile bool portal = false, online = false;
 static bool mdnsOk = false;
 static uint32_t portalStart = 0, lastRetry = 0;
 
+#include <esp_wifi.h>
+
 static int netActiveProfile = 1;
+static volatile uint8_t lastDisconnectReason = 0;
 static const wifi_power_t TXP[] = {WIFI_POWER_8_5dBm, WIFI_POWER_11dBm, WIFI_POWER_15dBm, WIFI_POWER_19_5dBm};
+
+static const char* wifiReasonStr(uint8_t r) {
+  switch (r) {
+    case WIFI_REASON_NO_AP_FOUND: return "Network not found (out of range or 5GHz only)";
+    case WIFI_REASON_AUTH_FAIL: return "Wrong password / Authentication failed";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "Handshake timeout (Wrong password or weak signal)";
+    case WIFI_REASON_BEACON_TIMEOUT: return "Signal lost (Beacon timeout)";
+    case WIFI_REASON_ASSOC_EXPIRE: return "Association expired";
+    case WIFI_REASON_AUTH_EXPIRE: return "Authentication expired";
+    case WIFI_REASON_ASSOC_FAIL: return "Association failed";
+    case WIFI_REASON_CONNECTION_FAIL: return "Connection failed";
+    case WIFI_REASON_ASSOC_LEAVE: return "Disassociated";
+    default: return "Disconnected";
+  }
+}
+
+static void onWifiEvent(arduino_event_id_t ev, arduino_event_info_t info) {
+  switch (ev) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      lastDisconnectReason = 0;
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      lastDisconnectReason = info.wifi_sta_disconnected.reason;
+      if (lastDisconnectReason != WIFI_REASON_ASSOC_LEAVE && lastDisconnectReason != 0) {
+        logf("[NET] Disconnected: %s (code %u)", wifiReasonStr(lastDisconnectReason), lastDisconnectReason);
+      }
+      break;
+    default:
+      break;
+  }
+}
 
 void netApplyTxPower() {
   int p = DEFAULT_WIFI_TX_POWER;
@@ -50,18 +85,50 @@ String netSSID(int p) {
 }
 
 String netPass(int p) {
+  String s = netSSID(p);
+  if (!s.length()) return "";
+
+  // 1. Try from cfg["wifi"]["nets"] array matching profile index
   if (cfg["wifi"]["nets"].is<JsonArray>()) {
     JsonArray arr = cfg["wifi"]["nets"].as<JsonArray>();
     if (p >= 1 && p <= (int)arr.size()) {
-      const char* s = arr[p - 1]["pass"] | "";
-      if (s && *s) return String(s);
+      const char* pass = arr[p - 1]["pass"] | "";
+      if (pass && *pass && strcmp(pass, MASK) != 0) return String(pass);
+    }
+    // Also try finding by SSID in nets array
+    for (JsonObject obj : arr) {
+      if (s.equalsIgnoreCase(obj["ssid"] | "")) {
+        const char* pass = obj["pass"] | "";
+        if (pass && *pass && strcmp(pass, MASK) != 0) return String(pass);
+      }
     }
   }
-  const char* defPass = (p == 1) ? DEFAULT_WIFI_PASS : (p == 2 ? DEFAULT_WIFI_PASS2 : DEFAULT_WIFI_PASS3);
+
+  // 2. Try from flat cfg["wifi"] keys by SSID
+  for (int i = 1; i <= 3; i++) {
+    const char* sk = (i == 1) ? "ssid" : (i == 2 ? "ssid2" : "ssid3");
+    const char* pk = (i == 1) ? "pass" : (i == 2 ? "pass2" : "pass3");
+    if (s.equalsIgnoreCase(cfg["wifi"][sk] | "")) {
+      const char* pass = cfg["wifi"][pk] | "";
+      if (pass && *pass && strcmp(pass, MASK) != 0) return String(pass);
+    }
+  }
+
+  // 3. Try from flat cfg["wifi"] keys by index
   const char* key = (p == 1) ? "pass" : (p == 2 ? "pass2" : "pass3");
-  String s = cfg["wifi"][key] | "";
-  if (!s.length() && defPass && *defPass) s = defPass;
-  return s;
+  const char* pass = cfg["wifi"][key] | "";
+  if (pass && *pass && strcmp(pass, MASK) != 0) return String(pass);
+
+  // 4. Try from compile-time defaults by SSID
+  if (s == DEFAULT_WIFI_SSID && strlen(DEFAULT_WIFI_PASS) > 0) return DEFAULT_WIFI_PASS;
+  if (s == DEFAULT_WIFI_SSID2 && strlen(DEFAULT_WIFI_PASS2) > 0) return DEFAULT_WIFI_PASS2;
+  if (s == DEFAULT_WIFI_SSID3 && strlen(DEFAULT_WIFI_PASS3) > 0) return DEFAULT_WIFI_PASS3;
+
+  // 5. Try from compile-time defaults by index
+  const char* defPass = (p == 1) ? DEFAULT_WIFI_PASS : (p == 2 ? DEFAULT_WIFI_PASS2 : DEFAULT_WIFI_PASS3);
+  if (defPass && *defPass) return defPass;
+
+  return "";
 }
 
 bool netHasCreds() {
@@ -92,9 +159,20 @@ static void beginSta(int profile = 0) {
   WiFi.disconnect(false, false);
   delay(100);
 
+  if (portal) {
+    WiFi.mode(WIFI_AP_STA);
+  } else {
+    WiFi.mode(WIFI_STA);
+  }
   WiFi.setSleep(false);
   netApplyTxPower();
-  WiFi.begin(ssid.c_str(), pass.c_str());
+  lastDisconnectReason = 0;
+  logf("[NET] Connecting to '%s' (Profile #%d, pass length: %d)...",
+       ssid.c_str(), netActiveProfile, (int)pass.length());
+  if (pass.length() == 0) {
+    logf("[NET] Notice: Profile #%d has no password set (open network or missing credential)", netActiveProfile);
+  }
+  WiFi.begin(ssid.c_str(), pass.length() > 0 ? pass.c_str() : nullptr);
   netApplyTxPower();
 }
 
@@ -137,6 +215,7 @@ static void drawConnecting(const char* ssid, uint32_t t0) {
 void netBegin() {
   String host = cfg["host"] | DEFAULT_HOST;
   WiFi.persistent(false);
+  WiFi.onEvent(onWifiEvent);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setHostname(host.c_str());
@@ -159,6 +238,11 @@ void netBegin() {
       if (millis() - lastDraw >= 200) {
         lastDraw = millis();
         drawConnecting(s.c_str(), t0);
+      }
+      // If we got a definitive authentication failure, log and move to next immediately
+      if (lastDisconnectReason == WIFI_REASON_AUTH_FAIL && millis() - t0 > 1500) {
+        logf("[NET] '%s' authentication failed (wrong password)", s.c_str());
+        break;
       }
       delay(20);
     }

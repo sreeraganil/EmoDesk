@@ -180,6 +180,40 @@ static void hConfigPost() {
   String oldHost = cfg["host"] | DEFAULT_HOST, oldTz = cfg["time"]["tz"] | "UTC0";
   if (!strcmp(d["wifi"]["pass"] | "", MASK)) d["wifi"]["pass"] = cfg["wifi"]["pass"] | "";
   if (!strcmp(d["wifi"]["pass2"] | "", MASK)) d["wifi"]["pass2"] = cfg["wifi"]["pass2"] | "";
+  if (!strcmp(d["wifi"]["pass3"] | "", MASK)) d["wifi"]["pass3"] = cfg["wifi"]["pass3"] | "";
+  if (d["wifi"]["nets"].is<JsonArray>()) {
+    for (JsonObject n : d["wifi"]["nets"].as<JsonArray>()) {
+      const char* p = n["pass"] | "";
+      if (!strcmp(p, MASK)) {
+        const char* s = n["ssid"] | "";
+        String orig = "";
+        if (cfg["wifi"]["nets"].is<JsonArray>()) {
+          for (JsonObject oldN : cfg["wifi"]["nets"].as<JsonArray>()) {
+            if (String(s).equalsIgnoreCase(oldN["ssid"] | "")) {
+              const char* op = oldN["pass"] | "";
+              if (op && strcmp(op, MASK) != 0) { orig = op; break; }
+            }
+          }
+        }
+        if (!orig.length()) {
+          for (int k = 1; k <= 3; k++) {
+            const char* sk = (k == 1) ? "ssid" : (k == 2 ? "ssid2" : "ssid3");
+            const char* pk = (k == 1) ? "pass" : (k == 2 ? "pass2" : "pass3");
+            if (String(s).equalsIgnoreCase(cfg["wifi"][sk] | "")) {
+              const char* op = cfg["wifi"][pk] | "";
+              if (op && strcmp(op, MASK) != 0) { orig = op; break; }
+            }
+          }
+        }
+        if (!orig.length()) {
+          if (String(s) == DEFAULT_WIFI_SSID) orig = DEFAULT_WIFI_PASS;
+          else if (String(s) == DEFAULT_WIFI_SSID2) orig = DEFAULT_WIFI_PASS2;
+          else if (String(s) == DEFAULT_WIFI_SSID3) orig = DEFAULT_WIFI_PASS3;
+        }
+        n["pass"] = orig;
+      }
+    }
+  }
   if (!strcmp(d["mqtt"]["pass"] | "", MASK)) d["mqtt"]["pass"] = cfg["mqtt"]["pass"] | "";
   if (d["wifi"].isNull() && !cfg["wifi"].isNull()) d["wifi"] = cfg["wifi"];
   cfg = d;
@@ -576,35 +610,69 @@ static void hWifi() {
   if (!body(d)) { fail(400, "invalid json"); return; }
   LOCK();
   if (d["nets"].is<JsonArray>()) {
+    JsonArray newNets = d["nets"].as<JsonArray>();
+    JsonDocument oldNetsDoc;
+    if (cfg["wifi"]["nets"].is<JsonArray>()) {
+      oldNetsDoc.set(cfg["wifi"]["nets"]);
+    }
     cfg["wifi"]["nets"].clear();
     int idx = 1;
-    for (JsonObject n : d["nets"].as<JsonArray>()) {
+    for (JsonObject n : newNets) {
       const char* s = n["ssid"] | "";
       if (!*s) continue;
       JsonObject netObj = cfg["wifi"]["nets"].add<JsonObject>();
       netObj["ssid"] = s;
-      const char* p = n["pass"] | MASK;
-      if (!strcmp(p, MASK)) {
-        // preserve password from existing profile or nets
-        String oldP = (idx == 1 ? cfg["wifi"]["pass"] : (idx == 2 ? cfg["wifi"]["pass2"] : cfg["wifi"]["pass3"])) | "";
-        netObj["pass"] = oldP;
+      const char* p = n["pass"] | "";
+      String finalPass = "";
+      if (p && *p && strcmp(p, MASK) != 0) {
+        finalPass = p;
       } else {
-        netObj["pass"] = p;
+        // Look up old password for this SSID
+        if (oldNetsDoc.is<JsonArray>()) {
+          for (JsonObject oldN : oldNetsDoc.as<JsonArray>()) {
+            if (String(s).equalsIgnoreCase(oldN["ssid"] | "")) {
+              const char* op = oldN["pass"] | "";
+              if (op && *op && strcmp(op, MASK) != 0) { finalPass = op; break; }
+            }
+          }
+        }
+        if (!finalPass.length()) {
+          for (int k = 1; k <= 3; k++) {
+            const char* sk = (k == 1) ? "ssid" : (k == 2 ? "ssid2" : "ssid3");
+            const char* pk = (k == 1) ? "pass" : (k == 2 ? "pass2" : "pass3");
+            if (String(s).equalsIgnoreCase(cfg["wifi"][sk] | "")) {
+              const char* op = cfg["wifi"][pk] | "";
+              if (op && *op && strcmp(op, MASK) != 0) { finalPass = op; break; }
+            }
+          }
+        }
+        if (!finalPass.length()) {
+          if (String(s) == DEFAULT_WIFI_SSID) finalPass = DEFAULT_WIFI_PASS;
+          else if (String(s) == DEFAULT_WIFI_SSID2) finalPass = DEFAULT_WIFI_PASS2;
+          else if (String(s) == DEFAULT_WIFI_SSID3) finalPass = DEFAULT_WIFI_PASS3;
+        }
       }
-      if (idx == 1) { cfg["wifi"]["ssid"] = s; if (strcmp(p, MASK)) cfg["wifi"]["pass"] = p; }
-      else if (idx == 2) { cfg["wifi"]["ssid2"] = s; if (strcmp(p, MASK)) cfg["wifi"]["pass2"] = p; }
-      else if (idx == 3) { cfg["wifi"]["ssid3"] = s; if (strcmp(p, MASK)) cfg["wifi"]["pass3"] = p; }
+      netObj["pass"] = finalPass;
+      if (idx == 1) { cfg["wifi"]["ssid"] = s; cfg["wifi"]["pass"] = finalPass; }
+      else if (idx == 2) { cfg["wifi"]["ssid2"] = s; cfg["wifi"]["pass2"] = finalPass; }
+      else if (idx == 3) { cfg["wifi"]["ssid3"] = s; cfg["wifi"]["pass3"] = finalPass; }
       idx++;
     }
     if (idx <= 2) { cfg["wifi"]["ssid2"] = ""; cfg["wifi"]["pass2"] = ""; }
     if (idx <= 3) { cfg["wifi"]["ssid3"] = ""; cfg["wifi"]["pass3"] = ""; }
   } else {
-    if (d["ssid"].is<const char*>()) cfg["wifi"]["ssid"] = d["ssid"] | "";
-    if (d["pass"].is<const char*>() && strcmp(d["pass"] | "", MASK)) cfg["wifi"]["pass"] = d["pass"] | "";
-    if (d["ssid2"].is<const char*>()) cfg["wifi"]["ssid2"] = d["ssid2"] | "";
-    if (d["pass2"].is<const char*>() && strcmp(d["pass2"] | "", MASK)) cfg["wifi"]["pass2"] = d["pass2"] | "";
-    if (d["ssid3"].is<const char*>()) cfg["wifi"]["ssid3"] = d["ssid3"] | "";
-    if (d["pass3"].is<const char*>() && strcmp(d["pass3"] | "", MASK)) cfg["wifi"]["pass3"] = d["pass3"] | "";
+    if (d["ssid"].is<const char*>()) {
+      cfg["wifi"]["ssid"] = d["ssid"] | "";
+      if (d["pass"].is<const char*>() && strcmp(d["pass"] | "", MASK) != 0) cfg["wifi"]["pass"] = d["pass"] | "";
+    }
+    if (d["ssid2"].is<const char*>()) {
+      cfg["wifi"]["ssid2"] = d["ssid2"] | "";
+      if (d["pass2"].is<const char*>() && strcmp(d["pass2"] | "", MASK) != 0) cfg["wifi"]["pass2"] = d["pass2"] | "";
+    }
+    if (d["ssid3"].is<const char*>()) {
+      cfg["wifi"]["ssid3"] = d["ssid3"] | "";
+      if (d["pass3"].is<const char*>() && strcmp(d["pass3"] | "", MASK) != 0) cfg["wifi"]["pass3"] = d["pass3"] | "";
+    }
   }
   if (!d["txPower"].isNull()) {
     cfg["wifi"]["txPower"] = d["txPower"].as<int>();
