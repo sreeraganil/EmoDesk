@@ -87,8 +87,7 @@ static void redirectSetup() {
 }
 
 // ------------------------------------------------------------------ status
-static void hStatus() {
-  JsonDocument d;
+static void buildStatusDoc(JsonDocument& d) {
   d["fw"] = FW_VERSION;
   d["name"] = cfg["name"] | "Emo";
   d["host"] = cfg["host"] | DEFAULT_HOST;
@@ -150,6 +149,11 @@ static void hStatus() {
   if (homeW.ok) { d["w"]["t"] = homeW.temp; d["w"]["c"] = wmoText(homeW.code); }
   d["msg"]["from"] = lastMsg.from;
   d["msg"]["text"] = lastMsg.text;
+}
+
+static void hStatus() {
+  JsonDocument d;
+  buildStatusDoc(d);
   sendJson(d);
 }
 
@@ -731,6 +735,29 @@ static String computeWsAccept(const String& key) {
   return base64::encode(hash, 20);
 }
 
+static void sendWsText(int slot, const String& text) {
+  if (slot < 0 || slot >= MAX_WS_CLIENTS) return;
+  if (!wsClients[slot].active || !wsClients[slot].client.connected()) return;
+  size_t len = text.length();
+  if (len < 126) {
+    uint8_t hdr[2] = { 0x81, (uint8_t)len };
+    wsClients[slot].client.write(hdr, 2);
+  } else if (len < 65536) {
+    uint8_t hdr[4] = { 0x81, 126, (uint8_t)((len >> 8) & 0xFF), (uint8_t)(len & 0xFF) };
+    wsClients[slot].client.write(hdr, 4);
+  } else {
+    return;
+  }
+  wsClients[slot].client.write((const uint8_t*)text.c_str(), len);
+  wsClients[slot].client.flush();
+}
+
+static void sendWsTextAll(const String& text) {
+  for (int i = 0; i < MAX_WS_CLIENTS; i++) {
+    sendWsText(i, text);
+  }
+}
+
 static void handleNewWsClient(WiFiClient c) {
   c.setTimeout(150);
   String key = "";
@@ -781,6 +808,13 @@ static void handleNewWsClient(WiFiClient c) {
         wsClients[slot].client.flush();
       }
       UNLOCK();
+
+      // Send initial status JSON immediately to client
+      JsonDocument stDoc;
+      buildStatusDoc(stDoc);
+      String stJson;
+      serializeJson(stDoc, stJson);
+      sendWsText(slot, stJson);
     } else {
       c.stop();
     }
@@ -880,6 +914,17 @@ static void pollWsClients() {
       }
     }
     UNLOCK();
+  }
+
+  // 4. Push live status JSON every 1500ms over WebSocket
+  static uint32_t lastStatusPush = 0;
+  if (activeCount > 0 && now - lastStatusPush >= 1500) {
+    lastStatusPush = now;
+    JsonDocument stDoc;
+    buildStatusDoc(stDoc);
+    String stJson;
+    serializeJson(stDoc, stJson);
+    sendWsTextAll(stJson);
   }
 }
 

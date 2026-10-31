@@ -973,10 +973,12 @@ function connectWs(){
    lastWsFrame=Date.now();
    if(e.data instanceof ArrayBuffer){
     drawFrame(e.data);
-    const c=CARDS.cards.find(x=>x.id===ST.cardId);
-    const name=c?(c.name||(T[c.type]||{}).n||c.type):'—';
-    const m=$('#cardNow');if(m)m.textContent='Showing '+name;
-    const t=$('#liveTag');if(t)t.textContent='live';
+   }else if(typeof e.data==='string'){
+    try{
+     const d=JSON.parse(e.data);
+     applyStatus(d);
+     const t=$('#liveTag');if(t)t.textContent='live';
+    }catch(_){}
    }
   };
   ws.onclose=()=>{
@@ -1027,11 +1029,14 @@ async function pollScreen(){
 
 /* ------------------------------------------------------------ status */
 
-async function status(){try{ST=await api('/api/status')}catch(e){$('#chips').replaceChildren(h('span',{class:'chip bad'},'Device not reachable'));return}
-
+function applyStatus(st){
+ ST=st;
  $('#devname').textContent=ST.name||'EmoDesk';document.title=(ST.name||'Emo')+' · EmoDesk';
 
- const c=CARDS.cards.find(x=>x.id===ST.cardId);$('#cardname').textContent=c?(c.name||(T[c.type]||{}).n||c.type):'—';
+ const c=CARDS.cards.find(x=>x.id===ST.cardId);
+ const cName=c?(c.name||(T[c.type]||{}).n||c.type):'—';
+ $('#cardname').textContent=cName;
+ const m=$('#cardNow');if(m)m.textContent='Showing '+cName;
 
  const chips=[
   h('span',{class:'chip '+(ST.online?'ok':'bad')},ST.online?`Wi-Fi ${ST.rssi} dBm`:(ST.portal?'Setup hotspot':'Offline')),
@@ -1046,7 +1051,21 @@ async function status(){try{ST=await api('/api/status')}catch(e){$('#chips').rep
 
  document.querySelectorAll('.citem').forEach(e=>e.classList.toggle('cur',e.dataset.id===ST.cardId));
 
- if(TAB==='home'||TAB==='emo')homeLive()}
+ if(TAB==='home'||TAB==='emo')homeLive();
+}
+
+async function status(){
+ if(ws&&ws.readyState===1&&Date.now()-lastWsFrame<4000){
+  // WebSocket is streaming status live; suppress HTTP polling!
+  return;
+ }
+ try{
+  const st=await api('/api/status');
+  applyStatus(st);
+ }catch(e){
+  $('#chips').replaceChildren(h('span',{class:'chip bad'},'Device not reachable'));
+ }
+}
 
 
 
@@ -1054,7 +1073,7 @@ async function status(){try{ST=await api('/api/status')}catch(e){$('#chips').rep
 
 const TABS=[['home','Home'],['cards','Cards'],['emo','Emo'],['sound','Sound'],['alarms','Alarms'],['display','Display'],['power','Power'],['controls','Controls'],['connect','Connect'],['media','Media'],['system','System']];
 
-function tabs(){$('#tabs').replaceChildren(...TABS.map(([k,l])=>h('button',{role:'tab','aria-selected':String(TAB===k),onclick:()=>{TAB=k;tabs();render()}},l)))}
+function tabs(){$('#tabs').replaceChildren(...TABS.map(([k,l])=>h('button',{role:'tab','aria-selected':String(TAB===k),onclick:()=>{TAB=k;if(TAB!=='system'&&typeof pollTimer!=='undefined'&&pollTimer){clearInterval(pollTimer);pollTimer=null;}tabs();render();}},l)))}
 
 function render(){const v=$('#view');v.replaceChildren(...[].concat(VIEWS[TAB]()).filter(Boolean));homeLive()}
 
@@ -1324,7 +1343,7 @@ function createTerminalSection(){
 
   const fetchLogs=async()=>{
 
-   if(port)return;
+   if(port||TAB!=='system')return;
 
    try{
 
