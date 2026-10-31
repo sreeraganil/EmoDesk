@@ -513,9 +513,9 @@ async function saveCfg(){try{const r=await api('/api/config',{body:CFG});toast(r
 
 async function saveCards(msg){try{await api('/api/cards',{body:CARDS});if(msg!==false)toast(msg||'Cards saved')}catch(e){toast('Not saved: '+e.message,1)}}
 
-const act=a=>{if(ws&&ws.readyState===1)ws.send(a);else post('/api/action?a='+a);setTimeout(status,300);};
+const act=a=>{if(ws&&ws.readyState===1)ws.send(a);else{post('/api/action?a='+a);setTimeout(status,300);}};
 
-const gest=g=>post('/api/input?g='+g).then(()=>setTimeout(status,400));
+const gest=g=>{if(ws&&ws.readyState===1)ws.send(g);else post('/api/input?g='+g).then(()=>setTimeout(status,400));};
 
 
 
@@ -959,6 +959,7 @@ function drawFrame(buf){
 }
 
 let ws, wsTry=0, lastWsFrame=0;
+let onWsLog=null, onWsCmd=null;
 function connectWs(){
  if(location.protocol==='file:')return;
  const wsHost=location.hostname;
@@ -968,6 +969,7 @@ function connectWs(){
   ws.onopen=()=>{
    wsTry=0;
    const t=$('#liveTag');if(t)t.textContent='live';
+   if(TAB==='system')try{ws.send('log:sub')}catch(_){}
   };
   ws.onmessage=e=>{
    lastWsFrame=Date.now();
@@ -976,8 +978,14 @@ function connectWs(){
    }else if(typeof e.data==='string'){
     try{
      const d=JSON.parse(e.data);
-     applyStatus(d);
-     const t=$('#liveTag');if(t)t.textContent='live';
+     if(d.type==='log'){
+      if(typeof onWsLog==='function')onWsLog(d.lines);
+     }else if(d.type==='cmd'){
+      if(typeof onWsCmd==='function')onWsCmd(d.out);
+     }else{
+      applyStatus(d);
+      const t=$('#liveTag');if(t)t.textContent='live';
+     }
     }catch(_){}
    }
   };
@@ -993,9 +1001,9 @@ function connectWs(){
 connectWs();
 
 async function pollScreen(){
- if(ws&&ws.readyState===1&&Date.now()-lastWsFrame<4000){
-  // WebSocket is streaming frames smoothly; skip HTTP polling
-  setTimeout(pollScreen,800);
+ if(ws&&ws.readyState===1){
+  // WebSocket handles screen frames; suppress HTTP polling completely!
+  setTimeout(pollScreen,1000);
   return;
  }
  if(document.visibilityState==='visible'){
@@ -1010,7 +1018,7 @@ async function pollScreen(){
    const t=$('#liveTag');if(t)t.textContent='offline';
   }
  }
- setTimeout(pollScreen,280);
+ setTimeout(pollScreen,800);
 }
 
 (()=>{const pad=$('#pad');let down=0,taps=0,tm,lt;
@@ -1055,7 +1063,7 @@ function applyStatus(st){
 }
 
 async function status(){
- if(ws&&ws.readyState===1&&Date.now()-lastWsFrame<4000){
+ if(ws&&ws.readyState===1){
   // WebSocket is streaming status live; suppress HTTP polling!
   return;
  }
@@ -1073,7 +1081,11 @@ async function status(){
 
 const TABS=[['home','Home'],['cards','Cards'],['emo','Emo'],['sound','Sound'],['alarms','Alarms'],['display','Display'],['power','Power'],['controls','Controls'],['connect','Connect'],['media','Media'],['system','System']];
 
-function tabs(){$('#tabs').replaceChildren(...TABS.map(([k,l])=>h('button',{role:'tab','aria-selected':String(TAB===k),onclick:()=>{TAB=k;if(TAB!=='system'&&typeof pollTimer!=='undefined'&&pollTimer){clearInterval(pollTimer);pollTimer=null;}tabs();render();}},l)))}
+function tabs(){$('#tabs').replaceChildren(...TABS.map(([k,l])=>h('button',{role:'tab','aria-selected':String(TAB===k),onclick:()=>{
+ const prev=TAB;TAB=k;
+ if(prev==='system'&&TAB!=='system'&&ws&&ws.readyState===1)try{ws.send('log:unsub')}catch(_){}
+ tabs();render();
+}},l)))}
 
 function render(){const v=$('#view');v.replaceChildren(...[].concat(VIEWS[TAB]()).filter(Boolean));homeLive()}
 
@@ -1221,6 +1233,10 @@ function createTerminalSection(){
 
    }catch(e){appendChunk('[ERR] Serial write failed: '+e.message+'\n');}
 
+  }else if(ws&&ws.readyState===1){
+
+   ws.send('cmd:'+txt);
+
   }else{
 
    try{
@@ -1337,9 +1353,47 @@ function createTerminalSection(){
 
 
 
+ onWsLog=(txt)=>{
+
+  if(port)return;
+
+  lines=txt.replace(/\r/g,'').split('\n');
+
+  renderLines();
+
+ };
+
+ onWsCmd=(out)=>{
+
+  if(out)appendChunk(out+'\n');
+
+ };
+
+
+
  function startWifiPoll(){
 
-  if(pollTimer)clearInterval(pollTimer);
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+
+  if(ws&&ws.readyState===1){
+
+   badge.textContent='⚡ Wi-Fi Mode (WebSocket Live)';
+
+   badge.style.background='rgba(59,130,246,0.15)';
+
+   badge.style.color='var(--accent)';
+
+   ws.send('log:sub');
+
+   return;
+
+  }
+
+  badge.textContent='🌐 Wi-Fi Mode (Polling)';
+
+  badge.style.background='rgba(59,130,246,0.12)';
+
+  badge.style.color='var(--accent)';
 
   const fetchLogs=async()=>{
 

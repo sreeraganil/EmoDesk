@@ -27,6 +27,7 @@ void createDefaultCards();
 // ---------- Logging ----------
 void logf(const char* fmt, ...);
 String logDump();
+uint32_t logSeq();
 
 // ---------- Time helpers ----------
 bool   timeOK();

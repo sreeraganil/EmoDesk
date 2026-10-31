@@ -11,6 +11,7 @@
 #include "feeds.h"
 #include "web_ui.h"
 #include "terminal.h"
+#include "input.h"
 
 static WebServer server(80);
 // MASK defined in config.h
@@ -717,6 +718,8 @@ static WiFiServer wsServer(81);
 struct WsConn {
   WiFiClient client;
   bool active = false;
+  bool subscribedLogs = false;
+  uint32_t lastLogSeq = 0;
 };
 static const int MAX_WS_CLIENTS = 2;
 static WsConn wsClients[MAX_WS_CLIENTS];
@@ -749,7 +752,6 @@ static void sendWsText(int slot, const String& text) {
     return;
   }
   wsClients[slot].client.write((const uint8_t*)text.c_str(), len);
-  wsClients[slot].client.flush();
 }
 
 static void sendWsTextAll(const String& text) {
@@ -783,7 +785,6 @@ static void handleNewWsClient(WiFiClient c) {
                   "Connection: Upgrade\r\n"
                   "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
     c.print(resp);
-    c.flush();
     c.setNoDelay(true);
 
     int slot = -1;
@@ -797,6 +798,8 @@ static void handleNewWsClient(WiFiClient c) {
     if (slot >= 0) {
       wsClients[slot].client = c;
       wsClients[slot].active = true;
+      wsClients[slot].subscribedLogs = false;
+      wsClients[slot].lastLogSeq = logSeq();
       logf("[WS] Client connected on slot %d", slot);
 
       LOCK();
@@ -805,12 +808,12 @@ static void handleNewWsClient(WiFiClient c) {
         uint8_t hdr[4] = { 0x82, 0x7E, 0x04, 0x00 };
         wsClients[slot].client.write(hdr, 4);
         wsClients[slot].client.write(ptr, 1024);
-        wsClients[slot].client.flush();
       }
       UNLOCK();
 
       // Send initial status JSON immediately to client
       JsonDocument stDoc;
+      stDoc["type"] = "status";
       buildStatusDoc(stDoc);
       String stJson;
       serializeJson(stDoc, stJson);
@@ -835,6 +838,7 @@ static void pollWsClients() {
     if (!wsClients[i].client.connected()) {
       wsClients[i].client.stop();
       wsClients[i].active = false;
+      wsClients[i].subscribedLogs = false;
       logf("[WS] Client on slot %d disconnected", i);
       continue;
     }
@@ -848,51 +852,100 @@ static void pollWsClients() {
       uint64_t len = b1 & 0x7F;
 
       if (len == 126) {
+        uint32_t t0 = millis();
+        while (wsClients[i].client.available() < 2 && wsClients[i].client.connected() && millis() - t0 < 50) delay(1);
         if (wsClients[i].client.available() < 2) break;
         len = (wsClients[i].client.read() << 8) | wsClients[i].client.read();
       } else if (len == 127) {
+        uint32_t t0 = millis();
+        while (wsClients[i].client.available() < 8 && wsClients[i].client.connected() && millis() - t0 < 50) delay(1);
         for (int k = 0; k < 8; k++) wsClients[i].client.read();
         len = 0;
       }
 
       uint8_t mask[4] = {0};
       if (masked) {
+        uint32_t t0 = millis();
+        while (wsClients[i].client.available() < 4 && wsClients[i].client.connected() && millis() - t0 < 50) delay(1);
         for (int k = 0; k < 4; k++) mask[k] = wsClients[i].client.read();
       }
 
       if (opcode == 0x08) { // Close
         wsClients[i].client.stop();
         wsClients[i].active = false;
+        wsClients[i].subscribedLogs = false;
         break;
       } else if (opcode == 0x09) { // Ping
         uint8_t pong[2] = { 0x8A, 0x00 };
         wsClients[i].client.write(pong, 2);
-        wsClients[i].client.flush();
-      } else if (opcode == 0x01 && len > 0 && len < 64) { // Text gesture/action
-        char msgBuf[64];
+      } else if (opcode == 0x01) { // Text
+        String msg = "";
+        msg.reserve(len > 128 ? 128 : len);
+        uint32_t t0 = millis();
         for (size_t k = 0; k < len; k++) {
+          while (!wsClients[i].client.available() && wsClients[i].client.connected() && millis() - t0 < 50) delay(1);
+          if (!wsClients[i].client.available()) break;
           uint8_t ch = wsClients[i].client.read();
-          msgBuf[k] = masked ? (ch ^ mask[k % 4]) : ch;
+          if (k < 512) {
+            msg += (char)(masked ? (ch ^ mask[k % 4]) : ch);
+          }
         }
-        msgBuf[len] = '\0';
-        String g = String(msgBuf);
-        g.trim();
-        if (g == "next" || g == "prev" || g == "home" || g == "pet" || g == "feed") {
-          doAction(g.c_str());
+        msg.trim();
+        if (msg == "log:sub") {
+          wsClients[i].subscribedLogs = true;
+          wsClients[i].lastLogSeq = logSeq();
+          JsonDocument ldoc;
+          ldoc["type"] = "log";
+          ldoc["lines"] = logDump();
+          String ljson;
+          serializeJson(ldoc, ljson);
+          sendWsText(i, ljson);
+        } else if (msg == "log:unsub") {
+          wsClients[i].subscribedLogs = false;
+        } else if (msg.startsWith("cmd:")) {
+          String ctext = msg.substring(4);
+          String out = terminalExecute(ctext, true);
+          JsonDocument cdoc;
+          cdoc["type"] = "cmd";
+          cdoc["out"] = out;
+          String cjson;
+          serializeJson(cdoc, cjson);
+          sendWsText(i, cjson);
+        } else if (msg == "next" || msg == "prev" || msg == "home" || msg == "pet" || msg == "feed") {
+          doAction(msg.c_str());
         } else {
           uint8_t gv = G_NONE;
           for (uint8_t gi = G_PRESS; gi <= G_VLONG; gi++) {
-            if (g == gestureName(gi)) gv = gi;
+            if (msg == gestureName(gi)) gv = gi;
           }
           if (gv != G_NONE) inputInject(gv, SRC_WEB);
-          else doAction(g.c_str());
+          else doAction(msg.c_str());
         }
       } else {
-        for (size_t k = 0; k < len; k++) wsClients[i].client.read();
+        for (size_t k = 0; k < len; k++) {
+          if (wsClients[i].client.available()) wsClients[i].client.read();
+        }
       }
     }
   }
 
+  // 1. Push logs to subscribed clients if new log entries exist
+  uint32_t curSeq = logSeq();
+  for (int i = 0; i < MAX_WS_CLIENTS; i++) {
+    if (wsClients[i].active && wsClients[i].subscribedLogs && wsClients[i].client.connected()) {
+      if (wsClients[i].lastLogSeq != curSeq) {
+        wsClients[i].lastLogSeq = curSeq;
+        JsonDocument ldoc;
+        ldoc["type"] = "log";
+        ldoc["lines"] = logDump();
+        String ljson;
+        serializeJson(ldoc, ljson);
+        sendWsText(i, ljson);
+      }
+    }
+  }
+
+  // 2. Push screen frame if changed (max ~12 fps)
   uint32_t now = millis();
   if (activeCount > 0 && now - lastWsPush >= 80) {
     lastWsPush = now;
@@ -908,7 +961,6 @@ static void pollWsClients() {
           if (wsClients[i].active && wsClients[i].client.connected()) {
             wsClients[i].client.write(hdr, 4);
             wsClients[i].client.write(ptr, 1024);
-            wsClients[i].client.flush();
           }
         }
       }
@@ -916,11 +968,12 @@ static void pollWsClients() {
     UNLOCK();
   }
 
-  // 4. Push live status JSON every 1500ms over WebSocket
+  // 3. Push live status JSON every 1500ms over WebSocket
   static uint32_t lastStatusPush = 0;
   if (activeCount > 0 && now - lastStatusPush >= 1500) {
     lastStatusPush = now;
     JsonDocument stDoc;
+    stDoc["type"] = "status";
     buildStatusDoc(stDoc);
     String stJson;
     serializeJson(stDoc, stJson);

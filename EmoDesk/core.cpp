@@ -181,6 +181,7 @@ void coreLoop() {
 #define LOG_LINE_LEN 96
 static char logBuf[LOG_LINES][LOG_LINE_LEN];
 static uint8_t logHead = 0, logCount = 0;
+static uint32_t logSequence = 0;
 
 void logf(const char* fmt, ...) {
   char tmp[LOG_LINE_LEN];
@@ -204,6 +205,7 @@ void logf(const char* fmt, ...) {
   snprintf(logBuf[logHead], sizeof(logBuf[0]), "%s %s", ts, tmp);
   logHead = (logHead + 1) % LOG_LINES;
   if (logCount < LOG_LINES) logCount++;
+  logSequence++;
   UNLOCK();
 }
 
@@ -216,6 +218,10 @@ String logDump() {
     s += '\n';
   }
   return s;
+}
+
+uint32_t logSeq() {
+  return logSequence;
 }
 
 // ------------------------------------------------------------------ time
