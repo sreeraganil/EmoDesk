@@ -87,13 +87,16 @@ static void clock_draw(CardCtx& c) {
     u8g2.drawStr(x0, 38 + by, hm);
     u8g2.setFont(F_NUM16);
     u8g2.drawStr(x0 + w + 2, 38 + by, s);
-    if (!h24) {
-      u8g2.setFont(F_SMALL);
-      u8g2.drawStr(x0 + w + ws + 4, 38 + by, t.tm_hour < 12 ? "am" : "pm");
-    }
     drawDottedHLine(14, 46 + by, 100);
     u8g2.setFont(F_MED);
-    textCenter(59 + by, date);
+    if (!h24) {
+      char dBuf[36];
+      const char* apTag = t.tm_hour < 12 ? "AM" : "PM";
+      snprintf(dBuf, sizeof(dBuf), "%s  %s", date, apTag);
+      textCenter(59 + by, dBuf);
+    } else {
+      textCenter(59 + by, date);
+    }
   } else if (!strcmp(style, "date")) {
     u8g2.setFont(F_NUM24);
     int w = u8g2.getStrWidth(hm);
@@ -111,41 +114,31 @@ static void clock_draw(CardCtx& c) {
     char b[8];
     snprintf(b, sizeof(b), h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
 
+    // Large time digits centered with zero overlap
     u8g2.setFont(F_NUM42);
     int w = u8g2.getStrWidth(b);
-
-    if (!h24) {
-      const char* apTag = t.tm_hour < 12 ? "am" : "pm";
-      u8g2.setFont(F_SMALL);
-      int apW = u8g2.getStrWidth(apTag);
-      int gap = 5;
-      int totalW = w + gap + apW;
-      int x = (128 - totalW) / 2 + bx;
-      if (x < 2) x = 2;
-
-      // Draw large time digits
-      u8g2.setFont(F_NUM42);
-      u8g2.drawStr(x, 46 + by, b);
-
-      // Draw am/pm at the bottom corner of digits
-      int apX = x + w + gap;
-      if (apX + apW > 126) apX = 126 - apW;
-      u8g2.setFont(F_SMALL);
-      u8g2.drawStr(apX, 45 + by, apTag);
-    } else {
-      u8g2.drawStr((128 - w) / 2 + bx, 46 + by, b);
-    }
+    int x = (128 - w) / 2 + bx;
+    if (x < 0) x = 0;
+    u8g2.drawStr(x, 46 + by, b);
 
     // Hairline seconds bar sweeping under digits (0 to 127 px)
     int sw = (t.tm_sec * 128) / 60;
     if (sw > 0) u8g2.drawHLine(0, 50 + by, sw);
 
-    // Full date string centered at bottom (e.g. "Saturday 31 Oct")
-    char fullDate[32];
-    snprintf(fullDate, sizeof(fullDate), "%s %d %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    // Full date string with AM/PM centered at bottom
+    char fullDate[36];
     u8g2.setFont(F_MED);
-    if (u8g2.getStrWidth(fullDate) > 124) {
-      snprintf(fullDate, sizeof(fullDate), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    if (!h24) {
+      const char* apTag = t.tm_hour < 12 ? "AM" : "PM";
+      snprintf(fullDate, sizeof(fullDate), "%s %d %s  %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], apTag);
+      if (u8g2.getStrWidth(fullDate) > 126) {
+        snprintf(fullDate, sizeof(fullDate), "%s, %d %s  %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], apTag);
+      }
+    } else {
+      snprintf(fullDate, sizeof(fullDate), "%s %d %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+      if (u8g2.getStrWidth(fullDate) > 126) {
+        snprintf(fullDate, sizeof(fullDate), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+      }
     }
     textCenter(62 + by, fullDate);
 
