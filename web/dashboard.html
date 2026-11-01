@@ -761,26 +761,24 @@ function matchPick(v,set,o,obj,path,onch){const box=h('div');const sport=o.sport
  txt.oninput=e=>applyVal(e.target.value);txt.onchange=e=>applyVal(e.target.value);
  const res=h('div',{class:'results',style:'margin-top:8px;max-height:260px;overflow-y:auto;'});
  const clearBtn=h('button',{class:'btn sm ghost',type:'button',onclick:async()=>{applyVal('');if(obj&&typeof obj==='object'){delete obj['match'];delete obj['matchId'];if(path.startsWith('cric.')){sp(CFG,'cric.match','');sp(CFG,'cric.matchId','');}}res.innerHTML='';if(obj&&obj!==CFG&&!path.startsWith('cric.')){await saveCards('Cleared teams filter');const idx=CARDS.cards.findIndex(c=>c.p===obj);if(idx>=0)post('/api/refresh?i='+idx)}else{await saveCfg();post('/api/refresh');toast('Cleared teams filter')}}},'\u2715 Clear');
- const fetchBtn=h('button',{class:'btn sm pri',type:'button'},'\u26a1 Live matches');
+ const fetchBtn=h('button',{class:'btn sm pri',type:'button'},'\u26a1 Live & recent matches');
  fetchBtn.onclick=async()=>{
-  res.textContent='Fetching '+sport+' matches\u2026';
-  const cricUrl=(CFG.cric&&CFG.cric.url)||'';
-  let list=[];
-  if(cricUrl){
-    try{
-      const base=cricUrl.replace(/\/api\/(emo\/)?cricket.*$/i,'').replace(/\/+$/,'');
-      const key=cricUrl.includes('key=')?'?'+cricUrl.split('?')[1]:'';
-      const epLive=sport==='football'?'/api/football/live':'/api/cricket/live';
-      const epAll=sport==='football'?'/api/football/all':'/api/cricket/all';
-      let r=await fetch(base+epLive+key,{headers:{Accept:'application/json'}});
-      let data=r.ok?await r.json():null;
-      let arr=Array.isArray(data)?data:(data?.matches||(sport==='football'?data?.football:data?.cricket)||[]);
-      if(!arr.length){
-        r=await fetch(base+epAll+key,{headers:{Accept:'application/json'}});
-        data=r.ok?await r.json():null;
-        arr=Array.isArray(data)?data:(data?.matches||(sport==='football'?data?.football:data?.cricket)||[]);
-      }
-      arr.forEach(m=>{
+   res.textContent='Fetching '+sport+' matches\u2026';
+   const cricUrl=(CFG.cric&&CFG.cric.url)||'';
+   let list=[];
+   if(cricUrl){
+     try{
+       const base=cricUrl.replace(/\/api\/(emo\/)?cricket.*$/i,'').replace(/\/+$/,'');
+       const key=cricUrl.includes('key=')?'?'+cricUrl.split('?')[1]:'';
+       const epAll=sport==='football'?'/api/football/all':'/api/cricket/all';
+       const epLive=sport==='football'?'/api/football/live':'/api/cricket/live';
+       let r=await fetch(base+epAll+key,{headers:{Accept:'application/json'}});
+       if(!r.ok){
+         r=await fetch(base+epLive+key,{headers:{Accept:'application/json'}});
+       }
+       let data=r.ok?await r.json():null;
+       let arr=Array.isArray(data)?data:(data?.matches||(sport==='football'?data?.football:data?.cricket)||[]);
+       arr.forEach(m=>{
         if(sport==='football'){
           if(m.sport&&m.sport!=='football')return;
           if(m.inn||m.t1Batting||m.oversRem||m.crr||m.partner)return;
@@ -838,7 +836,19 @@ function matchPick(v,set,o,obj,path,onch){const box=h('div');const sport=o.sport
       }
     }catch(e){console.warn('ESP32 cricket matches fetch error:',e)}
   }
-  res.innerHTML='';
+  const q=(txt.value||'').trim().toLowerCase();
+   list.sort((a,b)=>{
+     const aMatch = q && (a.title+' '+a.teams+' '+a.series).toLowerCase().includes(q);
+     const bMatch = q && (b.title+' '+b.teams+' '+b.series).toLowerCase().includes(q);
+     if(aMatch && !bMatch) return -1;
+     if(!aMatch && bMatch) return 1;
+     const aLive = a.status==='live'||a.status==='in-progress'||a.status===true;
+     const bLive = b.status==='live'||b.status==='in-progress'||b.status===true;
+     if(aLive && !bLive) return -1;
+     if(!aLive && bLive) return 1;
+     return 0;
+   });
+   res.innerHTML='';
   if(!list.length){
     res.append(h('div',{class:'note'},`No ${sport} matches found right now. Check back when a match is on, or make sure the match server is connected.`));
     return;
