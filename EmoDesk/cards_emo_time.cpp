@@ -89,7 +89,7 @@ static void clock_draw(CardCtx& c) {
     u8g2.drawStr(x0 + w + 2, 38 + by, s);
     if (!h24) {
       u8g2.setFont(F_SMALL);
-      u8g2.drawStr(x0 + w + ws + 4, 20 + by, t.tm_hour < 12 ? "am" : "pm");
+      u8g2.drawStr(x0 + w + ws + 4, 38 + by, t.tm_hour < 12 ? "am" : "pm");
     }
     drawDottedHLine(14, 46 + by, 100);
     u8g2.setFont(F_MED);
@@ -127,11 +127,11 @@ static void clock_draw(CardCtx& c) {
       u8g2.setFont(F_NUM42);
       u8g2.drawStr(x, 46 + by, b);
 
-      // Draw am/pm superscript with guaranteed clearance (never overlaps)
+      // Draw am/pm at the bottom corner of digits
       int apX = x + w + gap;
       if (apX + apW > 126) apX = 126 - apW;
       u8g2.setFont(F_SMALL);
-      u8g2.drawStr(apX, 16 + by, apTag);
+      u8g2.drawStr(apX, 45 + by, apTag);
     } else {
       u8g2.drawStr((128 - w) / 2 + bx, 46 + by, b);
     }
