@@ -965,11 +965,7 @@ struct CineItem {
   char date[12];
   float rating;
 };
-struct CinemaData {
-  bool ok;
-  uint8_t n;
-  CineItem items[6];
-};
+CinemaData latestCinema = {false, 0, {}};
 
 static bool cinema_fetch(JsonObject p, void* d) {
   CinemaData* cd = (CinemaData*)d;
@@ -1020,6 +1016,7 @@ static bool cinema_fetch(JsonObject p, void* d) {
   }
 
   cd->ok = (cd->n > 0);
+  if (cd->ok) latestCinema = *cd;
   return cd->ok;
 }
 

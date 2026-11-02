@@ -1027,6 +1027,19 @@ void webBegin() {
     tgSendNow(d["text"] | "Hello from EmoDesk!");
     ok();
   });
+  server.on("/api/cinema/items", HTTP_GET, [] {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    for (int i = 0; i < latestCinema.n; i++) {
+      JsonObject o = arr.add<JsonObject>();
+      o["title"] = latestCinema.items[i].title;
+      o["release_date"] = latestCinema.items[i].date;
+      o["vote_average"] = latestCinema.items[i].rating;
+    }
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
+  });
   server.on("/api/sports/matches", HTTP_GET, [] {
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();

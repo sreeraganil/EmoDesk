@@ -2262,11 +2262,23 @@ cinema(){
     statusNote.textContent = 'Fetching ' + cat + ' from CineWish...';
     try {
       const ep = cat === 'ott' ? '/api/tmdb/ott' : (cat === 'now-playing' ? '/api/tmdb/now-playing' : (cat === 'upcoming' ? '/api/tmdb/upcoming' : '/api/tmdb/trending'));
-      const r = await fetch(srvUrl.replace(/\/+$/, '') + ep, { headers: { Accept: 'application/json' } });
-      if(!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();
-      const arr = Array.isArray(data) ? data : [];
-      statusNote.textContent = arr.length ? `Showing ${arr.length} titles from CineWish` : 'No titles returned.';
+      let arr = [];
+      try {
+        const r = await fetch(srvUrl.replace(/\/+$/, '') + ep, { headers: { Accept: 'application/json' } });
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        arr = Array.isArray(data) ? data : [];
+        statusNote.textContent = arr.length ? `Showing ${arr.length} titles from CineWish` : 'No titles returned.';
+      } catch(fetchErr) {
+        // Fallback to items cached by ESP32 card
+        const cardItems = await api('/api/cinema/items');
+        if(Array.isArray(cardItems) && cardItems.length) {
+          arr = cardItems;
+          statusNote.textContent = `Showing ${arr.length} titles from Emo card (CineWish CORS updating...)`;
+        } else {
+          throw fetchErr;
+        }
+      }
       
       listCont.replaceChildren(...arr.map(m => {
         const title = m.title || m.name || 'Untitled';

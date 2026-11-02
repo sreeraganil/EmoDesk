@@ -41,6 +41,10 @@ struct CardInst { const CardType* t; void* d; uint32_t st[6]; uint32_t nextFetch
 
 #define CARD_DECL(n) extern const CardType CT_##n;
 CARD_LIST(CARD_DECL)
+extern const CardType CT_cinema;
+struct CineItem { char title[56]; char date[12]; float rating; };
+struct CinemaData { bool ok; uint8_t n; CineItem items[6]; };
+extern CinemaData latestCinema;
 
 extern bool cardHold;          // set inside draw() to pause auto-rotation
 extern uint32_t gFetchNext;    // fetch() may set seconds until its next run
