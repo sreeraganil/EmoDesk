@@ -551,7 +551,7 @@ const TZ=[['UTC','UTC0',''],['London, Dublin','GMT0BST,M3.5.0/1,M10.5.0','Europe
 
 const LEAGUES=[['eng.1','Premier League'],['esp.1','La Liga'],['ita.1','Serie A'],['ger.1','Bundesliga'],['fra.1','Ligue 1'],['uefa.champions','Champions League'],['uefa.europa','Europa League'],
 
-['eng.2','Championship'],['ned.1','Eredivisie'],['por.1','Primeira Liga'],['sco.1','Scottish Premiership'],['usa.1','MLS'],['mex.1','Liga MX'],['bra.1','Brasileirão'],['ind.1','Indian Super League'],['sau.1','Saudi Pro League'],['fifa.world','World Cup']];
+['eng.2','Championship'],['ned.1','Eredivisie'],['por.1','Primeira Liga'],['sco.1','Scottish Premiership'],['usa.1','MLS'],['mex.1','Liga MX'],['bra.1','Brasileirão'],['ind.1','Indian Super League'],['ind.2','Indian Football League (I-League)'],['sau.1','Saudi Pro League'],['fifa.world','World Cup']];
 
 const EMOS=['neutral','happy','sad','angry','sleepy','surprised','love','bored','dizzy','confused','excited','suspicious','cry','sleep','cool','focused','sick'];
 
@@ -588,6 +588,7 @@ function findLeagueSlug(slug, name) {
   if (/mls|major league soccer/i.test(n)) return 'usa.1';
   if (/liga mx|mexic/i.test(n)) return 'mex.1';
   if (/brasil/i.test(n)) return 'bra.1';
+  if (/i-league|indian football/i.test(n)) return 'ind.2';
   if (/isl|indian super/i.test(n)) return 'ind.1';
   if (/saudi/i.test(n)) return 'sau.1';
   if (/world cup/i.test(n)) return 'fifa.world';
