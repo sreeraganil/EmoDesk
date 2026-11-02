@@ -839,6 +839,13 @@ function matchPick(v,set,o,obj,path,onch){const box=h('div');const sport=o.sport
       }
     }catch(e){console.warn('ESP32 cricket matches fetch error:',e)}
   }
+  if(showFilter === 'results'){
+    list = list.filter(m => m.status === 'finished');
+  } else if(showFilter === 'live'){
+    list = list.filter(m => m.status === 'live' || m.status === 'in-progress' || m.status === true);
+  } else if(showFilter === 'fixtures'){
+    list = list.filter(m => m.status === 'scheduled' || m.status === 'upcoming');
+  }
   const q=(txt.value||'').trim().toLowerCase();
    list.sort((a,b)=>{
      const aMatch = q && (a.title+' '+a.teams+' '+a.series).toLowerCase().includes(q);

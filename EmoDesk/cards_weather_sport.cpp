@@ -845,11 +845,10 @@ static bool football_fetch(JsonObject p, void* d) {
   FootData* fd = (FootData*)d;
   String league = p["league"] | DEFAULT_FOOTBALL_LEAGUE;
   String team = p["teams"].is<const char*>() ? (p["teams"] | "") : (p["team"] | "");
-  if (!team.length()) {
-    team = cfg["football"]["teams"].is<const char*>() ? (cfg["football"]["teams"] | "") : (cfg["football"]["team"] | "");
-  }
-  if (!team.length()) {
-    team = DEFAULT_FOOTBALL_TEAMS;
+  team.trim();
+  if (!team.length() && cfg["football"]["teams"].is<const char*>()) {
+    team = (const char*)cfg["football"]["teams"];
+    team.trim();
   }
   String show = p["show"] | "all";
   bool alerts = p["alerts"] | true;
@@ -932,7 +931,7 @@ static bool football_fetch(JsonObject p, void* d) {
           continue;
       }
       const char* st = ev["status"] | "";
-      if (!strcmp(st, "finished") && fd->n < 6) {
+      if ((!strcmp(st, "finished") || !strcmp(st, "FT")) && fd->n < 6) {
         parseFMatch(ev, fd->m[fd->n++]);
       }
     }
