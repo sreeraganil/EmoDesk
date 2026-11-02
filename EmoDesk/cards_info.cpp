@@ -1025,6 +1025,17 @@ static int cinemaIdx(CardCtx& c, CinemaData* cd) {
   return (c.st[0] + (millis() - c.t0) / 7000) % cd->n;
 }
 
+static void drawMovieStar(int x, int y) {
+  u8g2.drawPixel(x + 2, y);
+  u8g2.drawLine(x, y + 2, x + 4, y + 2);
+  u8g2.drawPixel(x + 1, y + 1);
+  u8g2.drawPixel(x + 3, y + 1);
+  u8g2.drawPixel(x + 1, y + 3);
+  u8g2.drawPixel(x + 3, y + 3);
+  u8g2.drawPixel(x, y + 4);
+  u8g2.drawPixel(x + 4, y + 4);
+}
+
 static void cinema_draw(CardCtx& c) {
   CinemaData* cd = (CinemaData*)c.d;
   if (!dataGate(cd->ok, "movies")) return;
@@ -1046,19 +1057,43 @@ static void cinema_draw(CardCtx& c) {
   snprintf(rBadge, sizeof(rBadge), "%d/%d", i + 1, cd->n);
   drawTitle(c, feedTitle, rBadge);
 
-  // Title (wrap up to 2 lines)
-  u8g2.setFont(F_MED);
-  wrapText(0, 22, 127, 11, item.title, 2);
-
-  // Bottom info: Rating & Release Date
-  u8g2.setFont(F_SMALL);
-  char info[32] = "";
-  if (item.rating > 0.05f) {
-    snprintf(info, sizeof(info), "* %.1f/10", item.rating);
-    u8g2.drawStr(2, 60, info);
+  // Title: use prominent bold typography
+  u8g2.setFont(F_HELV14);
+  int titleW = u8g2.getUTF8Width(item.title);
+  if (titleW <= 126) {
+    u8g2.drawStr(1, 30, item.title);
+  } else {
+    u8g2.setFont(F_BOLD);
+    wrapText(1, 24, 126, 13, item.title, 2);
   }
-  if (item.date[0]) {
-    textRight(126, 60, item.date);
+
+  // Bottom meta: Rating badge & Release year
+  char yr[8] = "";
+  if (strlen(item.date) >= 4) {
+    memcpy(yr, item.date, 4);
+    yr[4] = 0;
+  }
+
+  if (item.rating > 0.05f) {
+    char rStr[12];
+    snprintf(rStr, sizeof(rStr), "%.1f", item.rating);
+    u8g2.setFont(F_BOLD);
+    int numW = u8g2.getUTF8Width(rStr);
+    int pillW = 9 + numW + 8; // star + num + padding
+    u8g2.drawRFrame(0, 48, pillW, 15, 3);
+    drawMovieStar(4, 53);
+    u8g2.drawStr(12, 60, rStr);
+  } else if (feedTitle[0]) {
+    u8g2.setFont(F_MED);
+    u8g2.drawStr(1, 60, feedTitle);
+  }
+
+  if (yr[0]) {
+    u8g2.setFont(F_BOLD);
+    textRight(127, 60, yr);
+  } else if (item.date[0]) {
+    u8g2.setFont(F_SMALL);
+    textRight(127, 60, item.date);
   }
 }
 

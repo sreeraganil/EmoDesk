@@ -930,8 +930,7 @@ static bool football_fetch(JsonObject p, void* d) {
               teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
           continue;
       }
-      const char* st = ev["status"] | "";
-      if ((!strcmp(st, "finished") || !strcmp(st, "FT")) && fd->n < 6) {
+      if (fd->n < 6) {
         parseFMatch(ev, fd->m[fd->n++]);
       }
     }
@@ -947,8 +946,7 @@ static bool football_fetch(JsonObject p, void* d) {
               teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
           continue;
       }
-      const char* st = ev["status"] | "";
-      if (!strcmp(st, "live") && fd->n < 6) {
+      if (fd->n < 6) {
         anyLive = true;
         parseFMatch(ev, fd->m[fd->n++]);
       }
@@ -965,8 +963,7 @@ static bool football_fetch(JsonObject p, void* d) {
               teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
           continue;
       }
-      const char* st = ev["status"] | "scheduled";
-      if (!strcmp(st, "scheduled") && fd->n < 6) {
+      if (fd->n < 6) {
         parseFMatch(ev, fd->m[fd->n++]);
       }
     }
@@ -1073,6 +1070,24 @@ static bool football_fetch(JsonObject p, void* d) {
   return true;
 }
 
+static const char* leagueLabel(const char* slug) {
+  if (!slug || !*slug) return "Football";
+  if (!strcmp(slug, "ind.1")) return "ISL";
+  if (!strcmp(slug, "ind.2")) return "I-League";
+  if (!strcmp(slug, "eng.1")) return "Premier League";
+  if (!strcmp(slug, "eng.2")) return "Championship";
+  if (!strcmp(slug, "esp.1")) return "La Liga";
+  if (!strcmp(slug, "ita.1")) return "Serie A";
+  if (!strcmp(slug, "ger.1")) return "Bundesliga";
+  if (!strcmp(slug, "fra.1")) return "Ligue 1";
+  if (!strcmp(slug, "usa.1")) return "MLS";
+  if (!strcmp(slug, "bra.1")) return "Brasileirao";
+  if (!strcmp(slug, "mex.1")) return "Liga MX";
+  if (!strcmp(slug, "sau.1")) return "Saudi League";
+  if (!strcmp(slug, "fifa.world")) return "World Cup";
+  return slug;
+}
+
 static void fmtKick(time_t t, char* out, size_t n) {
   struct tm lt;
   localtime_r(&t, &lt);
@@ -1086,7 +1101,15 @@ static void football_draw(CardCtx& c) {
   if (!dataGate(f->ok, "football scores")) return;
   const char* team = c.p["teams"].is<const char*>() ? (c.p["teams"] | "") : (c.p["team"] | "");
   if (!f->n) {
-    drawCenteredMsg(*team ? "No matches found" : "No matches today", c.p["league"] | "Football");
+    const char* show = c.p["show"] | "all";
+    const char* msg = "No matches today";
+    if (!strcmp(show, "results")) msg = "No results";
+    else if (!strcmp(show, "live")) msg = "No live match";
+    else if (!strcmp(show, "fixtures")) msg = "No fixtures";
+    else if (*team) msg = "No matches found";
+
+    const char* lName = leagueLabel(c.p["league"] | "Football");
+    drawCenteredMsg(msg, *team ? team : lName);
     return;
   }
 
