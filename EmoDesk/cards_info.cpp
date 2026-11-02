@@ -960,11 +960,6 @@ const CardType CT_battery = {"battery", 0, 0, 0, nullptr, battery_draw, nullptr,
 
 
 // ================================================================== cinema (CineWish TMDB)
-struct CineItem {
-  char title[56];
-  char date[12];
-  float rating;
-};
 CinemaData latestCinema = {false, 0, {}};
 
 static bool cinema_fetch(JsonObject p, void* d) {
