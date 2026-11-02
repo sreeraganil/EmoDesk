@@ -604,7 +604,7 @@ emo:C('Emo face','Emo','Big expressive eyes. Tap to poke, hold to pet, double-ta
 
 pet:C('Pet care','Emo','Joy, energy and food. Double-tap to play, hold to feed.'),
 
-clock:C('Clock','Time','Large digital clock.',[P('style','sel','Style','big',{o:[['big','Big with date'],['minimal','Minimal'],['seconds','With seconds'],['date','Time and full date']]})]),
+clock:C('Clock','Time','Large digital clock.',[P('style','sel','Style','big',{o:[['big','Big with date'],['minimal','Minimal'],['seconds','With seconds'],['date','Time and full date']]}),P('anim','sel','Number change animation','slide',{o:[['slide','Slide / Roll up'],['slide_down','Slide down'],['flip','Flip clock'],['fade','Dissolve / Morph'],['bounce','Drop & bounce'],['none','None (instant)']],hint:'Animates the changing number when the minute updates'})]),
 
 analog:C('Analog clock','Time','A watch face with the date beside it.'),
 
@@ -761,20 +761,23 @@ function matchPick(v,set,o,obj,path,onch){const box=h('div');const sport=o.sport
  txt.oninput=e=>applyVal(e.target.value);txt.onchange=e=>applyVal(e.target.value);
  const res=h('div',{class:'results',style:'margin-top:8px;max-height:260px;overflow-y:auto;'});
  const clearBtn=h('button',{class:'btn sm ghost',type:'button',onclick:async()=>{applyVal('');if(obj&&typeof obj==='object'){delete obj['match'];delete obj['matchId'];if(path.startsWith('cric.')){sp(CFG,'cric.match','');sp(CFG,'cric.matchId','');}}res.innerHTML='';if(obj&&obj!==CFG&&!path.startsWith('cric.')){await saveCards('Cleared teams filter');const idx=CARDS.cards.findIndex(c=>c.p===obj);if(idx>=0)post('/api/refresh?i='+idx)}else{await saveCfg();post('/api/refresh');toast('Cleared teams filter')}}},'\u2715 Clear');
- const fetchBtn=h('button',{class:'btn sm pri',type:'button'},'\u26a1 Live & recent matches');
- fetchBtn.onclick=async()=>{
+ const fetchBtn=h('button',{class:'btn sm pri',type:'button'},'\u26a1 Find matches');
+  fetchBtn.onclick=async()=>{
    res.textContent='Fetching '+sport+' matches\u2026';
    const cricUrl=(CFG.cric&&CFG.cric.url)||'';
    let list=[];
+   const showFilter = (obj && obj['show']) || 'all';
+   const leagueFilter = (obj && obj['league']) || '';
    if(cricUrl){
      try{
        const base=cricUrl.replace(/\/api\/(emo\/)?cricket.*$/i,'').replace(/\/+$/,'');
        const key=cricUrl.includes('key=')?'?'+cricUrl.split('?')[1]:'';
-       const epAll=sport==='football'?'/api/football/all':'/api/cricket/all';
-       const epLive=sport==='football'?'/api/football/live':'/api/cricket/live';
-       let r=await fetch(base+epAll+key,{headers:{Accept:'application/json'}});
-       if(!r.ok){
-         r=await fetch(base+epLive+key,{headers:{Accept:'application/json'}});
+       let ep = sport==='football' ? ('/api/football/' + (showFilter === 'results' ? 'results' : (showFilter === 'live' ? 'live' : (showFilter === 'fixtures' ? 'fixtures' : 'all')))) : '/api/cricket/all';
+       let queryParams = key ? key + '&' : '?';
+       if(sport === 'football' && leagueFilter) queryParams += 'league=' + encodeURIComponent(leagueFilter);
+       let r=await fetch(base+ep+queryParams,{headers:{Accept:'application/json'}});
+       if(!r.ok && sport === 'football'){
+         r=await fetch(base+'/api/football/all'+queryParams,{headers:{Accept:'application/json'}});
        }
        let data=r.ok?await r.json():null;
        let arr=Array.isArray(data)?data:(data?.matches||(sport==='football'?data?.football:data?.cricket)||[]);
@@ -842,10 +845,28 @@ function matchPick(v,set,o,obj,path,onch){const box=h('div');const sport=o.sport
      const bMatch = q && (b.title+' '+b.teams+' '+b.series).toLowerCase().includes(q);
      if(aMatch && !bMatch) return -1;
      if(!aMatch && bMatch) return 1;
-     const aLive = a.status==='live'||a.status==='in-progress'||a.status===true;
-     const bLive = b.status==='live'||b.status==='in-progress'||b.status===true;
-     if(aLive && !bLive) return -1;
-     if(!aLive && bLive) return 1;
+
+     if(showFilter === 'results'){
+       const aFin = a.status==='finished';
+       const bFin = b.status==='finished';
+       if(aFin && !bFin) return -1;
+       if(!aFin && bFin) return 1;
+     } else if(showFilter === 'live'){
+       const aLive = a.status==='live'||a.status==='in-progress'||a.status===true;
+       const bLive = b.status==='live'||b.status==='in-progress'||b.status===true;
+       if(aLive && !bLive) return -1;
+       if(!aLive && bLive) return 1;
+     } else if(showFilter === 'fixtures'){
+       const aUp = a.status==='scheduled'||a.status==='upcoming';
+       const bUp = b.status==='scheduled'||b.status==='upcoming';
+       if(aUp && !bUp) return -1;
+       if(!aUp && bUp) return 1;
+     } else {
+       const aLive = a.status==='live'||a.status==='in-progress'||a.status===true;
+       const bLive = b.status==='live'||b.status==='in-progress'||b.status===true;
+       if(aLive && !bLive) return -1;
+       if(!aLive && bLive) return 1;
+     }
      return 0;
    });
    res.innerHTML='';
@@ -1696,6 +1717,10 @@ alarms(){return[sec('Alarms','Alarms ring until you tap. Hold the pad to snooze.
 display(){return[sec('Screen',null,F('display.bright','Brightness','range',200,{min:1,max:255}),F('display.flip','Upside down','bool',false),F('display.invert','Inverted colours','bool',false),
 
    F('display.burn','Shift pixels slightly to prevent burn-in','bool',true),F('display.offIdle','Screen off when idle (min)','range',0,{min:0,max:120,fmt:x=>x||'never'})),
+
+  sec('Clock Digit Animation','Animation style for changing numbers when the minute updates on digital clocks.',
+   F('clock.anim','Default animation style','sel','slide',{o:[['slide','Slide / Roll up'],['slide_down','Slide down'],['flip','Flip clock'],['fade','Dissolve / Morph'],['bounce','Drop & bounce'],['none','None (instant)']],hint:'Sets how changing numbers roll or animate'}),
+   F('clock.dur','Animation speed (ms)','range',380,{min:150,max:800,step:20})),
 
   sec('Night',null,F('display.nightDim','Dim at night','bool',true),F('display.nightFrom','From','time','22:00'),F('display.nightTo','Until','time','07:00'),F('display.nightBright','Night brightness','range',10,{min:1,max:255}),
 

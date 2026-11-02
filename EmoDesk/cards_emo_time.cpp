@@ -54,6 +54,120 @@ static bool pet_input(CardCtx& c, uint8_t g) {
 const CardType CT_pet = {"pet", 0, 0, 0, nullptr, pet_draw, pet_input, nullptr, emo_speak, nullptr};
 
 // ================================================================== digital clock
+static void drawAnimatedDigits(const char* currentStr, int x, int y, int hClip, const char* animMode, int bx, int by) {
+  static char lastShown[16] = "";
+  static char prevShown[16] = "";
+  static uint32_t animStartTime = 0;
+  static bool hasPrior = false;
+
+  if (!hasPrior) {
+    safeCopy(lastShown, currentStr, sizeof(lastShown));
+    safeCopy(prevShown, currentStr, sizeof(prevShown));
+    hasPrior = true;
+  }
+
+  // Detect digit/time change
+  if (strcmp(currentStr, lastShown) != 0) {
+    safeCopy(prevShown, lastShown, sizeof(prevShown));
+    safeCopy(lastShown, currentStr, sizeof(lastShown));
+    animStartTime = millis();
+  }
+
+  uint32_t elapsed = millis() - animStartTime;
+  uint32_t animDur = 380;
+  if (cfg["clock"]["dur"].is<uint32_t>()) {
+    animDur = cfg["clock"]["dur"].as<uint32_t>();
+    if (animDur < 100) animDur = 100;
+    if (animDur > 1000) animDur = 1000;
+  }
+
+  bool inAnim = (!animMode || strcmp(animMode, "none") != 0) && (elapsed < animDur) && (prevShown[0] != '\0');
+
+  if (!inAnim) {
+    u8g2.drawStr(x, y, currentStr);
+    return;
+  }
+
+  // Smooth easing (smoothstep: 3*p^2 - 2*p^3)
+  float p = (float)elapsed / (float)animDur;
+  if (p < 0.0f) p = 0.0f;
+  if (p > 1.0f) p = 1.0f;
+  float ease = p * p * (3.0f - 2.0f * p);
+
+  size_t lenCur = strlen(currentStr);
+  size_t lenPrev = strlen(prevShown);
+
+  if (lenCur != lenPrev) {
+    u8g2.setClipWindow(0, y - hClip, 128, y + 2);
+    int dy = (int)((float)hClip * ease);
+    if (!strcmp(animMode, "slide_down")) {
+      u8g2.drawStr(x, y + dy, prevShown);
+      u8g2.drawStr(x, y - hClip + dy, currentStr);
+    } else {
+      u8g2.drawStr(x, y - dy, prevShown);
+      u8g2.drawStr(x, y + hClip - dy, currentStr);
+    }
+    u8g2.setMaxClipWindow();
+    return;
+  }
+
+  int curX = x;
+  for (size_t i = 0; i < lenCur; i++) {
+    char chCur[2] = { currentStr[i], '\0' };
+    char chPrev[2] = { prevShown[i], '\0' };
+    int cw = u8g2.getStrWidth(chCur);
+
+    if (currentStr[i] == prevShown[i]) {
+      u8g2.drawStr(curX, y, chCur);
+    } else {
+      int charBoxW = cw + 2;
+      int clipX0 = curX - 1;
+      int clipX1 = curX + charBoxW;
+      if (clipX0 < 0) clipX0 = 0;
+      if (clipX1 > 128) clipX1 = 128;
+
+      u8g2.setClipWindow(clipX0, y - hClip, clipX1, y + 2);
+
+      if (!strcmp(animMode, "slide_down")) {
+        int dy = (int)((float)hClip * ease);
+        u8g2.drawStr(curX, y + dy, chPrev);
+        u8g2.drawStr(curX, y - hClip + dy, chCur);
+      } else if (!strcmp(animMode, "flip")) {
+        int midY = y - (hClip / 2);
+        if (ease < 0.5f) {
+          float sub = ease * 2.0f;
+          int dy = (int)((float)(hClip / 2) * sub);
+          u8g2.drawStr(curX, y - dy, chPrev);
+        } else {
+          float sub = (ease - 0.5f) * 2.0f;
+          int dy = (int)((float)(hClip / 2) * (1.0f - sub));
+          u8g2.drawStr(curX, y + dy, chCur);
+        }
+        u8g2.drawHLine(curX, midY, cw);
+      } else if (!strcmp(animMode, "fade")) {
+        if (ease < 0.5f) {
+          u8g2.drawStr(curX, y, chPrev);
+        } else {
+          u8g2.drawStr(curX, y, chCur);
+        }
+      } else if (!strcmp(animMode, "bounce")) {
+        float be = 1.0f - cosf(ease * 3.14159f * 2.5f) * expf(-ease * 3.5f);
+        int dy = (int)((float)hClip * (1.0f - be));
+        u8g2.drawStr(curX, y - dy, chCur);
+      } else {
+        // Default: slide up (roll)
+        int dy = (int)((float)hClip * ease);
+        u8g2.drawStr(curX, y - dy, chPrev);
+        u8g2.drawStr(curX, y + hClip - dy, chCur);
+      }
+
+      u8g2.setMaxClipWindow();
+    }
+
+    curX += cw;
+  }
+}
+
 static void clock_draw(CardCtx& c) {
   struct tm t;
   int bx = burnX, by = burnY;
@@ -65,6 +179,7 @@ static void clock_draw(CardCtx& c) {
     return;
   }
   const char* style = c.p["style"] | "big";
+  const char* anim = c.p["anim"].is<const char*>() ? (c.p["anim"] | "slide") : (cfg["clock"]["anim"] | "slide");
   bool h24 = cfgH24();
   char hm[8], date[32];
   fmtHM(hm, t.tm_hour, t.tm_min, h24);
@@ -74,7 +189,7 @@ static void clock_draw(CardCtx& c) {
   if (!strcmp(style, "minimal")) {
     u8g2.setFont(F_NUM42);
     int w = u8g2.getStrWidth(hm);
-    u8g2.drawStr((128 - w) / 2 + bx, 48 + by, hm);
+    drawAnimatedDigits(hm, (128 - w) / 2 + bx, 48 + by, 42, anim, bx, by);
   } else if (!strcmp(style, "seconds")) {
     char s[4];
     snprintf(s, sizeof(s), ":%02d", t.tm_sec);
@@ -84,7 +199,7 @@ static void clock_draw(CardCtx& c) {
     int ws = u8g2.getStrWidth(s);
     int x0 = (128 - w - ws - 2) / 2 + bx;
     u8g2.setFont(F_NUM24);
-    u8g2.drawStr(x0, 38 + by, hm);
+    drawAnimatedDigits(hm, x0, 38 + by, 24, anim, bx, by);
     u8g2.setFont(F_NUM16);
     u8g2.drawStr(x0 + w + 2, 38 + by, s);
     drawDottedHLine(14, 46 + by, 100);
@@ -100,7 +215,7 @@ static void clock_draw(CardCtx& c) {
   } else if (!strcmp(style, "date")) {
     u8g2.setFont(F_NUM24);
     int w = u8g2.getStrWidth(hm);
-    u8g2.drawStr((128 - w) / 2 + bx, 28 + by, hm);
+    drawAnimatedDigits(hm, (128 - w) / 2 + bx, 28 + by, 24, anim, bx, by);
     u8g2.setFont(F_HELV);
     textCenter(45 + by, WDAY_LONG[t.tm_wday]);
     char d2[28];
@@ -114,12 +229,12 @@ static void clock_draw(CardCtx& c) {
     char b[8];
     snprintf(b, sizeof(b), h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
 
-    // Large time digits centered with zero overlap
+    // Large time digits centered with zero overlap (animated on minute change)
     u8g2.setFont(F_NUM42);
     int w = u8g2.getStrWidth(b);
     int x = (128 - w) / 2 + bx;
     if (x < 0) x = 0;
-    u8g2.drawStr(x, 46 + by, b);
+    drawAnimatedDigits(b, x, 46 + by, 42, anim, bx, by);
 
     // Hairline seconds bar sweeping under digits (0 to 127 px)
     int sw = (t.tm_sec * 128) / 60;

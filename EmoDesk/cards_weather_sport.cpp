@@ -919,45 +919,43 @@ static bool football_fetch(JsonObject p, void* d) {
   bool startingSoon = false;
   JsonArray arr = doc.as<JsonArray>();
 
-  if (team.length() && show == "all") {
-    FMatch liveM, nextM, lastM;
-    bool hasLive = false, hasNext = false, hasLast = false;
+  if (show == "results") {
+    fd->n = 0;
     for (JsonObject ev : arr) {
-      const char* hn = ev["home"]["name"] | "";
-      const char* an = ev["away"]["name"] | "";
-      const char* hs = ev["home"]["short"] | "";
-      const char* as = ev["away"]["short"] | "";
-      if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
-            teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
-        continue;
-
-      FMatch tmp;
-      parseFMatch(ev, tmp);
-      if (tmp.state == 1) {
-        anyLive = true;
-        liveM = tmp;
-        hasLive = true;
-      } else if (tmp.state == 0) {
-        int32_t diff = tmp.t - now;
-        if (diff >= -600 && diff <= 1800) startingSoon = true;
-        if (tmp.t > now && (!hasNext || tmp.t < nextM.t)) {
-          nextM = tmp;
-          hasNext = true;
-        }
-      } else if (tmp.state == 2) {
-        if (!hasLast || tmp.t > lastM.t) {
-          lastM = tmp;
-          hasLast = true;
-        }
+      if (team.length()) {
+        const char* hn = ev["home"]["name"] | "";
+        const char* an = ev["away"]["name"] | "";
+        const char* hs = ev["home"]["short"] | "";
+        const char* as = ev["away"]["short"] | "";
+        if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
+              teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
+          continue;
+      }
+      const char* st = ev["status"] | "";
+      if (!strcmp(st, "finished") && fd->n < 6) {
+        parseFMatch(ev, fd->m[fd->n++]);
       }
     }
+  } else if (show == "live") {
     fd->n = 0;
-    if (hasLive && fd->n < 6) fd->m[fd->n++] = liveM;
-    if (hasNext && fd->n < 6) fd->m[fd->n++] = nextM;
-    if (hasLast && fd->n < 6) fd->m[fd->n++] = lastM;
-  } else {
+    for (JsonObject ev : arr) {
+      if (team.length()) {
+        const char* hn = ev["home"]["name"] | "";
+        const char* an = ev["away"]["name"] | "";
+        const char* hs = ev["home"]["short"] | "";
+        const char* as = ev["away"]["short"] | "";
+        if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
+              teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
+          continue;
+      }
+      const char* st = ev["status"] | "";
+      if (!strcmp(st, "live") && fd->n < 6) {
+        anyLive = true;
+        parseFMatch(ev, fd->m[fd->n++]);
+      }
+    }
+  } else if (show == "fixtures") {
     fd->n = 0;
-    // Pass 1: live matches
     for (JsonObject ev : arr) {
       if (team.length()) {
         const char* hn = ev["home"]["name"] | "";
@@ -969,33 +967,60 @@ static bool football_fetch(JsonObject p, void* d) {
           continue;
       }
       const char* st = ev["status"] | "scheduled";
-      bool isLive = !strcmp(st, "live");
-      time_t t = parseISO(ev["startTime"] | "");
-      if (isLive) anyLive = true;
-      else if (!strcmp(st, "scheduled")) {
-        int32_t diff = t - now;
-        if (diff >= -600 && diff <= 1800) startingSoon = true;
-      }
-      if (isLive && fd->n < 6) {
+      if (!strcmp(st, "scheduled") && fd->n < 6) {
         parseFMatch(ev, fd->m[fd->n++]);
       }
     }
-    // Pass 2: upcoming / finished matches
-    if (fd->n < 6) {
+  } else { // show == "all"
+    if (team.length()) {
+      FMatch liveM, nextM, lastM;
+      bool hasLive = false, hasNext = false, hasLast = false;
       for (JsonObject ev : arr) {
-        if (team.length()) {
-          const char* hn = ev["home"]["name"] | "";
-          const char* an = ev["away"]["name"] | "";
-          const char* hs = ev["home"]["short"] | "";
-          const char* as = ev["away"]["short"] | "";
-          if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
-                teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
-            continue;
+        const char* hn = ev["home"]["name"] | "";
+        const char* an = ev["away"]["name"] | "";
+        const char* hs = ev["home"]["short"] | "";
+        const char* as = ev["away"]["short"] | "";
+        if (!(teamMatch(hn, team.c_str()) || teamMatch(an, team.c_str()) ||
+              teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
+          continue;
+
+        FMatch tmp;
+        parseFMatch(ev, tmp);
+        if (tmp.state == 1) {
+          anyLive = true;
+          liveM = tmp;
+          hasLive = true;
+        } else if (tmp.state == 0) {
+          int32_t diff = tmp.t - now;
+          if (diff >= -600 && diff <= 1800) startingSoon = true;
+          if (tmp.t > now && (!hasNext || tmp.t < nextM.t)) {
+            nextM = tmp;
+            hasNext = true;
+          }
+        } else if (tmp.state == 2) {
+          if (!hasLast || tmp.t > lastM.t) {
+            lastM = tmp;
+            hasLast = true;
+          }
         }
+      }
+      fd->n = 0;
+      if (hasLive && fd->n < 6) fd->m[fd->n++] = liveM;
+      if (hasNext && fd->n < 6) fd->m[fd->n++] = nextM;
+      if (hasLast && fd->n < 6) fd->m[fd->n++] = lastM;
+    } else {
+      fd->n = 0;
+      for (JsonObject ev : arr) {
         const char* st = ev["status"] | "scheduled";
-        if (strcmp(st, "live") != 0) {
+        if (!strcmp(st, "live") && fd->n < 6) {
+          anyLive = true;
           parseFMatch(ev, fd->m[fd->n++]);
-          if (fd->n >= 6) break;
+        }
+      }
+      for (JsonObject ev : arr) {
+        const char* st = ev["status"] | "scheduled";
+        if (strcmp(st, "live") != 0 && fd->n < 6) {
+          parseFMatch(ev, fd->m[fd->n++]);
         }
       }
     }
