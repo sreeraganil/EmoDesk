@@ -957,3 +957,127 @@ static void battery_speak(CardCtx& c, String& s) {
   else s = "Battery not connected.";
 }
 const CardType CT_battery = {"battery", 0, 0, 0, nullptr, battery_draw, nullptr, nullptr, battery_speak, nullptr};
+
+
+// ================================================================== cinema (CineWish TMDB)
+struct CineItem {
+  char title[56];
+  char date[12];
+  float rating;
+};
+struct CinemaData {
+  bool ok;
+  uint8_t n;
+  CineItem items[6];
+};
+
+static bool cinema_fetch(JsonObject p, void* d) {
+  CinemaData* cd = (CinemaData*)d;
+  if (!cd) return false;
+  memset(cd, 0, sizeof(CinemaData));
+
+  String feed = p["feed"] | "trending";
+  String srv = p["server"].is<const char*>() ? (p["server"] | "") : "";
+  if (!srv.length()) {
+    srv = cfg["cinema"]["url"].is<const char*>() ? (cfg["cinema"]["url"] | "") : DEFAULT_CINEMA_SERVER;
+  }
+  srv.trim();
+  while (srv.endsWith("/")) srv = srv.substring(0, srv.length() - 1);
+  if (!srv.length()) return false;
+
+  String endpoint = "/api/tmdb/trending";
+  if (feed == "theaters" || feed == "now-playing") endpoint = "/api/tmdb/now-playing";
+  else if (feed == "upcoming") endpoint = "/api/tmdb/upcoming";
+  else if (feed == "ott") endpoint = "/api/tmdb/ott";
+
+  String url = srv + endpoint;
+
+  JsonDocument filter;
+  JsonObject fObj = filter.add<JsonObject>();
+  fObj["title"] = true;
+  fObj["name"] = true;
+  fObj["release_date"] = true;
+  fObj["first_air_date"] = true;
+  fObj["vote_average"] = true;
+
+  JsonDocument doc;
+  if (!httpJson(url, doc, &filter)) return false;
+  if (!doc.is<JsonArray>()) return false;
+
+  for (JsonObject obj : doc.as<JsonArray>()) {
+    if (cd->n >= 6) break;
+    const char* t = obj["title"].is<const char*>() ? (const char*)obj["title"] : (const char*)obj["name"];
+    if (!t || !*t) continue;
+
+    CineItem& ci = cd->items[cd->n++];
+    safeCopy(ci.title, t, sizeof(ci.title));
+    cleanText(ci.title);
+
+    const char* dt = obj["release_date"].is<const char*>() ? (const char*)obj["release_date"] : (const char*)obj["first_air_date"];
+    if (dt && *dt) safeCopy(ci.date, dt, sizeof(ci.date));
+
+    ci.rating = obj["vote_average"] | 0.0f;
+  }
+
+  cd->ok = (cd->n > 0);
+  return cd->ok;
+}
+
+static int cinemaIdx(CardCtx& c, CinemaData* cd) {
+  if (!cd->n) return 0;
+  return (c.st[0] + (millis() - c.t0) / 7000) % cd->n;
+}
+
+static void cinema_draw(CardCtx& c) {
+  CinemaData* cd = (CinemaData*)c.d;
+  if (!dataGate(cd->ok, "movies")) return;
+  if (!cd->n) {
+    drawCenteredMsg("No movies found", "CineWish");
+    return;
+  }
+
+  int i = cinemaIdx(c, cd);
+  CineItem& item = cd->items[i];
+
+  const char* feed = c.p["feed"] | "trending";
+  const char* feedTitle = "Trending";
+  if (!strcmp(feed, "theaters") || !strcmp(feed, "now-playing")) feedTitle = "In Theaters";
+  else if (!strcmp(feed, "upcoming")) feedTitle = "Upcoming";
+  else if (!strcmp(feed, "ott")) feedTitle = "New on OTT";
+
+  char rBadge[16];
+  snprintf(rBadge, sizeof(rBadge), "%d/%d", i + 1, cd->n);
+  drawTitle(c, feedTitle, rBadge);
+
+  // Title (wrap up to 2 lines)
+  u8g2.setFont(F_MED);
+  wrapText(0, 22, 127, 11, item.title, 2);
+
+  // Bottom info: Rating & Release Date
+  u8g2.setFont(F_SMALL);
+  char info[32] = "";
+  if (item.rating > 0.05f) {
+    snprintf(info, sizeof(info), "* %.1f/10", item.rating);
+    u8g2.drawStr(2, 60, info);
+  }
+  if (item.date[0]) {
+    textRight(126, 60, item.date);
+  }
+}
+
+static void cinema_speak(CardCtx& c, String& s) {
+  CinemaData* cd = (CinemaData*)c.d;
+  if (cd->ok && cd->n > 0) {
+    int i = cinemaIdx(c, cd);
+    s = "Featured title: " + String(cd->items[i].title);
+    if (cd->items[i].rating > 0.05f) {
+      char rBuf[16];
+      snprintf(rBuf, sizeof(rBuf), " rated %.1f out of 10.", cd->items[i].rating);
+      s += rBuf;
+    }
+  } else {
+    s = "No movie information available.";
+  }
+}
+
+const CardType CT_cinema = {"cinema", sizeof(CinemaData), 1800, 0, nullptr, cinema_draw, crypto_input, cinema_fetch, cinema_speak, nullptr};

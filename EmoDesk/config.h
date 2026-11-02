@@ -7,6 +7,7 @@
 #define FW_VERSION      "1.2.0"
 #define DEFAULT_HOST    "emo"          // dashboard at http://emo.local
 #define DEFAULT_SPORTS_SERVER "https://emo-sports-server.onrender.com"
+#define DEFAULT_CINEMA_SERVER "https://cinewish-new.onrender.com"
 #define DEFAULT_HUB_URL       "https://emodeskpro.onrender.com"
 #define MASK                  "********"
 

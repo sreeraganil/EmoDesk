@@ -37,7 +37,7 @@ struct CardInst { const CardType* t; void* d; uint32_t st[6]; uint32_t nextFetch
   X(pomodoro) X(timer) X(stopwatch) X(alarms) X(reminders) X(todo) X(habits) X(water) X(note) X(calevents) \
   X(message) X(mqtt) X(pcstats) X(nowplaying) X(musicbox) X(soundboard) X(sleepsounds) X(metronome) \
   X(visualizer) X(images) X(anim) X(scroller) X(flappy) X(dino) X(stack) X(dodge) X(reaction) X(rhythm) \
-  X(eightball) X(dice) X(decision) X(matrix) X(starfield) X(life) X(fireworks) X(bounce) X(netinfo) X(health) X(battery) X(ble) X(whatsapp)
+  X(eightball) X(dice) X(decision) X(matrix) X(starfield) X(life) X(fireworks) X(bounce) X(netinfo) X(health) X(battery) X(ble) X(whatsapp) X(cinema)
 
 #define CARD_DECL(n) extern const CardType CT_##n;
 CARD_LIST(CARD_DECL)
