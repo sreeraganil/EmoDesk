@@ -611,8 +611,10 @@ const GAME=d=>C(d[0],'Games',d[1]+' Hold the pad for a second to leave.');
 
 const T={
 
-cinema:C('Cinema (CineWish)','Info','Trending movies, theatrical releases & OTT streaming from CineWish.',[
-  P('feed','sel','Category','trending',{o:[['trending','Trending Worldwide'],['theaters','Now in Theaters'],['upcoming','Upcoming in Theaters'],['ott','Latest OTT Releases']]}),
+cinema:C('Cinema (CineWish)','Info','Trending movies, theatrical releases & your personal CineWish wishlist.',[
+  P('feed','sel','Category','wishlist',{o:[['wishlist','My CineWish Wishlist'],['trending','Trending Worldwide'],['theaters','Now in Theaters'],['upcoming','Upcoming in Theaters'],['ott','Latest OTT Releases']]}),
+  P('view','sel','Display Mode','auto',{o:[['auto','Auto-Rotate All Screens'],['watchlist','Wishlist Table'],['soon','Coming Soon Countdown'],['out','Out Now'],['pick','Tonight\'s Pick'],['stats','Stats Gauge']]}),
+  P('token','text','User Token','',{ph:'JWT token from cinewish.vercel.app (for your wishlist)'}),
   P('server','text','CineWish Server URL','',{ph:'https://cinewish-new.onrender.com (blank = default)'}),
   P('refresh','num','Refresh every (min)',60)
 ]),
@@ -2249,7 +2251,17 @@ system(){let nets=[];
 
 cinema(){
   const srvUrl = gp(CFG, 'cinema.url') || 'https://cinewish-new.onrender.com';
-  let curCategory = 'trending';
+  const getCineToken = () => {
+    let t = (gp(CFG, 'cinema.token') || '').trim();
+    if (!t && CARDS && CARDS.cards) {
+      const cc = CARDS.cards.find(c => c.type === 'cinema' && c.p && c.p.token);
+      if (cc) t = (cc.p.token || '').trim();
+    }
+    if (!t) t = (localStorage.getItem('cinewish_token') || '').trim();
+    if (!t) t = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4NmFjOWVlMzBiNTZlZWVlMjQ5MTcyMyIsImlhdCI6MTc5MzcyNTA0MCwiZXhwIjoxNzk2MzE3MDQwfQ.hoEOylXgcYk9FSkwKNLZXHF5TdXTgMY3E6SuwdKylKk';
+    return t;
+  };
+  let curCategory = (getCineToken() ? 'wishlist' : 'trending');
   const listCont = h('div', {class: 'cine-grid'});
   const statusNote = h('p', {class: 'd', style: 'margin: 6px 0;'}, 'Loading CineWish movies & shows...');
 
@@ -2261,20 +2273,43 @@ cinema(){
     listCont.innerHTML = '';
     statusNote.textContent = 'Fetching ' + cat + ' from CineWish...';
     try {
-      const ep = cat === 'ott' ? '/api/tmdb/ott' : (cat === 'now-playing' ? '/api/tmdb/now-playing' : (cat === 'upcoming' ? '/api/tmdb/upcoming' : '/api/tmdb/trending'));
+      const token = getCineToken();
+      let ep = `/api/emo?feed=${cat}`;
+      if (token) ep += `&token=${encodeURIComponent(token)}`;
+
       let arr = [];
       try {
-        const r = await fetch(srvUrl.replace(/\/+$/, '') + ep, { headers: { Accept: 'application/json' } });
-        if(!r.ok) throw new Error('HTTP ' + r.status);
+        const fetchHeaders = { 'Accept': 'application/json' };
+        if (token) fetchHeaders['Authorization'] = `Bearer ${token}`;
+
+        const r = await fetch(srvUrl.replace(/\/+$/, '') + ep, {
+          headers: fetchHeaders,
+          credentials: 'omit'
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
-        arr = Array.isArray(data) ? data : [];
+
+        if (data && Array.isArray(data.items)) {
+          arr = data.items.map(it => ({
+            id: it.id,
+            title: it.t,
+            release_date: it.y,
+            vote_average: it.r,
+            genre: it.g,
+            days: it.d
+          }));
+        } else if (Array.isArray(data)) {
+          arr = data;
+        } else if (data && Array.isArray(data.data)) {
+          arr = data.data;
+        }
         statusNote.textContent = arr.length ? `Showing ${arr.length} titles from CineWish` : 'No titles returned.';
-      } catch(fetchErr) {
+      } catch (fetchErr) {
         // Fallback to items cached by ESP32 card
         const cardItems = await api('/api/cinema/items');
-        if(Array.isArray(cardItems) && cardItems.length) {
+        if (Array.isArray(cardItems) && cardItems.length) {
           arr = cardItems;
-          statusNote.textContent = `Showing ${arr.length} titles from Emo card (CineWish CORS updating...)`;
+          statusNote.textContent = `Showing ${arr.length} titles from Emo card`;
         } else {
           throw fetchErr;
         }
@@ -2283,8 +2318,8 @@ cinema(){
       listCont.replaceChildren(...arr.map(m => {
         const title = m.title || m.name || 'Untitled';
         const date = m.release_date || m.first_air_date || '';
-        const rating = m.vote_average ? m.vote_average.toFixed(1) : null;
-        const poster = m.poster_path ? ('https://image.tmdb.org/t/p/w300' + m.poster_path) : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="150" fill="%23222"><rect width="100" height="150"/></svg>';
+        const rating = m.vote_average ? m.vote_average.toFixed(1) : (m.rating ? Number(m.rating).toFixed(1) : null);
+        const poster = m.poster_path ? ('https://image.tmdb.org/t/p/w300' + m.poster_path) : (m.poster ? ('https://image.tmdb.org/t/p/w300' + m.poster) : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="150" fill="%23222"><rect width="100" height="150"/></svg>');
 
         const card = h('div', {class: 'cine-card'},
           h('img', {class: 'cine-poster', src: poster, loading: 'lazy', alt: title, onerror: (e)=>{e.target.style.opacity='0.3'}}),
@@ -2315,7 +2350,8 @@ cinema(){
   };
 
   const btnTabs = [
-    h('button', {class: 'btn sm pri', 'data-cat': 'trending', onclick: () => loadCategory('trending')}, 'Trending Worldwide'),
+    h('button', {class: 'btn sm pri', 'data-cat': 'wishlist', onclick: () => loadCategory('wishlist')}, '❤ My Wishlist'),
+    h('button', {class: 'btn sm ghost', 'data-cat': 'trending', onclick: () => loadCategory('trending')}, 'Trending Worldwide'),
     h('button', {class: 'btn sm ghost', 'data-cat': 'now-playing', onclick: () => loadCategory('now-playing')}, 'In Theaters'),
     h('button', {class: 'btn sm ghost', 'data-cat': 'ott', onclick: () => loadCategory('ott')}, 'New on OTT'),
     h('button', {class: 'btn sm ghost', 'data-cat': 'upcoming', onclick: () => loadCategory('upcoming')}, 'Upcoming')
@@ -2323,13 +2359,14 @@ cinema(){
 
   const addCardBtn = h('button', {class: 'btn sm pri'}, '+ Add Movie Card to Screen');
   addCardBtn.onclick = async () => {
-    const c = { id: newId(), type: 'cinema', en: true, p: { feed: curCategory, refresh: 60 } };
+    const token = getCineToken();
+    const c = { id: newId(), type: 'cinema', en: true, p: { feed: curCategory, token: token, refresh: 60 } };
     CARDS.cards.push(c);
     await saveCards('Added CineWish card');
     toast('Added CineWish ' + curCategory + ' card');
   };
 
-  setTimeout(() => loadCategory('trending'), 50);
+  setTimeout(() => loadCategory(getCineToken() ? 'wishlist' : 'trending'), 50);
 
   return [
     sec('CineWish Movies & Shows', 'Browse trending entertainment, theatrical films, and OTT streaming titles powered by your CineWish server.',
@@ -2339,15 +2376,24 @@ cinema(){
     ),
     sec('CineWish Server Settings', 'Connect to your custom CineWish backend URL (TMDB & Watchlist proxy).',
       F('cinema.url', 'Server URL', 'text', '', {ph: 'https://cinewish-new.onrender.com', hint: 'Default: https://cinewish-new.onrender.com'}),
-      h('div', {class: 'gest'},
+      F('cinema.token', 'User Token (for Wishlist)', 'password', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4NmFjOWVlMzBiNTZlZWVlMjQ5MTcyMyIsImlhdCI6MTc5MzcyNTA0MCwiZXhwIjoxNzk2MzE3MDQwfQ.hoEOylXgcYk9FSkwKNLZXHF5TdXTgMY3E6SuwdKylKk', {ph: 'Paste your CineWish JWT token here', hint: 'Pre-filled with your verified token'}),
+      h('div', {class: 'gest', style: 'margin-top: 8px; gap: 8px; flex-wrap: wrap;'},
+        h('button', {
+          class: 'btn sm pri',
+          onclick: async () => {
+            const tok = getCineToken();
+            if (tok) localStorage.setItem('cinewish_token', tok);
+            await saveCfg();
+            loadCategory('wishlist');
+            toast('Token saved! Reloading wishlist...');
+          }
+        }, 'Apply Token & Refresh Wishlist'),
         h('a', {class: 'btn sm', href: (gp(CFG, 'cinema.url') || 'https://cinewish-new.onrender.com').replace(/\/+$/, '') + '/ping', target: '_blank', rel: 'noopener'}, 'Test /ping'),
-        h('a', {class: 'btn sm ghost', href: 'https://cinewish.vercel.app', target: '_blank', rel: 'noopener'}, 'Open CineWish App \u2197')
+        h('a', {class: 'btn sm ghost', href: 'https://cinewish.vercel.app', target: '_blank', rel: 'noopener'}, 'Open CineWish App ↗')
       )
     )
   ];
-}
-
-};
+}};
 
 
 

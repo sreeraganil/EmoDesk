@@ -8,6 +8,9 @@
 #define DEFAULT_HOST    "emo"          // dashboard at http://emo.local
 #define DEFAULT_SPORTS_SERVER "https://emo-sports-server.onrender.com"
 #define DEFAULT_CINEMA_SERVER "https://cinewish-new.onrender.com"
+#ifndef DEFAULT_CINEMA_TOKEN
+#define DEFAULT_CINEMA_TOKEN  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4NmFjOWVlMzBiNTZlZWVlMjQ5MTcyMyIsImlhdCI6MTc5MzcyNTA0MCwiZXhwIjoxNzk2MzE3MDQwfQ.hoEOylXgcYk9FSkwKNLZXHF5TdXTgMY3E6SuwdKylKk"
+#endif
 #define DEFAULT_HUB_URL       "https://emodeskpro.onrender.com"
 #define MASK                  "********"
 

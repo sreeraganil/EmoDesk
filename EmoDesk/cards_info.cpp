@@ -959,15 +959,146 @@ static void battery_speak(CardCtx& c, String& s) {
 const CardType CT_battery = {"battery", 0, 0, 0, nullptr, battery_draw, nullptr, nullptr, battery_speak, nullptr};
 
 
-// ================================================================== cinema (CineWish TMDB)
-CinemaData latestCinema = {false, 0, {}};
+// ================================================================== cinema (CineWish & TMDB)
+enum CineView : uint8_t { CV_SOON = 0, CV_OUT, CV_LIST, CV_PICK, CV_STATS, CV_COUNT };
+
+CinemaData latestCinema = {false, false, 0, {}, "", "", 0.0f, 0, 0, ""};
+
+static const uint8_t XBM_STAR5[] = {0x04, 0x0E, 0x1F, 0x0E, 0x0A};
+static const uint8_t XBM_FILM7[] = {0x7F, 0x55, 0x7F, 0x41, 0x7F, 0x55, 0x7F};
+static const uint8_t XBM_TV7[]   = {0x14, 0x08, 0x7F, 0x41, 0x41, 0x7F, 0x22};
+
+static void cClapper(int x, int y) {
+  u8g2.drawFrame(x, y + 6, 22, 12);
+  u8g2.drawBox(x, y, 22, 5);
+  u8g2.setDrawColor(0);
+  for (int k = 0; k < 4; k++) {
+    u8g2.drawLine(x + 2 + k * 6, y + 4, x + 5 + k * 6, y);
+    u8g2.drawLine(x + 3 + k * 6, y + 4, x + 6 + k * 6, y);
+  }
+  u8g2.setDrawColor(1);
+  u8g2.drawHLine(x + 3, y + 10, 16);
+  u8g2.drawHLine(x + 3, y + 13, 10);
+}
+
+static void cRating(int x, int y, uint8_t r, int barW) {
+  u8g2.drawXBMP(x, y, 5, 5, XBM_STAR5);
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d.%d", r / 10, r % 10);
+  u8g2.setFont(F_SMALL);
+  u8g2.drawStr(x + 7, y + 6, buf);
+  if (barW > 0) {
+    int bx = x + 25;
+    u8g2.drawFrame(bx, y, barW, 5);
+    int fillW = ((barW - 2) * r) / 100;
+    if (fillW > 0) u8g2.drawBox(bx + 1, y + 1, fillW, 3);
+  }
+}
+
+static void cDots(int i, int n, int y = 60) {
+  if (n < 2) return;
+  int x = 64 - (n * 5 - 2) / 2;
+  for (int k = 0; k < n; k++, x += 5) {
+    if (k == i) u8g2.drawBox(x, y, 3, 3);
+    else u8g2.drawPixel(x + 1, y + 1);
+  }
+}
+
+static void cFit(int x, int y, int w, const char* s) {
+  if (!s || !*s || w <= 8) return;
+  char b[48]; strlcpy(b, s, sizeof(b));
+  if (u8g2.getUTF8Width(b) <= w) { u8g2.drawUTF8(x, y, b); return; }
+  int dw = u8g2.getUTF8Width("..");
+  int n = strlen(b);
+  while (n > 0) {
+    n--;
+    while (n > 0 && ((uint8_t)b[n] & 0xC0) == 0x80) n--;
+    b[n] = 0;
+    if (u8g2.getUTF8Width(b) + dw <= w) break;
+  }
+  strlcat(b, "..", sizeof(b));
+  u8g2.drawUTF8(x, y, b);
+}
+
+static void cDateFmt(char* b, size_t n, const char* s, int16_t d) {
+  static const char* const MOS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  if (s && strlen(s) >= 10 && s[4] == '-' && s[7] == '-') {
+    int mo = atoi(s + 5);
+    int dy = atoi(s + 8);
+    if (mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+      snprintf(b, n, "%02d %s", dy, MOS[mo - 1]);
+      return;
+    }
+  }
+  if (s && strlen(s) >= 4) {
+    snprintf(b, n, "Year %.4s", s);
+    return;
+  }
+  if (d <= 0) strlcpy(b, "Today", n);
+  else if (d == 1) strlcpy(b, "Tomorrow", n);
+  else snprintf(b, n, "In %dd", d);
+}
+
+static int16_t daysFromDate(const char* s) {
+  if (!s || strlen(s) < 4) return 0;
+  int yr = atoi(s);
+  int mo = 1, dy = 1;
+  if (strlen(s) >= 7 && s[4] == '-') mo = atoi(s + 5);
+  if (strlen(s) >= 10 && s[7] == '-') dy = atoi(s + 8);
+  if (yr < 1970 || mo < 1 || mo > 12 || dy < 1 || dy > 31) return 0;
+
+  struct tm target;
+  memset(&target, 0, sizeof(target));
+  target.tm_year = yr - 1900;
+  target.tm_mon  = mo - 1;
+  target.tm_mday = dy;
+  target.tm_hour = 12;
+  time_t targetTime = mktime(&target);
+
+  time_t now = time(nullptr);
+  if (now > 1600000000) {
+    double diff = difftime(targetTime, now);
+    return (int16_t)round(diff / 86400.0);
+  }
+  return 0;
+}
+
+static int cFilter(const CinemaData* cd, bool upcoming, int* outIdx) {
+  if (!cd || !cd->n) return 0;
+  int count = 0;
+  for (int i = 0; i < cd->n; i++) {
+    // Days >= 0 are Upcoming (Today, Tomorrow, X days). Days < 0 are Released (Past).
+    if ((cd->items[i].days >= 0) == upcoming) {
+      if (outIdx && count < 8) outIdx[count] = i;
+      count++;
+    }
+  }
+  return count;
+}
 
 static bool cinema_fetch(JsonObject p, void* d) {
   CinemaData* cd = (CinemaData*)d;
   if (!cd) return false;
   memset(cd, 0, sizeof(CinemaData));
 
-  String feed = p["feed"] | "trending";
+  String feed = p["feed"] | "wishlist";
+  String token = p["token"].is<const char*>() ? (p["token"] | "") : "";
+  token.trim();
+  if (!token.length()) {
+    if (cfg["cinema"].is<JsonObject>() && cfg["cinema"]["token"].is<const char*>()) {
+      token = cfg["cinema"]["token"] | "";
+    } else if (cfg["cinema_token"].is<const char*>()) {
+      token = cfg["cinema_token"] | "";
+    }
+    token.trim();
+  }
+#ifdef DEFAULT_CINEMA_TOKEN
+  if (!token.length()) {
+    token = DEFAULT_CINEMA_TOKEN;
+    token.trim();
+  }
+#endif
+
   String srv = p["server"].is<const char*>() ? (p["server"] | "") : "";
   if (!srv.length()) {
     srv = cfg["cinema"]["url"].is<const char*>() ? (cfg["cinema"]["url"] | "") : DEFAULT_CINEMA_SERVER;
@@ -976,135 +1107,442 @@ static bool cinema_fetch(JsonObject p, void* d) {
   while (srv.endsWith("/")) srv = srv.substring(0, srv.length() - 1);
   if (!srv.length()) return false;
 
-  String endpoint = "/api/tmdb/trending";
+  // Filter for fallback standard endpoints (Wishlist & TMDB)
+  JsonDocument filter;
+  filter["total"] = true;
+  JsonObject itemF = filter["data"][0];
+  itemF["_id"] = true;
+  itemF["id"] = true;
+  itemF["tmdbId"] = true;
+  itemF["title"] = true;
+  itemF["name"] = true;
+  itemF["release_date"] = true;
+  itemF["first_air_date"] = true;
+  itemF["year"] = true;
+  itemF["rating"] = true;
+  itemF["vote_average"] = true;
+  itemF["type"] = true;
+  itemF["media_type"] = true;
+  itemF["genre"] = true;
+  JsonObject arrF = filter[0];
+  arrF["title"] = true;
+  arrF["name"] = true;
+  arrF["release_date"] = true;
+  arrF["first_air_date"] = true;
+  arrF["vote_average"] = true;
+  arrF["media_type"] = true;
+
+  String authHeader;
+  const char* hName = nullptr;
+  const char* hVal = nullptr;
+  if (token.length()) {
+    authHeader = "Bearer " + token;
+    hName = "Authorization";
+    hVal = authHeader.c_str();
+  }
+
+  // 1. First attempt: call dedicated high-performance /api/emo route
+  String emoUrl = srv + "/api/emo?feed=" + feed;
+  if (token.length()) emoUrl += "&token=" + token;
+
+  JsonDocument doc;
+  bool ok = httpJson(emoUrl, doc, nullptr, hName, hVal);
+
+  if (ok && doc["items"].is<JsonArray>()) {
+    cd->ok = doc["ok"] | true;
+    cd->linked = doc["linked"] | false;
+    cd->watchedMonth = doc["stats"]["w"] | 0;
+    cd->listSize = doc["stats"]["l"] | 0;
+
+    const char* pt = doc["pick"]["t"] | "";
+    const char* pg = doc["pick"]["g"] | "";
+    safeCopy(cd->pickTitle, pt, sizeof(cd->pickTitle));
+    safeCopy(cd->pickGenre, pg, sizeof(cd->pickGenre));
+    cd->pickRating = doc["pick"]["r"] | 0.0f;
+
+    for (JsonObject obj : doc["items"].as<JsonArray>()) {
+      if (cd->n >= 8) break;
+      const char* t = obj["t"].is<const char*>() ? (const char*)obj["t"] : (const char*)obj["title"];
+      if (!t || !*t) continue;
+
+      CineItem& ci = cd->items[cd->n++];
+      const char* idStr = obj["id"] | obj["_id"] | "";
+      safeCopy(ci.id, idStr, sizeof(ci.id));
+
+      safeCopy(ci.title, t, sizeof(ci.title));
+      cleanText(ci.title);
+
+      const char* yrStr = obj["y"] | obj["release_date"] | obj["year"] | "";
+      safeCopy(ci.date, yrStr, sizeof(ci.date));
+
+      ci.isTV = obj["k"].is<int>() ? (uint8_t)obj["k"].as<int>() : 0;
+      const char* gStr = obj["g"] | obj["genre"] | (ci.isTV ? "Series" : "Cinema");
+      safeCopy(ci.genre, gStr, sizeof(ci.genre));
+
+      ci.days = obj["d"].is<int>() ? (int16_t)obj["d"].as<int>() : daysFromDate(ci.date);
+      ci.rating = obj["r"] | (obj["rating"] | (obj["vote_average"] | 0.0f));
+    }
+
+    if (cd->n > 0) {
+      if (!cd->listSize) cd->listSize = cd->n;
+      latestCinema = *cd;
+      return true;
+    }
+  }
+
+  // 2. Fallback to standard endpoints if /api/emo not available
+  String endpoint = "/api/wishlist?page=1&limit=20";
   if (feed == "theaters" || feed == "now-playing") endpoint = "/api/tmdb/now-playing";
   else if (feed == "upcoming") endpoint = "/api/tmdb/upcoming";
   else if (feed == "ott") endpoint = "/api/tmdb/ott";
+  else if (feed == "trending") endpoint = "/api/tmdb/trending";
+
+  if (endpoint.startsWith("/api/wishlist") && token.length()) {
+    endpoint += "&token=" + token;
+  }
 
   String url = srv + endpoint;
+  doc.clear();
+  if (!httpJson(url, doc, &filter, hName, hVal)) {
+    if (endpoint.startsWith("/api/wishlist")) {
+      url = srv + "/api/tmdb/trending";
+      if (!httpJson(url, doc, &filter)) {
+        cd->ok = false;
+        strlcpy(cd->err, "HTTP fail", sizeof(cd->err));
+        return false;
+      }
+    } else {
+      cd->ok = false;
+      strlcpy(cd->err, "HTTP fail", sizeof(cd->err));
+      return false;
+    }
+  }
 
-  JsonDocument filter;
-  JsonObject fObj = filter.add<JsonObject>();
-  fObj["title"] = true;
-  fObj["name"] = true;
-  fObj["release_date"] = true;
-  fObj["first_air_date"] = true;
-  fObj["vote_average"] = true;
+  JsonArray arr;
+  if (doc.is<JsonArray>()) {
+    arr = doc.as<JsonArray>();
+    cd->listSize = arr.size();
+  } else if (doc["data"].is<JsonArray>()) {
+    arr = doc["data"].as<JsonArray>();
+    cd->listSize = doc["total"] | (uint16_t)arr.size();
+    cd->linked = true;
+  } else {
+    cd->ok = false;
+    strlcpy(cd->err, "Bad payload", sizeof(cd->err));
+    return false;
+  }
 
-  JsonDocument doc;
-  if (!httpJson(url, doc, &filter)) return false;
-  if (!doc.is<JsonArray>()) return false;
-
-  for (JsonObject obj : doc.as<JsonArray>()) {
-    if (cd->n >= 6) break;
+  float bestR = -1.0f;
+  for (JsonObject obj : arr) {
+    if (cd->n >= 8) break;
     const char* t = obj["title"].is<const char*>() ? (const char*)obj["title"] : (const char*)obj["name"];
     if (!t || !*t) continue;
 
     CineItem& ci = cd->items[cd->n++];
+    if (obj["_id"].is<const char*>()) safeCopy(ci.id, obj["_id"], sizeof(ci.id));
+    else if (obj["id"].is<const char*>()) safeCopy(ci.id, obj["id"], sizeof(ci.id));
+    else if (obj["id"].is<long>()) snprintf(ci.id, sizeof(ci.id), "%ld", (long)obj["id"]);
+    else ci.id[0] = 0;
+
     safeCopy(ci.title, t, sizeof(ci.title));
     cleanText(ci.title);
 
-    const char* dt = obj["release_date"].is<const char*>() ? (const char*)obj["release_date"] : (const char*)obj["first_air_date"];
+    const char* dt = obj["release_date"].is<const char*>() ? (const char*)obj["release_date"] : 
+                    (obj["first_air_date"].is<const char*>() ? (const char*)obj["first_air_date"] : (const char*)obj["year"]);
     if (dt && *dt) safeCopy(ci.date, dt, sizeof(ci.date));
 
-    ci.rating = obj["vote_average"] | 0.0f;
+    ci.isTV = (obj["first_air_date"].is<const char*>() || 
+              (obj["media_type"].is<const char*>() && !strcmp(obj["media_type"], "tv")) ||
+              (obj["type"].is<const char*>() && !strcmp(obj["type"], "tv"))) ? 1 : 0;
+
+    if (obj["genre"].is<const char*>()) {
+      safeCopy(ci.genre, obj["genre"], sizeof(ci.genre));
+    } else {
+      strlcpy(ci.genre, ci.isTV ? "Series" : "Cinema", sizeof(ci.genre));
+    }
+
+    if (obj["days"].is<int>()) {
+      ci.days = obj["days"];
+    } else {
+      ci.days = daysFromDate(ci.date);
+    }
+
+    if (obj["rating"].is<float>()) ci.rating = obj["rating"].as<float>();
+    else ci.rating = obj["vote_average"] | 0.0f;
+
+    if (ci.rating > bestR) {
+      bestR = ci.rating;
+      safeCopy(cd->pickTitle, ci.title, sizeof(cd->pickTitle));
+      safeCopy(cd->pickGenre, ci.genre, sizeof(cd->pickGenre));
+      cd->pickRating = ci.rating;
+    }
   }
 
+  cd->watchedMonth = cd->n;
   cd->ok = (cd->n > 0);
   if (cd->ok) latestCinema = *cd;
   return cd->ok;
 }
 
-static int cinemaIdx(CardCtx& c, CinemaData* cd) {
-  if (!cd->n) return 0;
-  return (c.st[0] + (millis() - c.t0) / 7000) % cd->n;
+static void viewSoon(CardCtx& c, CinemaData* cd, int subIdx) {
+  int ix[8], n = cFilter(cd, true, ix);
+  if (!n) {
+    drawTitle(c, "Coming Soon", nullptr);
+    drawCenteredMsg("No upcoming films", "In your wishlist");
+    return;
+  }
+  int i = (unsigned)subIdx % n;
+  const CineItem& m = cd->items[ix[i]];
+  char hr[10]; snprintf(hr, sizeof(hr), "%d/%d", i + 1, n);
+  drawTitle(c, "Coming Soon", hr);
+
+  u8g2.setFont(F_MED);
+  marquee(2, 20, 124, m.title, c.st[2], 28);
+
+  if (m.days <= 0) {
+    u8g2.setFont(F_BOLD);
+    u8g2.drawStr(2, 45, "RELEASING");
+    u8g2.setFont(F_HELV14);
+    u8g2.drawStr(2, 60, "TODAY!");
+    u8g2.drawXBMP(92, 48, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
+    cFit(102, 55, 24, m.genre);
+  } else {
+    char num[8]; snprintf(num, sizeof(num), "%u", (unsigned)m.days);
+    u8g2.setFont(F_NUM24);
+    u8g2.drawStr(2, 52, num);
+    int rx = 2 + u8g2.getStrWidth(num) + 6;
+
+    u8g2.setFont(F_MED);
+    u8g2.drawStr(rx, 36, m.days == 1 ? "DAY" : "DAYS");
+
+    u8g2.setFont(F_SMALL);
+    char dtBuf[16]; cDateFmt(dtBuf, sizeof(dtBuf), m.date, m.days);
+    u8g2.drawStr(rx, 46, dtBuf);
+    u8g2.drawXBMP(rx, 50, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
+    cFit(rx + 10, 57, 116 - rx, m.genre);
+  }
+  cDots(i, n);
 }
 
-static void drawMovieStar(int x, int y) {
-  u8g2.drawPixel(x + 2, y);
-  u8g2.drawLine(x, y + 2, x + 4, y + 2);
-  u8g2.drawPixel(x + 1, y + 1);
-  u8g2.drawPixel(x + 3, y + 1);
-  u8g2.drawPixel(x + 1, y + 3);
-  u8g2.drawPixel(x + 3, y + 3);
-  u8g2.drawPixel(x, y + 4);
-  u8g2.drawPixel(x + 4, y + 4);
+static void viewOut(CardCtx& c, CinemaData* cd, int subIdx) {
+  int ix[8], n = cFilter(cd, false, ix);
+  if (!n) {
+    drawTitle(c, "Out Now", nullptr);
+    drawCenteredMsg("All caught up", "Nothing waiting");
+    return;
+  }
+  int i = (unsigned)subIdx % n;
+  const CineItem& m = cd->items[ix[i]];
+  int a = m.days < 0 ? -m.days : 0;
+  char hr[10]; snprintf(hr, sizeof(hr), "%d/%d", i + 1, n);
+  drawTitle(c, "Out Now", hr);
+
+  u8g2.setFont(F_MED);
+  marquee(2, 20, 124, m.title, c.st[2], 28);
+
+  u8g2.setFont(F_SMALL);
+  u8g2.drawXBMP(2, 25, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
+  cFit(12, 31, 80, m.genre);
+
+  char b[24];
+  if (a == 0)       strlcpy(b, "Out today", sizeof(b));
+  else if (a == 1)  strlcpy(b, "Out yesterday", sizeof(b));
+  else if (a < 7)   snprintf(b, sizeof(b), "Out %d days ago", a);
+  else if (a < 60)  snprintf(b, sizeof(b), "Out %d wk ago", a / 7);
+  else if (a < 365) snprintf(b, sizeof(b), "Out %d mo ago", a / 30);
+  else {
+    if (m.date[0]) snprintf(b, sizeof(b), "Released %.4s", m.date);
+    else snprintf(b, sizeof(b), "Out %d yr ago", a / 365);
+  }
+  u8g2.drawStr(2, 42, b);
+
+  if (a <= 7) {
+    u8g2.drawBox(104, 24, 22, 9);
+    u8g2.setDrawColor(0); u8g2.drawStr(107, 31, "NEW"); u8g2.setDrawColor(1);
+  }
+  if (m.rating > 0.05f) cRating(2, 48, (uint8_t)(m.rating * 10), 60);
+  else                  u8g2.drawStr(2, 55, "Not rated");
+  cDots(i, n);
+}
+
+static void viewList(CardCtx& c, CinemaData* cd, int sel) {
+  char hr[8]; snprintf(hr, sizeof(hr), "%d", cd->n);
+  drawTitle(c, "Wishlist", hr);
+  if (!cd->n) {
+    drawCenteredMsg("List is empty", "Add in CineWish");
+    return;
+  }
+  u8g2.setFont(F_SMALL);
+  int cur = (unsigned)sel % cd->n;
+  int first = constrain(cur - 2, 0, max(0, cd->n - 5));
+  for (int r = 0; r < 5 && first + r < cd->n; r++) {
+    const CineItem& m = cd->items[first + r];
+    int y = 11 + r * 10;
+    char tag[8];
+    if (m.days > 0)       snprintf(tag, sizeof(tag), "%dd", m.days);
+    else if (m.days == 0) strlcpy(tag, "NOW", sizeof(tag));
+    else                  strlcpy(tag, "OUT", sizeof(tag));
+
+    if (first + r == cur) {
+      u8g2.drawBox(0, y, 125, 10);
+      u8g2.setDrawColor(0);
+    }
+    cFit(3, y + 8, 96, m.title);
+    u8g2.drawStr(122 - u8g2.getStrWidth(tag), y + 8, tag);
+    u8g2.setDrawColor(1);
+  }
+  if (cd->n > 5) {
+    int h = 50 * 5 / cd->n;
+    int sy = 11 + (50 - h) * first / (cd->n - 5);
+    u8g2.drawBox(126, sy, 2, h);
+  }
+}
+
+static void viewPick(CardCtx& c, CinemaData* cd) {
+  drawTitle(c, "Tonight's Pick", nullptr);
+  if (!cd->pickTitle[0]) {
+    drawCenteredMsg("No picks yet", "Rate in CineWish");
+    return;
+  }
+  cClapper(4, 20);
+  u8g2.setFont(F_MED);
+  wrapText(30, 24, 96, 11, cd->pickTitle, 2);
+  if (cd->pickRating > 0.05f) cRating(30, 43, (uint8_t)(cd->pickRating * 10), 0);
+  u8g2.setFont(F_SMALL);
+  cFit(60, 49, 66, cd->pickGenre);
+  u8g2.drawHLine(0, 53, 128);
+  u8g2.drawStr(2, 62, "picked for you");
+}
+
+static void viewStats(CardCtx& c, CinemaData* cd) {
+  drawTitle(c, "CineWish", nullptr);
+  char b[8];
+  u8g2.setFont(F_NUM24);
+  snprintf(b, sizeof(b), "%u", cd->watchedMonth);
+  int w1 = u8g2.getStrWidth(b);
+  u8g2.drawStr(32 - w1 / 2, 40, b);
+
+  snprintf(b, sizeof(b), "%u", cd->listSize);
+  int w2 = u8g2.getStrWidth(b);
+  u8g2.drawStr(96 - w2 / 2, 40, b);
+
+  u8g2.drawVLine(64, 14, 34);
+  u8g2.setFont(F_SMALL);
+  u8g2.drawStr(14, 50, "watched");
+  u8g2.drawStr(7, 58, "this month");
+  u8g2.drawStr(79, 50, "on your");
+  u8g2.drawStr(74, 58, "wishlist");
+}
+
+static void cinema_enter(CardCtx& c) {
+  uint32_t now = millis();
+  c.st[0] = CV_SOON;
+  c.st[1] = 0;
+  c.st[2] = now;
+  c.st[3] = now;
 }
 
 static void cinema_draw(CardCtx& c) {
   CinemaData* cd = (CinemaData*)c.d;
-  if (!dataGate(cd->ok, "movies")) return;
-  if (!cd->n) {
-    drawCenteredMsg("No movies found", "CineWish");
-    return;
-  }
+  if (!cd) return;
+  if (!dataGate(cd->ok, "cinema")) return;
 
-  int i = cinemaIdx(c, cd);
-  CineItem& item = cd->items[i];
+  uint32_t& view  = c.st[0];
+  uint32_t& idx   = c.st[1];
+  uint32_t& tLast = c.st[2];
+  uint32_t& tView = c.st[3];
 
-  const char* feed = c.p["feed"] | "trending";
-  const char* feedTitle = "Trending";
-  if (!strcmp(feed, "theaters") || !strcmp(feed, "now-playing")) feedTitle = "In Theaters";
-  else if (!strcmp(feed, "upcoming")) feedTitle = "Upcoming";
-  else if (!strcmp(feed, "ott")) feedTitle = "New on OTT";
+  uint32_t now = millis();
+  if (!tLast) tLast = now;
+  if (!tView) tView = now;
 
-  char rBadge[16];
-  snprintf(rBadge, sizeof(rBadge), "%d/%d", i + 1, cd->n);
-  drawTitle(c, feedTitle, rBadge);
-
-  // Title: use prominent bold typography
-  u8g2.setFont(F_HELV14);
-  int titleW = u8g2.getUTF8Width(item.title);
-  if (titleW <= 126) {
-    u8g2.drawStr(1, 30, item.title);
+  // Check if view mode is forced in card params, e.g. "view": "soon", "out", "watchlist", "pick", "stats"
+  const char* forcedView = c.p["view"] | "auto";
+  bool isAuto = !strcmp(forcedView, "auto");
+  if (!isAuto) {
+    if (!strcmp(forcedView, "soon")) view = CV_SOON;
+    else if (!strcmp(forcedView, "out")) view = CV_OUT;
+    else if (!strcmp(forcedView, "watchlist") || !strcmp(forcedView, "list")) view = CV_LIST;
+    else if (!strcmp(forcedView, "pick")) view = CV_PICK;
+    else if (!strcmp(forcedView, "stats")) view = CV_STATS;
   } else {
-    u8g2.setFont(F_BOLD);
-    wrapText(1, 24, 126, 13, item.title, 2);
+    // Auto mode: switch screens every 7 seconds
+    if (now - tView > 7000) {
+      tView = now;
+      tLast = now;
+      view = (view + 1) % CV_COUNT;
+      idx = 0;
+    }
   }
 
-  // Bottom meta: Rating badge & Release year
-  char yr[8] = "";
-  if (strlen(item.date) >= 4) {
-    memcpy(yr, item.date, 4);
-    yr[4] = 0;
+  // Advance items inside current view every 3.5 seconds
+  if (now - tLast > 3500) {
+    tLast = now;
+    idx++;
   }
 
-  if (item.rating > 0.05f) {
-    char rStr[12];
-    snprintf(rStr, sizeof(rStr), "%.1f", item.rating);
-    u8g2.setFont(F_BOLD);
-    int numW = u8g2.getUTF8Width(rStr);
-    int pillW = 9 + numW + 8; // star + num + padding
-    u8g2.drawRFrame(0, 48, pillW, 15, 3);
-    drawMovieStar(4, 53);
-    u8g2.drawStr(12, 60, rStr);
-  } else if (feedTitle[0]) {
-    u8g2.setFont(F_MED);
-    u8g2.drawStr(1, 60, feedTitle);
+  // Skip views that have no data so screen never gets stuck on an empty placeholder
+  int ixSoon[8], nSoon = cFilter(cd, true, ixSoon);
+  int ixOut[8],  nOut  = cFilter(cd, false, ixOut);
+
+  if (isAuto) {
+    if (view == CV_SOON && !nSoon) view = (nOut ? CV_OUT : CV_LIST);
+    if (view == CV_OUT && !nOut)   view = CV_LIST;
+    if (view == CV_PICK && !cd->pickTitle[0]) view = CV_STATS;
   }
 
-  if (yr[0]) {
-    u8g2.setFont(F_BOLD);
-    textRight(127, 60, yr);
-  } else if (item.date[0]) {
-    u8g2.setFont(F_SMALL);
-    textRight(127, 60, item.date);
+  switch (view % CV_COUNT) {
+    case CV_SOON:  viewSoon(c, cd, idx);  break;
+    case CV_OUT:   viewOut(c, cd, idx);   break;
+    case CV_LIST:  viewList(c, cd, idx);  break;
+    case CV_PICK:  viewPick(c, cd);       break;
+    case CV_STATS: viewStats(c, cd);      break;
+    default:       viewSoon(c, cd, idx);  break;
   }
+}
+
+// Return false so all EmoDesk global touch gestures work unimpeded:
+// Tap -> Next Card, Double-tap -> Prev Card, Triple-tap -> Home, Long-press -> Speak Card!
+static bool cinema_input(CardCtx& c, uint8_t g) {
+  return false;
 }
 
 static void cinema_speak(CardCtx& c, String& s) {
   CinemaData* cd = (CinemaData*)c.d;
-  if (cd->ok && cd->n > 0) {
-    int i = cinemaIdx(c, cd);
-    s = "Featured title: " + String(cd->items[i].title);
-    if (cd->items[i].rating > 0.05f) {
-      char rBuf[16];
-      snprintf(rBuf, sizeof(rBuf), " rated %.1f out of 10.", cd->items[i].rating);
-      s += rBuf;
-    }
-  } else {
-    s = "No movie information available.";
+  if (!cd || !cd->ok || !cd->n) {
+    s = "No cinema information available.";
+    return;
   }
+  uint32_t view = c.st[0];
+  uint32_t idx  = c.st[1];
+
+  if (view == CV_SOON) {
+    int ix[8], n = cFilter(cd, true, ix);
+    if (n) {
+      const CineItem& m = cd->items[ix[idx % n]];
+      s = String(m.title) + " releases in " + String(m.days) + " days.";
+      return;
+    }
+  } else if (view == CV_OUT) {
+    int ix[8], n = cFilter(cd, false, ix);
+    if (n) {
+      const CineItem& m = cd->items[ix[idx % n]];
+      s = String(m.title) + " is out now.";
+      if (m.rating > 0.05f) {
+        char rBuf[24]; snprintf(rBuf, sizeof(rBuf), " Rated %.1f.", m.rating);
+        s += rBuf;
+      }
+      return;
+    }
+  } else if (view == CV_PICK && cd->pickTitle[0]) {
+    s = "Tonight's pick is " + String(cd->pickTitle) + ".";
+    return;
+  } else if (view == CV_STATS) {
+    s = "You have watched " + String(cd->watchedMonth) + " movies, with " + String(cd->listSize) + " on your wishlist.";
+    return;
+  }
+  const CineItem& m = cd->items[idx % cd->n];
+  s = "Featured: " + String(m.title);
 }
 
-const CardType CT_cinema = {"cinema", sizeof(CinemaData), 1800, 0, nullptr, cinema_draw, crypto_input, cinema_fetch, cinema_speak, nullptr};
+const CardType CT_cinema = {"cinema", sizeof(CinemaData), 1800, 0, cinema_enter, cinema_draw, cinema_input, cinema_fetch, cinema_speak, nullptr};
