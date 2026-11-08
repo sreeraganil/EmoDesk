@@ -1,4 +1,5 @@
 #include "cards.h"
+#include "services.h"
 
 static bool needTime(struct tm& t) {
   if (nowTm(t)) return true;
@@ -168,6 +169,10 @@ static void drawAnimatedDigits(const char* currentStr, int x, int y, int hClip, 
   }
 }
 
+static const char* const CLOCK_STYLES[] = {"big", "flip", "vertical", "seconds", "date", "minimal"};
+static const char* const CLOCK_STYLE_NAMES[] = {"Modern Digital", "Retro Flip", "Metro Stack", "Chrono HUD", "Executive Date", "Minimal Zen"};
+static const int NUM_CLOCK_STYLES = 6;
+
 static void clock_draw(CardCtx& c) {
   struct tm t;
   int bx = burnX, by = burnY;
@@ -178,7 +183,18 @@ static void clock_draw(CardCtx& c) {
     textCenter(56 + by, netOnline() ? "Getting the time..." : "Waiting for Wi-Fi");
     return;
   }
-  const char* style = c.p["style"] | "big";
+
+  // Initialize style from card params on first run, or respect long-press switch
+  if (c.st[1] == 0) {
+    const char* defStyle = c.p["style"] | "big";
+    for (int i = 0; i < NUM_CLOCK_STYLES; i++) {
+      if (!strcmp(defStyle, CLOCK_STYLES[i])) { c.st[0] = i; break; }
+    }
+    c.st[1] = 1;
+  }
+
+  int styleIdx = c.st[0] % NUM_CLOCK_STYLES;
+  const char* style = CLOCK_STYLES[styleIdx];
   const char* anim = c.p["anim"].is<const char*>() ? (c.p["anim"] | "slide") : (cfg["clock"]["anim"] | "slide");
   bool h24 = cfgH24();
   char hm[8], date[32];
@@ -186,12 +202,113 @@ static void clock_draw(CardCtx& c) {
   snprintf(date, sizeof(date), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
   const char* ap = t.tm_hour < 12 ? "AM" : "PM";
 
-  if (!strcmp(style, "minimal")) {
-    u8g2.setFont(F_NUM42);
-    int w = u8g2.getStrWidth(hm);
-    drawAnimatedDigits(hm, (128 - w) / 2 + bx, 48 + by, 42, anim, bx, by);
+  if (!strcmp(style, "flip")) {
+    // ------------------------------------------------------------- 1. Retro Flip Clock
+    int h = t.tm_hour;
+    if (!h24) { h %= 12; if (!h) h = 12; }
+    char hStr[6], mStr[6];
+    snprintf(hStr, sizeof(hStr), "%02d", h);
+    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+
+    // Top Header info bar (y=8)
+    u8g2.setFont(F_SMALL);
+    char hdr[32];
+    snprintf(hdr, sizeof(hdr), "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    u8g2.drawUTF8(6 + bx, 8 + by, hdr);
+
+    if (!h24) {
+      u8g2.setFont(F_TINY);
+      drawPill(102 + bx, 1 + by, 20, 8, ap, true);
+    } else if (homeW.ok) {
+      char tb[10];
+      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
+      u8g2.setFont(F_TINY);
+      textRight(124 + bx, 8 + by, tb);
+    }
+
+    // Dual Flap Cards (Hours: x=6..58, Minutes: x=68..120)
+    int flapW = 53, flapH = 37, flapY = 12 + by;
+    int hX = 7 + bx, mX = 68 + bx;
+
+    // Hour Flap
+    u8g2.drawRFrame(hX, flapY, flapW, flapH, 3);
+    u8g2.drawHLine(hX, flapY + flapH / 2, flapW);
+    u8g2.drawPixel(hX, flapY + flapH / 2 - 1);
+    u8g2.drawPixel(hX + flapW - 1, flapY + flapH / 2 - 1);
+    u8g2.drawPixel(hX, flapY + flapH / 2 + 1);
+    u8g2.drawPixel(hX + flapW - 1, flapY + flapH / 2 + 1);
+    u8g2.setFont(F_NUM24);
+    int hw = u8g2.getStrWidth(hStr);
+    drawAnimatedDigits(hStr, hX + (flapW - hw) / 2, flapY + 28, 24, anim, bx, by);
+
+    // Minute Flap
+    u8g2.drawRFrame(mX, flapY, flapW, flapH, 3);
+    u8g2.drawHLine(mX, flapY + flapH / 2, flapW);
+    u8g2.drawPixel(mX, flapY + flapH / 2 - 1);
+    u8g2.drawPixel(mX + flapW - 1, flapY + flapH / 2 - 1);
+    u8g2.drawPixel(mX, flapY + flapH / 2 + 1);
+    u8g2.drawPixel(mX + flapW - 1, flapY + flapH / 2 + 1);
+    int mw = u8g2.getStrWidth(mStr);
+    drawAnimatedDigits(mStr, mX + (flapW - mw) / 2, flapY + 28, 24, anim, bx, by);
+
+    // Hairline seconds track
+    int sw = (t.tm_sec * 128) / 60;
+    if (sw > 0) u8g2.drawHLine(0, 53 + by, sw);
+
+    char foot[20];
+    snprintf(foot, sizeof(foot), "-- %d --", t.tm_year + 1900);
+    u8g2.setFont(F_TINY);
+    textCenter(62 + by, foot);
+
+  } else if (!strcmp(style, "vertical")) {
+    // ------------------------------------------------------------- 2. Metro Stack
+    int h = t.tm_hour;
+    if (!h24) { h %= 12; if (!h) h = 12; }
+    char hStr[6], mStr[6];
+    snprintf(hStr, sizeof(hStr), "%02d", h);
+    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+
+    // Stacked Digits on Left (Hours: y=27, Minutes: y=57)
+    u8g2.setFont(F_NUM24);
+    int hw = u8g2.getStrWidth(hStr);
+    int mw = u8g2.getStrWidth(mStr);
+    int maxW = max(hw, mw);
+    int leftX = (56 - maxW) / 2 + 2 + bx;
+    drawAnimatedDigits(hStr, leftX, 27 + by, 24, anim, bx, by);
+    drawAnimatedDigits(mStr, leftX, 57 + by, 24, anim, bx, by);
+
+    // Vertical Divider
+    u8g2.drawVLine(58 + bx, 4 + by, 56);
+
+    // Right Column Info (x=64..126)
+    drawPill(64 + bx, 6 + by, 34, 11, WDAY[t.tm_wday], true);
+
+    if (!h24) {
+      u8g2.setFont(F_SMALL);
+      u8g2.drawUTF8(104 + bx, 15 + by, ap);
+    }
+
+    // Date
+    char dBuf[20];
+    snprintf(dBuf, sizeof(dBuf), "%d %s", t.tm_mday, MONTH[t.tm_mon]);
+    u8g2.setFont(F_MED);
+    u8g2.drawUTF8(64 + bx, 32 + by, dBuf);
+
+    // Live Temperature
+    if (homeW.ok) {
+      drawIconTemp(64 + bx, 37 + by);
+      char tb[12];
+      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
+      u8g2.setFont(F_SMALL);
+      u8g2.drawUTF8(72 + bx, 44 + by, tb);
+    }
+
+    // Seconds progress bar
+    drawBar(64 + bx, 51 + by, 58, 6, t.tm_sec / 60.0f);
+
   } else if (!strcmp(style, "seconds")) {
-    char s[4];
+    // ------------------------------------------------------------- 3. Chrono HUD
+    char s[6];
     snprintf(s, sizeof(s), ":%02d", t.tm_sec);
     u8g2.setFont(F_NUM24);
     int w = u8g2.getStrWidth(hm);
@@ -199,55 +316,72 @@ static void clock_draw(CardCtx& c) {
     int ws = u8g2.getStrWidth(s);
     int x0 = (128 - w - ws - 2) / 2 + bx;
     u8g2.setFont(F_NUM24);
-    drawAnimatedDigits(hm, x0, 38 + by, 24, anim, bx, by);
+    drawAnimatedDigits(hm, x0, 33 + by, 24, anim, bx, by);
     u8g2.setFont(F_NUM16);
-    u8g2.drawStr(x0 + w + 2, 38 + by, s);
-    drawDottedHLine(14, 46 + by, 100);
+    u8g2.drawStr(x0 + w + 2, 33 + by, s);
+
+    // Seconds HUD Bar
+    drawBar(14 + bx, 39 + by, 100, 5, t.tm_sec / 60.0f);
+
+    // Full Date at Bottom
     u8g2.setFont(F_MED);
     if (!h24) {
       char dBuf[36];
-      const char* apTag = t.tm_hour < 12 ? "AM" : "PM";
-      snprintf(dBuf, sizeof(dBuf), "%s  %s", date, apTag);
-      textCenter(59 + by, dBuf);
+      snprintf(dBuf, sizeof(dBuf), "%s  %s", date, ap);
+      textCenter(58 + by, dBuf);
     } else {
-      textCenter(59 + by, date);
+      textCenter(58 + by, date);
     }
+
   } else if (!strcmp(style, "date")) {
+    // ------------------------------------------------------------- 4. Executive Calendar
     u8g2.setFont(F_NUM24);
     int w = u8g2.getStrWidth(hm);
-    drawAnimatedDigits(hm, (128 - w) / 2 + bx, 28 + by, 24, anim, bx, by);
+    drawAnimatedDigits(hm, (128 - w) / 2 + bx, 26 + by, 24, anim, bx, by);
+
+    // Day of week in Helvetica bold
     u8g2.setFont(F_HELV);
-    textCenter(45 + by, WDAY_LONG[t.tm_wday]);
+    textCenter(42 + by, WDAY_LONG[t.tm_wday]);
+
+    // Boxed date frame
     char d2[28];
     snprintf(d2, sizeof(d2), "%d %s %d", t.tm_mday, MONTH_LONG[t.tm_mon], t.tm_year + 1900);
     u8g2.setFont(F_MED);
-    textCenter(60 + by, d2);
+    int dw = u8g2.getUTF8Width(d2);
+    int bxDate = (128 - dw - 8) / 2;
+    u8g2.drawRFrame(bxDate, 47 + by, dw + 8, 14, 2);
+    u8g2.drawUTF8(bxDate + 4, 58 + by, d2);
+
+  } else if (!strcmp(style, "minimal")) {
+    // ------------------------------------------------------------- 5. Minimal Zen
+    u8g2.setFont(F_NUM42);
+    int w = u8g2.getStrWidth(hm);
+    drawAnimatedDigits(hm, (128 - w) / 2 + bx, 48 + by, 42, anim, bx, by);
+
   } else {
-    // v3.O Big Clock Style (Sweeping hairline seconds, weather corner, guaranteed zero AM/PM overlap)
+    // ------------------------------------------------------------- 6. Modern Digital (Big)
     int h = t.tm_hour;
     if (!h24) { h %= 12; if (!h) h = 12; }
     char b[8];
     snprintf(b, sizeof(b), h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
 
-    // Large time digits centered with zero overlap (animated on minute change)
     u8g2.setFont(F_NUM42);
     int w = u8g2.getStrWidth(b);
     int x = (128 - w) / 2 + bx;
     if (x < 0) x = 0;
     drawAnimatedDigits(b, x, 46 + by, 42, anim, bx, by);
 
-    // Hairline seconds bar sweeping under digits (0 to 127 px)
+    // Hairline seconds bar sweeping under digits
     int sw = (t.tm_sec * 128) / 60;
     if (sw > 0) u8g2.drawHLine(0, 50 + by, sw);
 
-    // Full date string with AM/PM centered at bottom
+    // Full date string with AM/PM
     char fullDate[36];
     u8g2.setFont(F_MED);
     if (!h24) {
-      const char* apTag = t.tm_hour < 12 ? "AM" : "PM";
-      snprintf(fullDate, sizeof(fullDate), "%s %d %s  %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], apTag);
+      snprintf(fullDate, sizeof(fullDate), "%s %d %s  %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], ap);
       if (u8g2.getStrWidth(fullDate) > 126) {
-        snprintf(fullDate, sizeof(fullDate), "%s, %d %s  %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], apTag);
+        snprintf(fullDate, sizeof(fullDate), "%s, %d %s  %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], ap);
       }
     } else {
       snprintf(fullDate, sizeof(fullDate), "%s %d %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
@@ -257,7 +391,7 @@ static void clock_draw(CardCtx& c) {
     }
     textCenter(62 + by, fullDate);
 
-    // Corner extra: live temperature in top-left corner
+    // Live temperature in corner
     if (homeW.ok) {
       char tb[10];
       snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
@@ -266,7 +400,19 @@ static void clock_draw(CardCtx& c) {
     }
   }
 }
-const CardType CT_clock = {"clock", 0, 0, 0, nullptr, clock_draw, nullptr, nullptr, speakTime, nullptr};
+
+static bool clock_input(CardCtx& c, uint8_t g) {
+  if (g == G_LONG) {
+    c.st[0] = (c.st[0] + 1) % NUM_CLOCK_STYLES;
+    c.st[1] = 1;
+    toastShow(CLOCK_STYLE_NAMES[c.st[0] % NUM_CLOCK_STYLES]);
+    audioSfx("pop", EV_UI);
+    return true;
+  }
+  return false;
+}
+
+const CardType CT_clock = {"clock", 0, 0, 0, nullptr, clock_draw, clock_input, nullptr, speakTime, nullptr};
 
 // ================================================================== analog clock
 static void hand(int cx, int cy, float deg, int len, bool thick) {
