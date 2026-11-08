@@ -30,55 +30,63 @@ static void weather_draw(CardCtx& c) {
   if (!weatherGate(c, w)) return;
   drawHeader(locName(c.p), wmoText(w->code));
 
-  // Left: Weather Condition Icon
-  drawWeatherIcon(2 + burnX, 14, 26, w->code, w->isDay);
-
-  // Center-Left: Temperature (large digits)
+  // Left Column: Weather Icon (24px) + Large Temp (F_NUM32)
+  drawWeatherIcon(2 + burnX, 14, 24, w->code, w->isDay);
   char b[32];
   snprintf(b, sizeof(b), "%d", (int)roundf(w->temp));
   u8g2.setFont(F_NUM32);
   int tw = u8g2.getStrWidth(b);
-  int tx = 31 + burnX;
-  u8g2.drawStr(tx, 43, b);
+  int tx = 29 + burnX;
+  u8g2.drawStr(tx, 41, b);
+  u8g2.setFont(F_TINY);
+  u8g2.drawCircle(tx + tw + 2, 19, 1);
+  u8g2.drawUTF8(tx + tw + 5, 23, tempUnit());
 
-  // Unit (degree circle + C/F)
-  int ux = tx + tw + 2;
-  u8g2.setFont(F_SMALL);
-  u8g2.drawCircle(ux + 2, 19, 2);
-  u8g2.drawUTF8(ux + 7, 25, tempUnit());
-
-  // High / Low Indicators (crisp micro arrows + F_SMALL)
-  drawIconArrow(ux + 1, 31, true);
-  snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMax[0]));
-  u8g2.setFont(F_SMALL);
-  u8g2.drawStr(ux + 7, 36, b);
-
-  drawIconArrow(ux + 1, 39, false);
-  snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMin[0]));
-  u8g2.drawStr(ux + 7, 44, b);
-
-  // Right Panel: Micro-icons + F_SMALL metrics
-  int rx = 82;
-  drawIconDrop(rx, 15);
+  // Right Column (x=72..127): Micro-icons + clean F_SMALL metrics
+  // Humidity
+  drawIconDrop(72, 14);
   snprintf(b, sizeof(b), "%d%%", (int)w->hum);
   u8g2.setFont(F_SMALL);
-  textRight(127, 22, b);
+  textRight(126, 20, b);
 
-  drawIconWind(rx, 26);
-  snprintf(b, sizeof(b), "%d%s", (int)roundf(w->wind), cfg["units"] == "imperial" ? "mph" : "kmh");
-  textRight(127, 32, b);
+  // Wind Speed
+  drawIconWind(72, 24);
+  snprintf(b, sizeof(b), "%d%s", (int)roundf(w->wind), cfg["units"] == "imperial" ? "m" : "k");
+  u8g2.setFont(F_SMALL);
+  textRight(126, 30, b);
 
-  drawIconTemp(rx, 36);
-  snprintf(b, sizeof(b), "~%d°", (int)roundf(w->feels));
-  textRight(127, 43, b);
+  // Feels Like
+  drawIconTemp(72, 33);
+  snprintf(b, sizeof(b), "%d%s", (int)roundf(w->feels), tempUnit());
+  u8g2.setFont(F_SMALL);
+  textRight(126, 40, b);
 
-  // Bottom Banner: Readable condition text
-  drawDottedHLine(0, 48, 128);
+  // Bottom Banner (y=47..63): High/Low on left, Condition on right
+  drawDottedHLine(0, 46, 128);
+
+  // High / Low indicators
+  drawIconArrow(1, 52, true);
+  snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMax[0]));
+  u8g2.setFont(F_SMALL);
+  u8g2.drawStr(7, 58, b);
+  int w1 = u8g2.getUTF8Width(b);
+
+  drawIconArrow(9 + w1, 52, false);
+  snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMin[0]));
+  u8g2.drawStr(15 + w1, 58, b);
+  int w2 = u8g2.getUTF8Width(b);
+
+  int divX = 18 + w1 + w2;
+  u8g2.drawVLine(divX, 48, 14);
+
+  // Weather Condition description
   const char* cond = wmoText(w->code);
-  u8g2.setFont(F_MED);
+  int leftX = divX + 4;
+  int availW = 127 - leftX;
+  u8g2.setFont(F_SMALL);
   int cw = u8g2.getUTF8Width(cond);
-  if (cw <= 126) textCenter(59, cond);
-  else marquee(1, 59, 126, cond, c.t0, 24);
+  if (cw <= availW) u8g2.drawUTF8(leftX + (availW - cw) / 2, 58, cond);
+  else marquee(leftX, 58, availW, cond, c.t0, 22);
 }
 
 static void weather_speak(CardCtx& c, String& s) {
@@ -1212,16 +1220,12 @@ static void football_draw(CardCtx& c) {
 
     char scoreStr[20];
     if (m.state == 0) {
-      u8g2.setFont(F_MED);
-      textCenter(26, "vs");
+      u8g2.setFont(F_HELV14);
+      textCenter(27, "vs");
     } else {
       snprintf(scoreStr, sizeof(scoreStr), "%d - %d", m.hs, m.as);
       u8g2.setFont(F_HELV14);
-      int scW = u8g2.getUTF8Width(scoreStr);
-      int pillW = scW + 8;
-      int pillX = (128 - pillW) / 2;
-      u8g2.drawRFrame(pillX, 15, pillW, 14, 2);
-      u8g2.drawUTF8(pillX + 4, 27, scoreStr);
+      textCenter(27, scoreStr);
     }
 
     char vsNames[64];

@@ -118,52 +118,37 @@ static bool crypto_fetch(JsonObject p, void* d) {
 
 static void priceScreen(const char* name, const char* cur, float price, float chPct, const float* hist, int hn, int idx, int n) {
   char b[32];
+  snprintf(b, sizeof(b), "%+.1f%%", chPct);
 
-  // Top header: Asset ticker
-  u8g2.setFont(F_BOLD);
+  // Clean Header using drawHeader (guaranteed zero overlap, auto-truncates if needed)
   String nm(name);
   nm.toUpperCase();
-  u8g2.drawStr(1, 9, nm.substring(0, 10).c_str());
-  int nw = u8g2.getUTF8Width(nm.substring(0, 10).c_str());
+  drawHeader(nm.c_str(), b);
 
-  // Currency tag
+  // Main Price in F_HELV14
+  u8g2.setFont(F_HELV14);
+  String ps = fmtPrice(price);
+  u8g2.drawStr(1, 27, ps.c_str());
+  int pw = u8g2.getStrWidth(ps.c_str());
+
+  // Currency tag beside price
   if (cur && *cur) {
     u8g2.setFont(F_TINY);
     String cu(cur);
     cu.toUpperCase();
-    char cTag[12];
-    snprintf(cTag, sizeof(cTag), "/%s", cu.c_str());
-    u8g2.drawStr(nw + 3, 9, cTag);
+    u8g2.drawStr(pw + 4, 26, cu.c_str());
   }
-
-  // Right pill badge: Up/Down arrow + percentage
-  snprintf(b, sizeof(b), "%+.1f%%", chPct);
-  u8g2.setFont(F_TINY);
-  int bw = u8g2.getUTF8Width(b) + 12;
-  int bx = 127 - bw;
-  u8g2.drawRFrame(bx, 1, bw, 8, 2);
-  drawIconArrow(bx + 3, 2, chPct >= 0);
-  u8g2.drawUTF8(bx + 9, 7, b);
-
-  // Divider
-  u8g2.drawHLine(0, 11, 128);
-
-  // Main Price
-  u8g2.setFont(F_HELV14);
-  String ps = fmtPrice(price);
-  u8g2.drawStr(1, 28, ps.c_str());
 
   // Sparkline Chart & Baseline
   if (hn > 1) {
-    // Dashed reference baseline for first/open point
     float mn = hist[0], mx = hist[0];
     for (int i = 1; i < hn; i++) { mn = min(mn, hist[i]); mx = max(mx, hist[i]); }
     float rng = mx - mn;
     if (rng > 0.0001f) {
-      int basePy = 32 + 25 - (int)((hist[0] - mn) / rng * 25);
+      int basePy = 31 + 25 - (int)((hist[0] - mn) / rng * 25);
       for (int px = 0; px < 128; px += 4) u8g2.drawPixel(px, basePy);
     }
-    drawSpark(0, 32, 128, 26, hist, hn);
+    drawSpark(0, 31, 128, 26, hist, hn);
   } else {
     u8g2.setFont(F_TINY);
     u8g2.drawStr(1, 48, "gathering trend history...");
