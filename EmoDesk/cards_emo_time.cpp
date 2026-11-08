@@ -56,58 +56,67 @@ static bool pet_input(CardCtx& c, uint8_t g) {
 const CardType CT_pet = {"pet", 0, 0, 0, nullptr, pet_draw, pet_input, nullptr, emo_speak, nullptr};
 
 // ================================================================== digital clock
-static void drawAnimatedDigits(const char* currentStr, int x, int y, int hClip, const char* animMode, int bx, int by) {
-  static char lastShown[16] = "";
-  static char prevShown[16] = "";
-  static uint32_t animStartTime = 0;
-  static bool hasPrior = false;
+struct DigitAnimSlot {
+  char lastShown[16] = "";
+  char prevShown[16] = "";
+  uint32_t animStartTime = 0;
+  bool hasPrior = false;
+};
+static DigitAnimSlot s_animSlots[4];
 
-  if (!hasPrior) {
-    safeCopy(lastShown, currentStr, sizeof(lastShown));
-    safeCopy(prevShown, currentStr, sizeof(prevShown));
-    hasPrior = true;
+static void drawDigits(int slot, const char* str, int x, int y, int hClip, const char* animMode) {
+  if (!str || !str[0]) return;
+  if (!animMode || !strcmp(animMode, "none") || slot < 0 || slot >= 4) {
+    u8g2.drawStr(x, y, str);
+    return;
   }
 
-  // Detect digit/time change
-  if (strcmp(currentStr, lastShown) != 0) {
-    safeCopy(prevShown, lastShown, sizeof(prevShown));
-    safeCopy(lastShown, currentStr, sizeof(lastShown));
-    animStartTime = millis();
+  DigitAnimSlot& as = s_animSlots[slot];
+  if (!as.hasPrior) {
+    safeCopy(as.lastShown, str, sizeof(as.lastShown));
+    safeCopy(as.prevShown, str, sizeof(as.prevShown));
+    as.hasPrior = true;
+    as.animStartTime = 0;
   }
 
-  uint32_t elapsed = millis() - animStartTime;
-  uint32_t animDur = 380;
+  if (strcmp(str, as.lastShown) != 0) {
+    safeCopy(as.prevShown, as.lastShown, sizeof(as.prevShown));
+    safeCopy(as.lastShown, str, sizeof(as.lastShown));
+    as.animStartTime = millis();
+  }
+
+  uint32_t elapsed = (as.animStartTime > 0) ? (millis() - as.animStartTime) : 999999;
+  uint32_t animDur = 350;
   if (cfg["clock"]["dur"].is<uint32_t>()) {
     animDur = cfg["clock"]["dur"].as<uint32_t>();
     if (animDur < 100) animDur = 100;
     if (animDur > 1000) animDur = 1000;
   }
 
-  bool inAnim = (!animMode || strcmp(animMode, "none") != 0) && (elapsed < animDur) && (prevShown[0] != '\0');
-
-  if (!inAnim) {
-    u8g2.drawStr(x, y, currentStr);
+  if (elapsed >= animDur || as.prevShown[0] == '\0') {
+    u8g2.drawStr(x, y, str);
     return;
   }
 
-  // Smooth easing (smoothstep: 3*p^2 - 2*p^3)
   float p = (float)elapsed / (float)animDur;
   if (p < 0.0f) p = 0.0f;
   if (p > 1.0f) p = 1.0f;
   float ease = p * p * (3.0f - 2.0f * p);
 
-  size_t lenCur = strlen(currentStr);
-  size_t lenPrev = strlen(prevShown);
+  size_t lenCur = strlen(str);
+  size_t lenPrev = strlen(as.prevShown);
 
   if (lenCur != lenPrev) {
-    u8g2.setClipWindow(0, y - hClip, 128, y + 2);
+    int cY0 = (y - hClip < 0) ? 0 : (y - hClip);
+    int cY1 = (y + 3 > 64) ? 64 : (y + 3);
+    u8g2.setClipWindow(0, cY0, 128, cY1);
     int dy = (int)((float)hClip * ease);
     if (!strcmp(animMode, "slide_down")) {
-      u8g2.drawStr(x, y + dy, prevShown);
-      u8g2.drawStr(x, y - hClip + dy, currentStr);
+      u8g2.drawStr(x, y + dy, as.prevShown);
+      u8g2.drawStr(x, y - hClip + dy, str);
     } else {
-      u8g2.drawStr(x, y - dy, prevShown);
-      u8g2.drawStr(x, y + hClip - dy, currentStr);
+      u8g2.drawStr(x, y - dy, as.prevShown);
+      u8g2.drawStr(x, y + hClip - dy, str);
     }
     u8g2.setMaxClipWindow();
     return;
@@ -115,20 +124,19 @@ static void drawAnimatedDigits(const char* currentStr, int x, int y, int hClip, 
 
   int curX = x;
   for (size_t i = 0; i < lenCur; i++) {
-    char chCur[2] = { currentStr[i], '\0' };
-    char chPrev[2] = { prevShown[i], '\0' };
+    char chCur[2] = { str[i], '\0' };
+    char chPrev[2] = { as.prevShown[i], '\0' };
     int cw = u8g2.getStrWidth(chCur);
 
-    if (currentStr[i] == prevShown[i]) {
+    if (str[i] == as.prevShown[i]) {
       u8g2.drawStr(curX, y, chCur);
     } else {
-      int charBoxW = cw + 2;
-      int clipX0 = curX - 1;
-      int clipX1 = curX + charBoxW;
-      if (clipX0 < 0) clipX0 = 0;
-      if (clipX1 > 128) clipX1 = 128;
+      int clipX0 = (curX - 1 < 0) ? 0 : (curX - 1);
+      int clipX1 = (curX + cw + 2 > 128) ? 128 : (curX + cw + 2);
+      int clipY0 = (y - hClip < 0) ? 0 : (y - hClip);
+      int clipY1 = (y + 3 > 64) ? 64 : (y + 3);
 
-      u8g2.setClipWindow(clipX0, y - hClip, clipX1, y + 2);
+      u8g2.setClipWindow(clipX0, clipY0, clipX1, clipY1);
 
       if (!strcmp(animMode, "slide_down")) {
         int dy = (int)((float)hClip * ease);
@@ -147,17 +155,12 @@ static void drawAnimatedDigits(const char* currentStr, int x, int y, int hClip, 
         }
         u8g2.drawHLine(curX, midY, cw);
       } else if (!strcmp(animMode, "fade")) {
-        if (ease < 0.5f) {
-          u8g2.drawStr(curX, y, chPrev);
-        } else {
-          u8g2.drawStr(curX, y, chCur);
-        }
+        u8g2.drawStr(curX, y, (ease < 0.5f) ? chPrev : chCur);
       } else if (!strcmp(animMode, "bounce")) {
         float be = 1.0f - cosf(ease * 3.14159f * 2.5f) * expf(-ease * 3.5f);
         int dy = (int)((float)hClip * (1.0f - be));
         u8g2.drawStr(curX, y - dy, chCur);
       } else {
-        // Default: slide up (roll)
         int dy = (int)((float)hClip * ease);
         u8g2.drawStr(curX, y - dy, chPrev);
         u8g2.drawStr(curX, y + hClip - dy, chCur);
@@ -165,25 +168,29 @@ static void drawAnimatedDigits(const char* currentStr, int x, int y, int hClip, 
 
       u8g2.setMaxClipWindow();
     }
-
     curX += cw;
   }
 }
 
 static const char* const CLOCK_STYLES[] = {
-  "big",       // 0: Modern Big Digital
-  "cube",      // 1: 3D Rotating Wireframe Cube (NWatch)
-  "matrix",    // 2: Matrix Digital Rain (NWatch)
-  "data",      // 3: Cyberpunk Tech Data (NWatch)
-  "dial",      // 4: Numbered Analog Dial (NWatch)
-  "flip",      // 5: Retro Split-Flap Clock
-  "scan",      // 6: Sci-Fi Scanlines (NWatch)
-  "seconds"    // 7: Chrono HUD with live seconds
+  "normal",    // 0: Normal Ticker (NWatch)
+  "scan",      // 1: Sci-Fi Scan (NWatch)
+  "dual",      // 2: Dual Analog/Digital (NWatch)
+  "pixel",     // 3: Big Pixel (NWatch)
+  "minimal",   // 4: Minimalist (NWatch)
+  "data",      // 5: Cyberpunk Data HUD (NWatch)
+  "rain",      // 6: Digital Rain (NWatch)
+  "matrix",    // 7: Matrix Rain (NWatch)
+  "clock",     // 8: Numbered Dial (NWatch)
+  "big",       // 9: Big Time (NWatch)
+  "cube"       // 10: 3D Wireframe Cube (NWatch)
 };
 static const char* const CLOCK_STYLE_NAMES[] = {
-  "Modern Digital", "3D Cube", "Matrix Rain", "Cyberpunk Data", "Numbered Dial", "Retro Flip", "Sci-Fi Scan", "Chrono HUD"
+  "1. Normal Ticker", "2. Sci-Fi Scan", "3. Dual Analog", "4. Big Pixel",
+  "5. Minimalist", "6. Cyberpunk Data", "7. Digital Rain", "8. Matrix Rain",
+  "9. Numbered Dial", "10. Big Time", "11. 3D Cube"
 };
-static const int NUM_CLOCK_STYLES = 8;
+static const int NUM_CLOCK_STYLES = 11;
 
 static void clock_draw(CardCtx& c) {
   struct tm t;
@@ -198,7 +205,11 @@ static void clock_draw(CardCtx& c) {
 
   // Initialize style from card params on first run, or respect touch switch
   if (c.st[1] == 0) {
-    const char* defStyle = c.p["style"] | "big";
+    const char* defStyle = c.p["style"] | "normal";
+    if (!strcmp(defStyle, "dial")) defStyle = "clock";
+    else if (!strcmp(defStyle, "flip")) defStyle = "pixel";
+    else if (!strcmp(defStyle, "seconds")) defStyle = "normal";
+
     for (int i = 0; i < NUM_CLOCK_STYLES; i++) {
       if (!strcmp(defStyle, CLOCK_STYLES[i])) { c.st[0] = i; break; }
     }
@@ -214,8 +225,329 @@ static void clock_draw(CardCtx& c) {
   snprintf(date, sizeof(date), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
   const char* ap = t.tm_hour < 12 ? "AM" : "PM";
 
-  if (!strcmp(style, "cube")) {
-    // ------------------------------------------------------------- 1. 3D Rotating Cube (NWatch)
+  if (!strcmp(style, "normal")) {
+    // ------------------------------------------------------------- 0. Normal Ticker (NWatch Zak Kemble)
+    u8g2.setFont(F_SMALL);
+    u8g2.drawUTF8(4 + bx, 8 + by, date);
+
+    if (homeW.ok) {
+      char tb[10];
+      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
+      textRight(124 + bx, 8 + by, tb);
+    } else {
+      textRight(124 + bx, 8 + by, ap);
+    }
+    u8g2.drawHLine(0, 11 + by, 128);
+
+    char sBuf[6];
+    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    u8g2.setFont(F_NUM24);
+    int tw = u8g2.getStrWidth(hm);
+    u8g2.setFont(F_NUM16);
+    int sw = u8g2.getStrWidth(sBuf);
+    int startX = (128 - (tw + sw + 2)) / 2 + bx;
+
+    u8g2.setFont(F_NUM24);
+    drawDigits(0, hm, startX, 39 + by, 24, anim);
+    u8g2.setFont(F_NUM16);
+    u8g2.drawStr(startX + tw + 2, 39 + by, sBuf);
+
+    u8g2.drawHLine(0, 48 + by, 128);
+
+    u8g2.setFont(F_TINY);
+    if (netOnline()) {
+      char netBuf[24];
+      snprintf(netBuf, sizeof(netBuf), "WiFi %ddBm", netRSSI());
+      u8g2.drawStr(4 + bx, 59 + by, netBuf);
+    } else {
+      u8g2.drawStr(4 + bx, 59 + by, "OFFLINE");
+    }
+
+    char statBuf[24];
+    snprintf(statBuf, sizeof(statBuf), "HEAP %uK", (unsigned)(ESP.getFreeHeap() / 1024));
+    textRight(124 + bx, 59 + by, statBuf);
+
+    int secProg = (t.tm_sec * 128) / 60;
+    if (secProg > 0) u8g2.drawHLine(0, 50 + by, secProg);
+
+  } else if (!strcmp(style, "scan")) {
+    // ------------------------------------------------------------- 1. Sci-Fi Scan (NWatch)
+    uint32_t now = millis();
+    int scanY = 14 + (now / 40) % 36;
+    for (int y = 14; y < 50; y += 4) {
+      if (abs(y - scanY) <= 3) u8g2.drawHLine(0, y + by, 128);
+      else {
+        for (int x = 0; x < 128; x += 6) u8g2.drawPixel(x, y + by);
+      }
+    }
+
+    u8g2.setFont(F_NUM24);
+    int tw = u8g2.getStrWidth(hm);
+    int plateW = tw + 18;
+    int plateX = (128 - plateW) / 2 + bx;
+    u8g2.setDrawColor(0);
+    u8g2.drawRBox(plateX - 2, 17 + by, plateW + 4, 30, 2);
+    u8g2.setDrawColor(1);
+    u8g2.drawRFrame(plateX - 2, 17 + by, plateW + 4, 30, 2);
+    drawDigits(0, hm, plateX + 3, 39 + by, 24, anim);
+
+    u8g2.setFont(F_SMALL);
+    u8g2.drawUTF8(4 + bx, 8 + by, date);
+
+    char sBuf[6];
+    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    u8g2.setFont(F_SMALL);
+    textRight(124 + bx, 8 + by, sBuf);
+
+    u8g2.drawHLine(0, 52 + by, 128);
+    u8g2.setFont(F_TINY);
+    textCenter(61 + by, "RADAR SCAN ACTIVE");
+
+  } else if (!strcmp(style, "dual")) {
+    // ------------------------------------------------------------- 2. Dual Analog/Digital (NWatch)
+    int cx = 32 + bx, cy = 32 + by, r = 26;
+    u8g2.drawCircle(cx, cy, r);
+    for (int h = 0; h < 12; h++) {
+      float ang = h * 6.2831853f / 12.0f - 1.5708f;
+      int d = (h % 3 == 0) ? 22 : 23;
+      u8g2.drawPixel(cx + lroundf(cosf(ang) * d), cy + lroundf(sinf(ang) * d));
+    }
+
+    float secAng = t.tm_sec * 6.2831853f / 60.0f - 1.5708f;
+    float minAng = (t.tm_min + t.tm_sec / 60.0f) * 6.2831853f / 60.0f - 1.5708f;
+    float hrAng  = ((t.tm_hour % 12) + t.tm_min / 60.0f) * 6.2831853f / 12.0f - 1.5708f;
+
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(hrAng) * 12), cy + lroundf(sinf(hrAng) * 12));
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(minAng) * 19), cy + lroundf(sinf(minAng) * 19));
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(secAng) * 22), cy + lroundf(sinf(secAng) * 22));
+    u8g2.drawDisc(cx, cy, 2);
+
+    u8g2.setFont(F_SMALL);
+    char dShort[24];
+    snprintf(dShort, sizeof(dShort), "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    u8g2.drawUTF8(68 + bx, 14 + by, dShort);
+
+    u8g2.setFont(F_HELV14);
+    u8g2.drawStr(68 + bx, 35 + by, hm);
+
+    char sLine[16];
+    snprintf(sLine, sizeof(sLine), "SEC :%02d", t.tm_sec);
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(68 + bx, 48 + by, sLine);
+
+    u8g2.setFont(F_TINY);
+    if (homeW.ok) {
+      char wBuf[16];
+      snprintf(wBuf, sizeof(wBuf), "%d°C", (int)roundf(homeW.temp));
+      u8g2.drawStr(68 + bx, 61 + by, wBuf);
+      textRight(124 + bx, 61 + by, ap);
+    } else {
+      u8g2.drawStr(68 + bx, 61 + by, ap);
+    }
+
+  } else if (!strcmp(style, "pixel")) {
+    // ------------------------------------------------------------- 3. Big Pixel (NWatch)
+    int h = t.tm_hour;
+    if (!h24) { h %= 12; if (!h) h = 12; }
+    char hStr[6], mStr[6];
+    snprintf(hStr, sizeof(hStr), "%02d", h);
+    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+
+    u8g2.setFont(F_SMALL);
+    char dateHdr[24];
+    snprintf(dateHdr, sizeof(dateHdr), "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    u8g2.drawUTF8(4 + bx, 8 + by, dateHdr);
+
+    char secPill[8];
+    snprintf(secPill, sizeof(secPill), ":%02d", t.tm_sec);
+    drawPill(98 + bx, 1 + by, 26, 9, secPill, true);
+
+    u8g2.setFont(F_NUM32);
+    drawDigits(1, hStr, 12 + bx, 44 + by, 32, anim);
+    drawDigits(2, mStr, 72 + bx, 44 + by, 32, anim);
+
+    if (t.tm_sec % 2 == 0) {
+      u8g2.drawBox(58 + bx, 26 + by, 4, 4);
+      u8g2.drawBox(58 + bx, 37 + by, 4, 4);
+    }
+
+    drawBar(10 + bx, 50 + by, 108, 4, t.tm_sec / 60.0f);
+
+    char yFoot[16];
+    snprintf(yFoot, sizeof(yFoot), "%d  %s", t.tm_year + 1900, ap);
+    u8g2.setFont(F_TINY);
+    textCenter(62 + by, yFoot);
+
+  } else if (!strcmp(style, "minimal")) {
+    // ------------------------------------------------------------- 4. Minimalist (NWatch)
+    u8g2.setFont(F_NUM32);
+    int tw = u8g2.getStrWidth(hm);
+    u8g2.setFont(F_SMALL);
+    char sBuf[6];
+    snprintf(sBuf, sizeof(sBuf), "%02d", t.tm_sec);
+    int sw = u8g2.getStrWidth(sBuf);
+
+    int totalW = tw + sw + 3;
+    int startX = (128 - totalW) / 2 + bx;
+    u8g2.setFont(F_NUM32);
+    drawDigits(0, hm, startX, 36 + by, 32, anim);
+
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(startX + tw + 3, 36 + by, sBuf);
+
+    u8g2.drawHLine(24 + bx, 44 + by, 80);
+
+    u8g2.setFont(F_MED);
+    textCenter(58 + by, date);
+
+  } else if (!strcmp(style, "data")) {
+    // ------------------------------------------------------------- 5. Cyberpunk Data HUD (NWatch)
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(2 + bx, 7 + by, "ESP32-C3 SUPER MINI");
+    if (netOnline()) {
+      char rssiBuf[16];
+      snprintf(rssiBuf, sizeof(rssiBuf), "SIG %ddBm", netRSSI());
+      textRight(126 + bx, 7 + by, rssiBuf);
+    } else {
+      textRight(126 + bx, 7 + by, "OFFLINE");
+    }
+    u8g2.drawHLine(0, 9 + by, 128);
+
+    char timeLine[24];
+    snprintf(timeLine, sizeof(timeLine), "TIME  %02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(2 + bx, 21 + by, timeLine);
+
+    char dateLine[28];
+    snprintf(dateLine, sizeof(dateLine), "DATE  %s %02d/%02d/%04d", WDAY[t.tm_wday], t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
+    u8g2.drawStr(2 + bx, 33 + by, dateLine);
+
+    if (homeW.ok) {
+      char wLine[32];
+      const char* tu = (cfg["units"] == "imperial") ? "F" : "C";
+      snprintf(wLine, sizeof(wLine), "ENV   %d%s  %s", (int)roundf(homeW.temp), tu, wmoText(homeW.code));
+      u8g2.drawStr(2 + bx, 45 + by, wLine);
+    } else {
+      u8g2.drawStr(2 + bx, 45 + by, "ENV   WAITING FOR SYNC");
+    }
+
+    u8g2.drawHLine(0, 49 + by, 128);
+    char memLine[28];
+    snprintf(memLine, sizeof(memLine), "FREE  %uKB", (unsigned)(ESP.getFreeHeap() / 1024));
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(2 + bx, 61 + by, memLine);
+    drawBar(70 + bx, 54 + by, 56, 6, t.tm_sec / 60.0f);
+
+  } else if (!strcmp(style, "rain")) {
+    // ------------------------------------------------------------- 6. Digital Rain (NWatch)
+    uint32_t now = millis();
+    for (int col = 2; col < 126; col += 7) {
+      int speed = 25 + (col * 17) % 35;
+      int yHead = (int)((now / speed) + col * 11) % 80 - 10;
+      for (int k = 0; k < 4; k++) {
+        int py = yHead - k * 5 + by;
+        if (py >= 0 && py < 64) {
+          if (k == 0) u8g2.drawBox(col + bx, py, 2, 2);
+          else u8g2.drawPixel(col + bx, py);
+        }
+      }
+    }
+
+    char sBuf[6];
+    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    u8g2.setFont(F_NUM24);
+    int tw = u8g2.getStrWidth(hm);
+    u8g2.setFont(F_SMALL);
+    int sw = u8g2.getStrWidth(sBuf);
+    int plateW = tw + sw + 16;
+    int plateX = (128 - plateW) / 2 + bx;
+
+    u8g2.setDrawColor(0);
+    u8g2.drawRBox(plateX - 2, 16 + by, plateW + 4, 32, 3);
+    u8g2.setDrawColor(1);
+    u8g2.drawRFrame(plateX - 2, 16 + by, plateW + 4, 32, 3);
+
+    u8g2.setFont(F_NUM24);
+    drawDigits(0, hm, plateX + 5, 39 + by, 24, anim);
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(plateX + tw + 7, 39 + by, sBuf);
+
+    u8g2.setFont(F_TINY);
+    textCenter(61 + by, date);
+
+  } else if (!strcmp(style, "matrix")) {
+    // ------------------------------------------------------------- 7. Matrix Rain (NWatch)
+    uint32_t now = millis();
+    static const int8_t laneX[10] = {4, 16, 28, 42, 54, 68, 80, 94, 106, 118};
+    static const uint8_t laneSpeed[10] = {29, 53, 37, 71, 43, 31, 67, 47, 83, 59};
+    for (int lane = 0; lane < 10; lane++) {
+      uint32_t tick = now / laneSpeed[lane];
+      int head = (int)(tick * 3) % 80 - 16;
+      for (int n = 0; n < 6; n++) {
+        int y = head - n * 7 + by;
+        if (y >= 0 && y < 64) {
+          int x = laneX[lane] + bx;
+          if (n == 0) u8g2.drawBox(x, y, 2, 3);
+          else u8g2.drawPixel(x, y);
+        }
+      }
+    }
+
+    u8g2.setFont(F_NUM24);
+    int tw = u8g2.getStrWidth(hm);
+    int plateW = tw + 28;
+    int plateX = (128 - plateW) / 2 + bx;
+    u8g2.setDrawColor(0);
+    u8g2.drawRBox(plateX - 2, 14 + by, plateW + 4, 34, 3);
+    u8g2.setDrawColor(1);
+    u8g2.drawRFrame(plateX - 2, 14 + by, plateW + 4, 34, 3);
+
+    drawDigits(0, hm, plateX + 3, 40 + by, 24, anim);
+    u8g2.setFont(F_SMALL);
+    char secStr[6];
+    snprintf(secStr, sizeof(secStr), "%02d", t.tm_sec);
+    u8g2.drawStr(plateX + tw + 6, 28 + by, secStr);
+    u8g2.setFont(F_TINY);
+    u8g2.drawUTF8(plateX + tw + 6, 38 + by, ap);
+
+    u8g2.setFont(F_TINY);
+    textCenter(60 + by, date);
+
+  } else if (!strcmp(style, "clock")) {
+    // ------------------------------------------------------------- 8. Numbered Dial (NWatch)
+    int cx = 64 + bx, cy = 32 + by, r = 30;
+    u8g2.drawCircle(cx, cy, r);
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(cx - 5, cy - 21, "12");
+    u8g2.drawStr(cx + 21, cy + 3, "3");
+    u8g2.drawStr(cx - 3, cy + 27, "6");
+    u8g2.drawStr(cx - 26, cy + 3, "9");
+
+    for (int mark = 1; mark < 12; mark++) {
+      if (mark != 3 && mark != 6 && mark != 9) {
+        float q = mark * 6.2831853f / 12.0f - 1.5708f;
+        u8g2.drawPixel(cx + lroundf(cosf(q) * 26), cy + lroundf(sinf(q) * 26));
+      }
+    }
+
+    float sec = t.tm_sec * 6.2831853f / 60.0f - 1.5708f;
+    float minu = (t.tm_min + t.tm_sec / 60.0f) * 6.2831853f / 60.0f - 1.5708f;
+    float hour = ((t.tm_hour % 12) + t.tm_min / 60.0f) * 6.2831853f / 12.0f - 1.5708f;
+
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(hour) * 14), cy + lroundf(sinf(hour) * 14));
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(minu) * 21), cy + lroundf(sinf(minu) * 21));
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(sec) * 25), cy + lroundf(sinf(sec) * 25));
+    u8g2.drawLine(cx, cy, cx - lroundf(cosf(sec) * 6), cy - lroundf(sinf(sec) * 6));
+    u8g2.drawDisc(cx, cy, 2);
+
+    u8g2.setFont(F_TINY);
+    u8g2.drawUTF8(2 + bx, 35 + by, WDAY[t.tm_wday]);
+    char dStr[6];
+    snprintf(dStr, sizeof(dStr), "%d", t.tm_mday);
+    textRight(126 + bx, 35 + by, dStr);
+
+  } else if (!strcmp(style, "cube")) {
+    // ------------------------------------------------------------- 10. 3D Rotating Cube (NWatch)
     float ax = millis() * 0.00085f, ay = millis() * 0.00105f, az = millis() * 0.00065f;
     float cax = cosf(ax), sax = sinf(ax), cay = cosf(ay), say = sinf(ay), caz = cosf(az), saz = sinf(az);
     int sx[8], sy[8];
@@ -235,265 +567,23 @@ static void clock_draw(CardCtx& c) {
       }
     }
 
-    // Stacked time digits on right (Hours: y=27, Minutes: y=56)
     int h = t.tm_hour;
     if (!h24) { h %= 12; if (!h) h = 12; }
     char hStr[6], mStr[6];
     snprintf(hStr, sizeof(hStr), "%02d", h);
     snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
     u8g2.setFont(F_NUM24);
-    drawAnimatedDigits(hStr, 78 + bx, 27 + by, 24, anim, bx, by);
-    drawAnimatedDigits(mStr, 78 + bx, 56 + by, 24, anim, bx, by);
+    drawDigits(1, hStr, 78 + bx, 27 + by, 24, anim);
+    drawDigits(2, mStr, 78 + bx, 56 + by, 24, anim);
 
-    // Subtle date tag on bottom left
     char sBuf[12];
     snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
     u8g2.setFont(F_TINY);
     u8g2.drawStr(112 + bx, 56 + by, sBuf);
     u8g2.drawUTF8(2 + bx, 8 + by, WDAY[t.tm_wday]);
 
-  } else if (!strcmp(style, "matrix")) {
-    // ------------------------------------------------------------- 2. Matrix Digital Rain (NWatch)
-    uint32_t now = millis();
-    static const int8_t laneX[10] = {4, 16, 28, 42, 54, 68, 80, 94, 106, 118};
-    static const uint8_t laneSpeed[10] = {29, 53, 37, 71, 43, 31, 67, 47, 83, 59};
-    for (int lane = 0; lane < 10; lane++) {
-      uint32_t tick = now / laneSpeed[lane];
-      int head = (int)(tick * 3) % 80 - 16;
-      for (int n = 0; n < 6; n++) {
-        int y = head - n * 7 + by;
-        if (y >= 0 && y < 64) {
-          int x = laneX[lane] + bx;
-          if (n == 0) u8g2.drawBox(x, y, 2, 3);
-          else u8g2.drawPixel(x, y);
-        }
-      }
-    }
-
-    // Time in center inside a clean cutout plate
-    char hmSec[12];
-    snprintf(hmSec, sizeof(hmSec), "%s:%02d", hm, t.tm_sec);
-    u8g2.setFont(F_NUM24);
-    int tw = u8g2.getStrWidth(hm);
-    int plateW = tw + 28;
-    int plateX = (128 - plateW) / 2 + bx;
-    u8g2.setDrawColor(0);
-    u8g2.drawRBox(plateX - 2, 14 + by, plateW + 4, 34, 3);
-    u8g2.setDrawColor(1);
-    u8g2.drawRFrame(plateX - 2, 14 + by, plateW + 4, 34, 3);
-
-    drawAnimatedDigits(hm, plateX + 3, 40 + by, 24, anim, bx, by);
-    u8g2.setFont(F_SMALL);
-    char secStr[6];
-    snprintf(secStr, sizeof(secStr), "%02d", t.tm_sec);
-    u8g2.drawStr(plateX + tw + 6, 28 + by, secStr);
-    u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(plateX + tw + 6, 38 + by, ap);
-
-    // Date footer
-    u8g2.setFont(F_TINY);
-    textCenter(60 + by, date);
-
-  } else if (!strcmp(style, "data")) {
-    // ------------------------------------------------------------- 3. Cyberpunk Data Spec (NWatch)
-    u8g2.setFont(F_TINY);
-    u8g2.drawStr(2 + bx, 7 + by, "ESP32-C3 SUPER MINI");
-    if (netOnline()) {
-      char rssiBuf[16];
-      snprintf(rssiBuf, sizeof(rssiBuf), "SIG %ddBm", netRSSI());
-      textRight(126 + bx, 7 + by, rssiBuf);
-    } else {
-      textRight(126 + bx, 7 + by, "OFFLINE");
-    }
-    u8g2.drawHLine(0, 9 + by, 128);
-
-    // Large Time line
-    char timeLine[24];
-    snprintf(timeLine, sizeof(timeLine), "TIME  %02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
-    u8g2.setFont(F_SMALL);
-    u8g2.drawStr(2 + bx, 21 + by, timeLine);
-
-    // Date line
-    char dateLine[28];
-    snprintf(dateLine, sizeof(dateLine), "DATE  %s %02d/%02d/%04d", WDAY[t.tm_wday], t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
-    u8g2.drawStr(2 + bx, 33 + by, dateLine);
-
-    // Weather / Temp line
-    if (homeW.ok) {
-      char wLine[32];
-      const char* tu = (cfg["units"] == "imperial") ? "F" : "C";
-      snprintf(wLine, sizeof(wLine), "ENV   %d%s  %s", (int)roundf(homeW.temp), tu, wmoText(homeW.code));
-      u8g2.drawStr(2 + bx, 45 + by, wLine);
-    } else {
-      u8g2.drawStr(2 + bx, 45 + by, "ENV   WAITING FOR SYNC");
-    }
-
-    // System status & seconds gauge
-    u8g2.drawHLine(0, 49 + by, 128);
-    char memLine[28];
-    snprintf(memLine, sizeof(memLine), "FREE  %uKB", (unsigned)(ESP.getFreeHeap() / 1024));
-    u8g2.setFont(F_TINY);
-    u8g2.drawStr(2 + bx, 61 + by, memLine);
-    drawBar(70 + bx, 54 + by, 56, 6, t.tm_sec / 60.0f);
-
-  } else if (!strcmp(style, "dial")) {
-    // ------------------------------------------------------------- 4. Numbered Analog Dial (NWatch)
-    int cx = 64 + bx, cy = 32 + by, r = 30;
-    u8g2.drawCircle(cx, cy, r);
-    u8g2.setFont(F_TINY);
-    u8g2.drawStr(cx - 5, cy - 21, "12");
-    u8g2.drawStr(cx + 21, cy + 3, "3");
-    u8g2.drawStr(cx - 3, cy + 27, "6");
-    u8g2.drawStr(cx - 26, cy + 3, "9");
-
-    // Hour tick dots
-    for (int mark = 1; mark < 12; mark++) {
-      if (mark != 3 && mark != 6 && mark != 9) {
-        float q = mark * 6.2831853f / 12.0f - 1.5708f;
-        u8g2.drawPixel(cx + lroundf(cosf(q) * 26), cy + lroundf(sinf(q) * 26));
-      }
-    }
-
-    // Watch hands
-    float sec = t.tm_sec * 6.2831853f / 60.0f - 1.5708f;
-    float minu = (t.tm_min + t.tm_sec / 60.0f) * 6.2831853f / 60.0f - 1.5708f;
-    float hour = ((t.tm_hour % 12) + t.tm_min / 60.0f) * 6.2831853f / 12.0f - 1.5708f;
-
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(hour) * 14), cy + lroundf(sinf(hour) * 14));
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(minu) * 21), cy + lroundf(sinf(minu) * 21));
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(sec) * 24), cy + lroundf(sinf(sec) * 24));
-    u8g2.drawDisc(cx, cy, 2);
-
-    // Left/Right extra tags
-    u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(2 + bx, 35 + by, WDAY[t.tm_wday]);
-    char dStr[6];
-    snprintf(dStr, sizeof(dStr), "%d", t.tm_mday);
-    textRight(126 + bx, 35 + by, dStr);
-
-  } else if (!strcmp(style, "flip")) {
-    // ------------------------------------------------------------- 5. Retro Flip Clock
-    int h = t.tm_hour;
-    if (!h24) { h %= 12; if (!h) h = 12; }
-    char hStr[6], mStr[6];
-    snprintf(hStr, sizeof(hStr), "%02d", h);
-    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
-
-    // Top Header info bar (y=8)
-    u8g2.setFont(F_SMALL);
-    char hdr[32];
-    snprintf(hdr, sizeof(hdr), "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-    u8g2.drawUTF8(6 + bx, 8 + by, hdr);
-
-    if (!h24) {
-      u8g2.setFont(F_TINY);
-      drawPill(102 + bx, 1 + by, 20, 8, ap, true);
-    } else if (homeW.ok) {
-      char tb[10];
-      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
-      u8g2.setFont(F_TINY);
-      textRight(124 + bx, 8 + by, tb);
-    }
-
-    int flapW = 53, flapH = 37, flapY = 12 + by;
-    int hX = 7 + bx, mX = 68 + bx;
-
-    u8g2.drawRFrame(hX, flapY, flapW, flapH, 3);
-    u8g2.drawHLine(hX, flapY + flapH / 2, flapW);
-    u8g2.drawPixel(hX, flapY + flapH / 2 - 1);
-    u8g2.drawPixel(hX + flapW - 1, flapY + flapH / 2 - 1);
-    u8g2.drawPixel(hX, flapY + flapH / 2 + 1);
-    u8g2.drawPixel(hX + flapW - 1, flapY + flapH / 2 + 1);
-    u8g2.setFont(F_NUM24);
-    int hw = u8g2.getStrWidth(hStr);
-    drawAnimatedDigits(hStr, hX + (flapW - hw) / 2, flapY + 28, 24, anim, bx, by);
-
-    u8g2.drawRFrame(mX, flapY, flapW, flapH, 3);
-    u8g2.drawHLine(mX, flapY + flapH / 2, flapW);
-    u8g2.drawPixel(mX, flapY + flapH / 2 - 1);
-    u8g2.drawPixel(mX + flapW - 1, flapY + flapH / 2 - 1);
-    u8g2.drawPixel(mX, flapY + flapH / 2 + 1);
-    u8g2.drawPixel(mX + flapW - 1, flapY + flapH / 2 + 1);
-    int mw = u8g2.getStrWidth(mStr);
-    drawAnimatedDigits(mStr, mX + (flapW - mw) / 2, flapY + 28, 24, anim, bx, by);
-
-    int sw = (t.tm_sec * 128) / 60;
-    if (sw > 0) u8g2.drawHLine(0, 53 + by, sw);
-
-    char foot[20];
-    snprintf(foot, sizeof(foot), "-- %d --", t.tm_year + 1900);
-    u8g2.setFont(F_TINY);
-    textCenter(62 + by, foot);
-
-  } else if (!strcmp(style, "scan")) {
-    // ------------------------------------------------------------- 6. Sci-Fi Scanlines (NWatch)
-    int h = t.tm_hour;
-    if (!h24) { h %= 12; if (!h) h = 12; }
-    char hmBuf[12];
-    snprintf(hmBuf, sizeof(hmBuf), h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
-
-    // Animated sweeping scanlines
-    uint32_t now = millis();
-    int scanY = 14 + (now / 40) % 36;
-    for (int y = 14; y < 50; y += 4) {
-      if (abs(y - scanY) <= 4) u8g2.drawHLine(0, y + by, 128);
-      else {
-        for (int x = 0; x < 128; x += 6) u8g2.drawPixel(x, y + by);
-      }
-    }
-
-    // Time digits centered with blackout plate behind
-    u8g2.setFont(F_NUM24);
-    int tw = u8g2.getStrWidth(hmBuf);
-    int tx = (128 - tw) / 2 + bx;
-    u8g2.setDrawColor(0);
-    u8g2.drawRBox(tx - 4, 18 + by, tw + 8, 28, 2);
-    u8g2.setDrawColor(1);
-    u8g2.drawRFrame(tx - 4, 18 + by, tw + 8, 28, 2);
-    drawAnimatedDigits(hmBuf, tx, 40 + by, 24, anim, bx, by);
-
-    // Top Header: Date
-    u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(2 + bx, 8 + by, date);
-
-    // Seconds in top-right
-    char sBuf[6];
-    snprintf(sBuf, sizeof(sBuf), "%02d", t.tm_sec);
-    u8g2.setFont(F_SMALL);
-    textRight(126 + bx, 8 + by, sBuf);
-
-    // Bottom hairline + status
-    u8g2.drawHLine(0, 52 + by, 128);
-    u8g2.setFont(F_TINY);
-    textCenter(61 + by, "SCANNER ACTIVE");
-
-  } else if (!strcmp(style, "seconds")) {
-    // ------------------------------------------------------------- 7. Chrono HUD
-    char s[6];
-    snprintf(s, sizeof(s), ":%02d", t.tm_sec);
-    u8g2.setFont(F_NUM24);
-    int w = u8g2.getStrWidth(hm);
-    u8g2.setFont(F_NUM16);
-    int ws = u8g2.getStrWidth(s);
-    int x0 = (128 - w - ws - 2) / 2 + bx;
-    u8g2.setFont(F_NUM24);
-    drawAnimatedDigits(hm, x0, 33 + by, 24, anim, bx, by);
-    u8g2.setFont(F_NUM16);
-    u8g2.drawStr(x0 + w + 2, 33 + by, s);
-
-    drawBar(14 + bx, 39 + by, 100, 5, t.tm_sec / 60.0f);
-
-    u8g2.setFont(F_MED);
-    if (!h24) {
-      char dBuf[36];
-      snprintf(dBuf, sizeof(dBuf), "%s  %s", date, ap);
-      textCenter(58 + by, dBuf);
-    } else {
-      textCenter(58 + by, date);
-    }
-
   } else {
-    // ------------------------------------------------------------- 8. Modern Digital (Big)
+    // ------------------------------------------------------------- 9. Big Time (NWatch)
     int h = t.tm_hour;
     if (!h24) { h %= 12; if (!h) h = 12; }
     char b[8];
@@ -503,13 +593,11 @@ static void clock_draw(CardCtx& c) {
     int w = u8g2.getStrWidth(b);
     int x = (128 - w) / 2 + bx;
     if (x < 0) x = 0;
-    drawAnimatedDigits(b, x, 46 + by, 42, anim, bx, by);
+    drawDigits(0, b, x, 46 + by, 42, anim);
 
-    // Hairline seconds bar sweeping under digits
     int sw = (t.tm_sec * 128) / 60;
     if (sw > 0) u8g2.drawHLine(0, 50 + by, sw);
 
-    // Full date string with AM/PM
     char fullDate[36];
     u8g2.setFont(F_MED);
     if (!h24) {
@@ -525,7 +613,6 @@ static void clock_draw(CardCtx& c) {
     }
     textCenter(62 + by, fullDate);
 
-    // Live temperature in corner
     if (homeW.ok) {
       char tb[10];
       snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
@@ -538,6 +625,13 @@ static void clock_draw(CardCtx& c) {
 static bool clock_input(CardCtx& c, uint8_t g) {
   if (g == G_LONG) {
     c.st[0] = (c.st[0] + 1) % NUM_CLOCK_STYLES;
+    c.st[1] = 1;
+    toastShow(CLOCK_STYLE_NAMES[c.st[0] % NUM_CLOCK_STYLES]);
+    audioSfx("pop", EV_UI);
+    return true;
+  }
+  if (g == G_TRIPLE) {
+    c.st[0] = (c.st[0] + NUM_CLOCK_STYLES - 1) % NUM_CLOCK_STYLES;
     c.st[1] = 1;
     toastShow(CLOCK_STYLE_NAMES[c.st[0] % NUM_CLOCK_STYLES]);
     audioSfx("pop", EV_UI);
