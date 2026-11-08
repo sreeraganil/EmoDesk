@@ -30,6 +30,7 @@ void marquee(int x, int y, int w, const char* s, uint32_t t0, int pxPerSec = 30)
 void drawBar(int x, int y, int w, int h, float frac);
 void drawDottedHLine(int x, int y, int w);
 void drawBadge(int xr, int y, const char* text);
+void drawPill(int x, int y, int w, int h, const char* text, bool filled = false);
 void drawSignalBars(int x, int y, int rssi);
 void drawHeader(const char* title, const char* right = nullptr);
 void drawSpark(int x, int y, int w, int h, const float* v, int n);
@@ -40,6 +41,12 @@ void drawIconBall(int cx, int cy, int r, uint8_t fg = 1);
 void drawIconBell(int x, int y);
 void drawIconMail(int x, int y);
 void drawIconBat(int x, int y, int pct);
+void drawIconDrop(int x, int y);
+void drawIconWind(int x, int y);
+void drawIconTemp(int x, int y);
+void drawIconArrow(int x, int y, bool up);
+void drawIconCalendar(int x, int y);
+void drawIconClock(int x, int y);
 void drawPageDots(int xr, int y, int n, int cur);
 
 const char* wmoText(int code);

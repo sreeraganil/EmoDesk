@@ -121,6 +121,22 @@ void drawBadge(int xr, int y, const char* text) {
   u8g2.drawUTF8(bx + 3, y, text);
 }
 
+void drawPill(int x, int y, int w, int h, const char* text, bool filled) {
+  if (!text || !*text) return;
+  int r = h >= 8 ? 2 : 1;
+  if (filled) {
+    u8g2.drawRBox(x, y, w, h, r);
+    u8g2.setDrawColor(0);
+    int tw = u8g2.getUTF8Width(text);
+    u8g2.drawUTF8(x + (w - tw) / 2, y + h - 2, text);
+    u8g2.setDrawColor(1);
+  } else {
+    u8g2.drawRFrame(x, y, w, h, r);
+    int tw = u8g2.getUTF8Width(text);
+    u8g2.drawUTF8(x + (w - tw) / 2, y + h - 2, text);
+  }
+}
+
 void drawSignalBars(int x, int y, int rssi) {
   int bars = rssi > -55 ? 4 : (rssi > -68 ? 3 : (rssi > -80 ? 2 : (rssi > -92 ? 1 : 0)));
   for (int i = 0; i < 4; i++) {
@@ -185,7 +201,13 @@ void drawHeader(const char* title, const char* right) {
 
   if (hasRight) {
     u8g2.setFont(F_TINY);
-    if (framed) {
+    bool inverse = (!strcmp(right, "LIVE") || !strcmp(right, "FT") || !strcmp(right, "PROB") || !strcmp(right, "ALERT"));
+    if (inverse) {
+      u8g2.drawRBox(bx, 1, bw, 8, 2);
+      u8g2.setDrawColor(0);
+      u8g2.drawUTF8(bx + 3, 7, right);
+      u8g2.setDrawColor(1);
+    } else if (framed) {
       u8g2.drawRFrame(bx, 1, bw, 8, 2);
       u8g2.drawUTF8(bx + 3, 7, right);
     } else {
@@ -395,6 +417,55 @@ void drawIconBat(int x, int y, int pct) {
   u8g2.drawBox(x + 11, y + 2, 1, 2);
   int w = constrain(pct, 0, 100) * 9 / 100;
   if (w > 0) u8g2.drawBox(x + 1, y + 1, w, 4);
+}
+
+void drawIconDrop(int x, int y) {
+  u8g2.drawPixel(x + 2, y);
+  u8g2.drawHLine(x + 1, y + 1, 3);
+  u8g2.drawHLine(x + 1, y + 2, 3);
+  u8g2.drawBox(x, y + 3, 5, 3);
+  u8g2.drawHLine(x + 1, y + 6, 3);
+}
+
+void drawIconWind(int x, int y) {
+  u8g2.drawHLine(x, y + 1, 6);
+  u8g2.drawPixel(x + 6, y);
+  u8g2.drawHLine(x + 2, y + 4, 5);
+  u8g2.drawPixel(x + 7, y + 3);
+}
+
+void drawIconTemp(int x, int y) {
+  u8g2.drawBox(x + 1, y, 3, 5);
+  u8g2.drawDisc(x + 2, y + 6, 2);
+}
+
+void drawIconArrow(int x, int y, bool up) {
+  if (up) {
+    u8g2.drawPixel(x + 2, y);
+    u8g2.drawHLine(x + 1, y + 1, 3);
+    u8g2.drawHLine(x, y + 2, 5);
+    u8g2.drawVLine(x + 2, y + 3, 3);
+  } else {
+    u8g2.drawVLine(x + 2, y, 3);
+    u8g2.drawHLine(x, y + 3, 5);
+    u8g2.drawHLine(x + 1, y + 4, 3);
+    u8g2.drawPixel(x + 2, y + 5);
+  }
+}
+
+void drawIconCalendar(int x, int y) {
+  u8g2.drawFrame(x, y + 1, 8, 7);
+  u8g2.drawPixel(x + 2, y);
+  u8g2.drawPixel(x + 5, y);
+  u8g2.drawHLine(x, y + 3, 8);
+  u8g2.drawPixel(x + 2, y + 5);
+  u8g2.drawPixel(x + 5, y + 5);
+}
+
+void drawIconClock(int x, int y) {
+  u8g2.drawCircle(x + 3, y + 3, 3);
+  u8g2.drawVLine(x + 3, y + 1, 3);
+  u8g2.drawHLine(x + 3, y + 3, 3);
 }
 
 void drawPageDots(int xr, int y, int n, int cur) {

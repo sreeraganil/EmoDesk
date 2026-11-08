@@ -259,10 +259,11 @@ static void clock_draw(CardCtx& c) {
 
     // Corner extra: live temperature if weather is synced
     if (homeW.ok) {
+      drawIconTemp(1 + bx, 1 + by);
       char tb[10];
       snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
-      u8g2.setFont(F_TINY);
-      u8g2.drawUTF8(1 + bx, 6 + by, tb);
+      u8g2.setFont(F_SMALL);
+      u8g2.drawUTF8(8 + bx, 8 + by, tb);
     }
   }
 }

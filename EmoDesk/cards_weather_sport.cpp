@@ -29,32 +29,56 @@ static void weather_draw(CardCtx& c) {
   WeatherData* w = wdata(c);
   if (!weatherGate(c, w)) return;
   drawHeader(locName(c.p), wmoText(w->code));
-  drawWeatherIcon(2 + burnX, 14, 28, w->code, w->isDay);
+
+  // Left: Weather Condition Icon
+  drawWeatherIcon(2 + burnX, 14, 26, w->code, w->isDay);
+
+  // Center-Left: Temperature (large digits)
   char b[32];
   snprintf(b, sizeof(b), "%d", (int)roundf(w->temp));
   u8g2.setFont(F_NUM32);
   int tw = u8g2.getStrWidth(b);
-  u8g2.drawStr(34 + burnX, 44, b);
+  int tx = 31 + burnX;
+  u8g2.drawStr(tx, 43, b);
+
+  // Unit (degree circle + C/F)
+  int ux = tx + tw + 2;
   u8g2.setFont(F_SMALL);
-  int ux = 36 + tw + burnX;
-  u8g2.drawCircle(ux + 2, 20, 2);
-  u8g2.drawUTF8(ux + 7, 26, tempUnit());
-  snprintf(b, sizeof(b), "%d/%d", (int)roundf(w->dMax[0]), (int)roundf(w->dMin[0]));
-  u8g2.setFont(F_TINY);
-  u8g2.drawStr(ux, 38, b);
-  int rx = 127;
-  u8g2.setFont(F_TINY);
-  snprintf(b, sizeof(b), "fls %d%s", (int)roundf(w->feels), tempUnit());
-  textRight(rx, 22, b);
-  snprintf(b, sizeof(b), "hum %d%%", (int)w->hum);
-  textRight(rx, 31, b);
-  snprintf(b, sizeof(b), "%d %s", (int)roundf(w->wind), cfg["units"] == "imperial" ? "mph" : "kmh");
-  textRight(rx, 40, b);
+  u8g2.drawCircle(ux + 2, 19, 2);
+  u8g2.drawUTF8(ux + 7, 25, tempUnit());
+
+  // High / Low Indicators (crisp micro arrows + F_SMALL)
+  drawIconArrow(ux + 1, 31, true);
+  snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMax[0]));
+  u8g2.setFont(F_SMALL);
+  u8g2.drawStr(ux + 7, 36, b);
+
+  drawIconArrow(ux + 1, 39, false);
+  snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMin[0]));
+  u8g2.drawStr(ux + 7, 44, b);
+
+  // Right Panel: Micro-icons + F_SMALL metrics
+  int rx = 82;
+  drawIconDrop(rx, 15);
+  snprintf(b, sizeof(b), "%d%%", (int)w->hum);
+  u8g2.setFont(F_SMALL);
+  textRight(127, 22, b);
+
+  drawIconWind(rx, 26);
+  snprintf(b, sizeof(b), "%d%s", (int)roundf(w->wind), cfg["units"] == "imperial" ? "mph" : "kmh");
+  textRight(127, 32, b);
+
+  drawIconTemp(rx, 36);
+  snprintf(b, sizeof(b), "~%d°", (int)roundf(w->feels));
+  textRight(127, 43, b);
+
+  // Bottom Banner: Readable condition text
   drawDottedHLine(0, 48, 128);
-  snprintf(b, sizeof(b), "%s  |  High %d%s  Low %d%s", wmoText(w->code),
-           (int)roundf(w->dMax[0]), tempUnit(), (int)roundf(w->dMin[0]), tempUnit());
-  u8g2.setFont(F_TINY);
-  textCenter(58, b);
+  const char* cond = wmoText(w->code);
+  u8g2.setFont(F_MED);
+  int cw = u8g2.getUTF8Width(cond);
+  if (cw <= 126) textCenter(59, cond);
+  else marquee(1, 59, 126, cond, c.t0, 24);
 }
 
 static void weather_speak(CardCtx& c, String& s) {
@@ -92,15 +116,22 @@ static void forecast_draw(CardCtx& c) {
     u8g2.setFont(F_TINY);
     int dw = u8g2.getUTF8Width(dn);
     int px = colX + (42 - dw - 6) / 2;
-    u8g2.drawRFrame(px, 1, dw + 6, 9, 2);
-    u8g2.drawUTF8(px + 3, 7, dn);
+    if (i == 0) {
+      u8g2.drawRBox(px, 1, dw + 6, 9, 2);
+      u8g2.setDrawColor(0);
+      u8g2.drawUTF8(px + 3, 7, dn);
+      u8g2.setDrawColor(1);
+    } else {
+      u8g2.drawRFrame(px, 1, dw + 6, 9, 2);
+      u8g2.drawUTF8(px + 3, 7, dn);
+    }
     drawWeatherIcon(colX + 11, 14, 20, w->dCode[i], true);
     u8g2.setFont(F_MED);
-    snprintf(b, sizeof(b), "%d%s", (int)roundf(w->dMax[i]), tempUnit());
+    snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMax[i]));
     int wMax = u8g2.getUTF8Width(b);
     u8g2.drawUTF8(colX + (42 - wMax) / 2, 46, b);
-    u8g2.setFont(F_TINY);
-    snprintf(b, sizeof(b), "%d%s", (int)roundf(w->dMin[i]), tempUnit());
+    u8g2.setFont(F_SMALL);
+    snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMin[i]));
     int wMin = u8g2.getUTF8Width(b);
     u8g2.drawUTF8(colX + (42 - wMin) / 2, 57, b);
     if (i > 0) {
@@ -1181,12 +1212,16 @@ static void football_draw(CardCtx& c) {
 
     char scoreStr[20];
     if (m.state == 0) {
-      u8g2.setFont(F_HELV14);
-      textCenter(27, "vs");
+      u8g2.setFont(F_MED);
+      textCenter(26, "vs");
     } else {
       snprintf(scoreStr, sizeof(scoreStr), "%d - %d", m.hs, m.as);
       u8g2.setFont(F_HELV14);
-      textCenter(27, scoreStr);
+      int scW = u8g2.getUTF8Width(scoreStr);
+      int pillW = scW + 8;
+      int pillX = (128 - pillW) / 2;
+      u8g2.drawRFrame(pillX, 15, pillW, 14, 2);
+      u8g2.drawUTF8(pillX + 4, 27, scoreStr);
     }
 
     char vsNames[64];

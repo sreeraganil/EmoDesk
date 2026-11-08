@@ -118,38 +118,59 @@ static bool crypto_fetch(JsonObject p, void* d) {
 
 static void priceScreen(const char* name, const char* cur, float price, float chPct, const float* hist, int hn, int idx, int n) {
   char b[32];
+
+  // Top header: Asset ticker
   u8g2.setFont(F_BOLD);
   String nm(name);
   nm.toUpperCase();
-  u8g2.drawStr(1, 10, nm.substring(0, 10).c_str());
+  u8g2.drawStr(1, 9, nm.substring(0, 10).c_str());
+  int nw = u8g2.getUTF8Width(nm.substring(0, 10).c_str());
 
+  // Currency tag
+  if (cur && *cur) {
+    u8g2.setFont(F_TINY);
+    String cu(cur);
+    cu.toUpperCase();
+    char cTag[12];
+    snprintf(cTag, sizeof(cTag), "/%s", cu.c_str());
+    u8g2.drawStr(nw + 3, 9, cTag);
+  }
+
+  // Right pill badge: Up/Down arrow + percentage
   snprintf(b, sizeof(b), "%+.1f%%", chPct);
-  drawBadge(127, 8, b);
+  u8g2.setFont(F_TINY);
+  int bw = u8g2.getUTF8Width(b) + 12;
+  int bx = 127 - bw;
+  u8g2.drawRFrame(bx, 1, bw, 8, 2);
+  drawIconArrow(bx + 3, 2, chPct >= 0);
+  u8g2.drawUTF8(bx + 9, 7, b);
 
-  drawDottedHLine(0, 12, 128);
+  // Divider
+  u8g2.drawHLine(0, 11, 128);
 
+  // Main Price
   u8g2.setFont(F_HELV14);
   String ps = fmtPrice(price);
-  u8g2.drawStr(1, 30, ps.c_str());
-  int pw = u8g2.getStrWidth(ps.c_str());
-  u8g2.setFont(F_TINY);
-  String cu(cur);
-  cu.toUpperCase();
-  u8g2.drawStr(pw + 5, 29, cu.c_str());
+  u8g2.drawStr(1, 28, ps.c_str());
 
+  // Sparkline Chart & Baseline
   if (hn > 1) {
-    drawSpark(0, 36, 128, 24, hist, hn);
-    drawDottedHLine(0, 60, 100);
+    // Dashed reference baseline for first/open point
+    float mn = hist[0], mx = hist[0];
+    for (int i = 1; i < hn; i++) { mn = min(mn, hist[i]); mx = max(mx, hist[i]); }
+    float rng = mx - mn;
+    if (rng > 0.0001f) {
+      int basePy = 32 + 25 - (int)((hist[0] - mn) / rng * 25);
+      for (int px = 0; px < 128; px += 4) u8g2.drawPixel(px, basePy);
+    }
+    drawSpark(0, 32, 128, 26, hist, hn);
   } else {
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(1, 54, "building chart history...");
+    u8g2.drawStr(1, 48, "gathering trend history...");
   }
 
-  for (int i = 0; i < n && n > 1; i++) {
-    int dx = 124 - (n - 1 - i) * 6;
-    if (i == idx) u8g2.drawBox(dx, 61, 4, 2);
-    else u8g2.drawPixel(dx + 1, 62);
-  }
+  // Page indicator dots
+  drawPageDots(126, 61, n, idx);
 }
 
 static void crypto_draw(CardCtx& c) {
