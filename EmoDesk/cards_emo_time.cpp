@@ -235,557 +235,636 @@ static void clock_draw(CardCtx& c) {
   const char* ap = t.tm_hour < 12 ? "AM" : "PM";
 
   if (!strcmp(style, "modular")) {
-    // ------------------------------------------------------------- 0. Modern Modular (Apple Watch Ultra)
-    // Top Row: Complications (Weather Temp on left, Network/Battery on right)
-    u8g2.setFont(F_SMALL);
-    if (homeW.ok) {
-      char wBuf[16];
-      snprintf(wBuf, sizeof(wBuf), "%d° %s", (int)roundf(homeW.temp), wmoText(homeW.code));
-      u8g2.drawUTF8(2 + bx, 8 + by, wBuf);
-    } else {
-      u8g2.drawUTF8(2 + bx, 8 + by, date);
-    }
-
-    if (netOnline()) {
-      char netBuf[16];
-      snprintf(netBuf, sizeof(netBuf), "SIG %ddB", netRSSI());
-      textRight(126 + bx, 8 + by, netBuf);
-    } else {
-      textRight(126 + bx, 8 + by, ap);
-    }
-    u8g2.drawHLine(0, 10 + by, 128);
-
-    // Center Main Module: Large Bold Digital Time + Seconds Ticker
-    char sBuf[6];
-    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
-    u8g2.setFont(F_NUM24);
-    int tw = u8g2.getStrWidth(hm);
-    u8g2.setFont(F_NUM16);
-    int sw = u8g2.getStrWidth(sBuf);
-    int startX = (128 - (tw + sw + 3)) / 2 + bx;
-
-    u8g2.setFont(F_NUM24);
-    drawDigits(0, hm, startX, 37 + by, 24, anim);
-    u8g2.setFont(F_NUM16);
-    u8g2.drawStr(startX + tw + 3, 37 + by, sBuf);
-
-    // Dynamic 60-Second Activity Progress Ring / Bar with glowing head
-    u8g2.drawHLine(0, 44 + by, 128);
-    drawBar(4 + bx, 47 + by, 120, 4, t.tm_sec / 60.0f);
-
-    // Bottom Complication Bar: Full Date & Health BPM / Heap
+    // ============================================================= 0. MODULAR — Apple Ultra Infograph
+    // Top bar: weather left, signal/AM-PM right
     u8g2.setFont(F_TINY);
-    char foot[36];
-    snprintf(foot, sizeof(foot), "%s %d %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-    u8g2.drawUTF8(4 + bx, 61 + by, foot);
-
-    // Heartbeat BPM pulse indicator
-    bool heartPulse = (millis() % 900) < 220;
-    if (heartPulse) {
-      u8g2.drawStr(98 + bx, 61 + by, "<3 74");
+    if (homeW.ok) {
+      char wBuf[20];
+      snprintf(wBuf, sizeof(wBuf), "%d\xc2\xb0 %s", (int)roundf(homeW.temp), wmoText(homeW.code));
+      u8g2.drawUTF8(2 + bx, 7 + by, wBuf);
     } else {
-      u8g2.drawStr(98 + bx, 61 + by, "- 74");
+      u8g2.drawUTF8(2 + bx, 7 + by, date);
     }
+    if (netOnline()) {
+      char nb[12]; snprintf(nb, sizeof(nb), "%ddB", netRSSI());
+      textRight(126 + bx, 7 + by, nb);
+    } else {
+      textRight(126 + bx, 7 + by, ap);
+    }
+    u8g2.drawHLine(0 + bx, 9 + by, 128);
+
+    // Centre: HH large | blinking colon | MM large
+    int h2 = t.tm_hour, m2 = t.tm_min;
+    if (!h24) { h2 %= 12; if (!h2) h2 = 12; }
+    char hStr[4], mStr[4];
+    snprintf(hStr, sizeof(hStr), "%02d", h2);
+    snprintf(mStr, sizeof(mStr), "%02d", m2);
+
+    u8g2.setFont(F_NUM32);
+    int hw = u8g2.getStrWidth(hStr);
+    int mw = u8g2.getStrWidth(mStr);
+    int gap = 6; // colon width
+    int totalW = hw + gap + mw;
+    int startX = (128 - totalW) / 2 + bx;
+
+    drawDigits(0, hStr, startX,        42 + by, 32, anim);
+    drawDigits(1, mStr, startX + hw + gap, 42 + by, 32, anim);
+    // Blinking colon dots
+    if ((millis() / 500) % 2 == 0) {
+      u8g2.drawBox(startX + hw + 1, 24 + by, 2, 2);
+      u8g2.drawBox(startX + hw + 1, 32 + by, 2, 2);
+    }
+
+    // Seconds progress bar with bright leading pixel
+    u8g2.drawHLine(0 + bx, 46 + by, 128);
+    int secPx = (t.tm_sec * 128) / 60;
+    if (secPx > 0) u8g2.drawHLine(0 + bx, 47 + by, secPx);
+    if (secPx < 128) u8g2.drawBox(secPx + bx, 46 + by, 2, 3);
+
+    // Bottom row: full date + seconds tag
+    u8g2.setFont(F_TINY);
+    char foot[32];
+    snprintf(foot, sizeof(foot), "%s %d %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    u8g2.drawUTF8(2 + bx, 60 + by, foot);
+    char sBuf[6]; snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    textRight(126 + bx, 60 + by, sBuf);
 
   } else if (!strcmp(style, "activity")) {
-    // ------------------------------------------------------------- 1. Activity Rings (Smartwatch Fitness)
-    // Left side: 3 concentric activity rings (Seconds, Minutes, Hours)
-    int cx = 28 + bx, cy = 32 + by;
-    // Faint guide tracks
-    u8g2.drawCircle(cx, cy, 24);
-    u8g2.drawCircle(cx, cy, 17);
-    u8g2.drawCircle(cx, cy, 10);
+    // ============================================================= 1. ACTIVITY RINGS
+    int cx = 30 + bx, cy = 33 + by;
 
-    // Outer Ring: Seconds (0..60s)
+    // Draw dashed ring tracks
+    for (float a = 0; a < 6.2832f; a += 0.22f) {
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 26), cy + lroundf(sinf(a) * 26));
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 19), cy + lroundf(sinf(a) * 19));
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 12), cy + lroundf(sinf(a) * 12));
+    }
+
+    // Outer ring: Seconds (double-thick arc)
     float sFrac = (t.tm_sec + (millis() % 1000) * 0.001f) / 60.0f;
-    float sEnd = sFrac * 6.2831853f - 1.5708f;
-    for (float a = -1.5708f; a < sEnd; a += 0.12f) {
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 24), cy + lroundf(sinf(a) * 24));
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 23), cy + lroundf(sinf(a) * 23));
+    float sEnd  = sFrac * 6.2832f - 1.5708f;
+    for (float a = -1.5708f; a < sEnd; a += 0.09f) {
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 26), cy + lroundf(sinf(a) * 26));
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 25), cy + lroundf(sinf(a) * 25));
     }
-    u8g2.drawDisc(cx + lroundf(cosf(sEnd) * 23.5f), cy + lroundf(sinf(sEnd) * 23.5f), 1);
+    // Leading dot
+    u8g2.drawDisc(cx + lroundf(cosf(sEnd) * 25.5f), cy + lroundf(sinf(sEnd) * 25.5f), 2);
 
-    // Middle Ring: Minutes (0..60m)
+    // Middle ring: Minutes
     float mFrac = (t.tm_min + t.tm_sec / 60.0f) / 60.0f;
-    float mEnd = mFrac * 6.2831853f - 1.5708f;
-    for (float a = -1.5708f; a < mEnd; a += 0.15f) {
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 17), cy + lroundf(sinf(a) * 17));
+    float mEnd  = mFrac * 6.2832f - 1.5708f;
+    for (float a = -1.5708f; a < mEnd; a += 0.12f) {
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 19), cy + lroundf(sinf(a) * 19));
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 18), cy + lroundf(sinf(a) * 18));
     }
-    u8g2.drawDisc(cx + lroundf(cosf(mEnd) * 17), cy + lroundf(sinf(mEnd) * 17), 1);
+    u8g2.drawDisc(cx + lroundf(cosf(mEnd) * 18.5f), cy + lroundf(sinf(mEnd) * 18.5f), 2);
 
-    // Inner Ring: Hours (0..12h)
+    // Inner ring: Hours
     float hFrac = ((t.tm_hour % 12) + t.tm_min / 60.0f) / 12.0f;
-    float hEnd = hFrac * 6.2831853f - 1.5708f;
-    for (float a = -1.5708f; a < hEnd; a += 0.20f) {
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 10), cy + lroundf(sinf(a) * 10));
+    float hEnd  = hFrac * 6.2832f - 1.5708f;
+    for (float a = -1.5708f; a < hEnd; a += 0.18f) {
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 12), cy + lroundf(sinf(a) * 12));
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 11), cy + lroundf(sinf(a) * 11));
     }
-    u8g2.drawDisc(cx + lroundf(cosf(hEnd) * 10), cy + lroundf(sinf(hEnd) * 10), 1);
+    u8g2.drawDisc(cx + lroundf(cosf(hEnd) * 11.5f), cy + lroundf(sinf(hEnd) * 11.5f), 1);
 
-    // Right side: Bold time & Fitness readout
-    u8g2.setFont(F_SMALL);
-    char datePill[24];
-    snprintf(datePill, sizeof(datePill), "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-    u8g2.drawUTF8(60 + bx, 12 + by, datePill);
-
+    // Right: Time + date + sec
     u8g2.setFont(F_HELV14);
-    u8g2.drawStr(60 + bx, 33 + by, hm);
-
-    char secLine[16];
-    snprintf(secLine, sizeof(secLine), "SEC :%02d", t.tm_sec);
-    u8g2.setFont(F_SMALL);
-    u8g2.drawStr(60 + bx, 46 + by, secLine);
-
+    int rX = 66 + bx;
+    u8g2.drawStr(rX, 32 + by, hm);
     u8g2.setFont(F_TINY);
-    bool pulse = (millis() % 800) < 200;
-    char bpmLine[20];
-    snprintf(bpmLine, sizeof(bpmLine), "%s 72 BPM", pulse ? "<3" : " -");
-    u8g2.drawStr(60 + bx, 60 + by, bpmLine);
-    textRight(126 + bx, 60 + by, ap);
+    u8g2.drawUTF8(rX, 11 + by, date);
+    char sl[12]; snprintf(sl, sizeof(sl), ":%.2d", t.tm_sec);
+    u8g2.drawStr(rX, 46 + by, sl);
+    u8g2.drawHLine(rX - 2, 48 + by, 60);
+    bool pulse = (millis() % 900) < 180;
+    char bpm[14]; snprintf(bpm, sizeof(bpm), "%s 72bpm", pulse ? "<3" : " -");
+    u8g2.drawStr(rX, 62 + by, bpm);
 
   } else if (!strcmp(style, "horizon")) {
-    // ------------------------------------------------------------- 2. Horizon Wave (Pixel Watch)
+    // ============================================================= 2. HORIZON WAVE
     uint32_t tMs = millis();
-    float wavePhase = tMs * 0.0035f;
-    int baseWaterY = 46 + by;
+    float ph = tMs * 0.0030f;
+    int baseY = 44 + by;
 
-    // Fluid undulating wave
-    for (int x = 0; x < 128; x += 2) {
-      float w1 = sinf(x * 0.07f + wavePhase) * 3.5f;
-      float w2 = cosf(x * 0.035f - wavePhase * 0.7f) * 2.0f;
-      int wy = baseWaterY + lroundf(w1 + w2);
-      if (wy >= 0 && wy < 64) {
-        u8g2.drawPixel(x + bx, wy);
-        u8g2.drawPixel(x + 1 + bx, wy);
-        for (int y = wy + 2; y < 64; y += 3) {
-          if ((x + y) % 4 == 0) u8g2.drawPixel(x + bx, y);
-        }
+    // Solid fill below wave
+    for (int x = 0; x < 128; x++) {
+      float w = sinf(x * 0.075f + ph) * 4.0f + cosf(x * 0.038f - ph * 0.6f) * 2.5f;
+      int wy = baseY + (int)w;
+      if (wy < 0) wy = 0; if (wy > 63) wy = 63;
+      // bright wave crest pixel
+      u8g2.drawPixel(x + bx, wy);
+      u8g2.drawPixel(x + bx, wy + 1);
+      // dotted fill below
+      for (int y = wy + 3; y < 64; y += 2) {
+        if ((x + y) % 3 != 0) u8g2.drawPixel(x + bx, y);
       }
     }
 
-    // Animated rising bubbles
-    for (int b = 0; b < 3; b++) {
-      int bx_pos = 20 + b * 40 + ((tMs / 60 + b * 17) % 15);
-      int by_pos = 62 - ((tMs / 25 + b * 19) % 20);
-      if (by_pos >= 44 && by_pos < 64) u8g2.drawCircle(bx_pos + bx, by_pos, 1);
-    }
-
-    // Floating digital time above horizon
+    // Date bar at top
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(4 + bx, 8 + by, date);
+    u8g2.drawUTF8(2 + bx, 8 + by, date);
     if (homeW.ok) {
-      char tb[10];
-      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
-      textRight(124 + bx, 8 + by, tb);
-    } else {
-      textRight(124 + bx, 8 + by, ap);
+      char tb[8]; snprintf(tb, sizeof(tb), "%d\xc2\xb0", (int)roundf(homeW.temp));
+      textRight(126 + bx, 8 + by, tb);
+    } else textRight(126 + bx, 8 + by, ap);
+
+    // Centre time with black clear-box underneath
+    int h2 = t.tm_hour;
+    if (!h24) { h2 %= 12; if (!h2) h2 = 12; }
+    char hStr[4], mStr[4];
+    snprintf(hStr, sizeof(hStr), "%02d", h2);
+    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+    u8g2.setFont(F_NUM24);
+    int hw = u8g2.getStrWidth(hStr), mw2 = u8g2.getStrWidth(mStr);
+    int cX = (128 - hw - 4 - mw2) / 2 + bx;
+    u8g2.setDrawColor(0); u8g2.drawBox(cX - 3, 13 + by, hw + mw2 + 10, 26); u8g2.setDrawColor(1);
+    drawDigits(0, hStr, cX, 36 + by, 24, anim);
+    // colon dots
+    if ((millis() / 500) % 2 == 0) {
+      u8g2.drawBox(cX + hw, 20 + by, 2, 2);
+      u8g2.drawBox(cX + hw, 27 + by, 2, 2);
     }
-
-    char sBuf[6];
-    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
-    u8g2.setFont(F_NUM24);
-    int tw = u8g2.getStrWidth(hm);
-    u8g2.setFont(F_SMALL);
-    int sw = u8g2.getStrWidth(sBuf);
-    int startX = (128 - (tw + sw + 3)) / 2 + bx;
-
-    u8g2.setFont(F_NUM24);
-    drawDigits(0, hm, startX, 36 + by, 24, anim);
-    u8g2.setFont(F_SMALL);
-    u8g2.drawStr(startX + tw + 3, 36 + by, sBuf);
+    drawDigits(1, mStr, cX + hw + 4, 36 + by, 24, anim);
 
   } else if (!strcmp(style, "pulse")) {
-    // ------------------------------------------------------------- 3. Health ECG Pulse (Smartwatch Health)
-    u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(4 + bx, 8 + by, date);
-    textRight(124 + bx, 8 + by, ap);
-    u8g2.drawHLine(0, 10 + by, 128);
+    // ============================================================= 3. HEALTH ECG PULSE
+    // Header
+    u8g2.setFont(F_BOLD);
+    int h2 = t.tm_hour;
+    if (!h24) { h2 %= 12; if (!h2) h2 = 12; }
+    char hStr[4], mStr[4];
+    snprintf(hStr, sizeof(hStr), "%02d", h2);
+    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+    u8g2.setFont(F_NUM24);
+    int hw = u8g2.getStrWidth(hStr), mw3 = u8g2.getStrWidth(mStr);
+    int cX = (128 - hw - 4 - mw3) / 2 + bx;
+    drawDigits(0, hStr, cX,         22 + by, 24, anim);
+    if ((millis() / 500) % 2 == 0) {
+      u8g2.drawBox(cX + hw, 10 + by, 2, 2);
+      u8g2.drawBox(cX + hw, 17 + by, 2, 2);
+    }
+    drawDigits(1, mStr, cX + hw + 4, 22 + by, 24, anim);
+    u8g2.setFont(F_TINY);
+    textRight(126 + bx, 7 + by, ap);
+    u8g2.drawUTF8(2 + bx, 7 + by, date);
+    u8g2.drawHLine(0, 25 + by, 128);
 
-    // Digital time centered
-    u8g2.setFont(F_HELV14);
-    int tw = u8g2.getStrWidth(hm);
-    char sBuf[6];
-    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
-    u8g2.setFont(F_SMALL);
-    int sw = u8g2.getStrWidth(sBuf);
-    int startX = (128 - (tw + sw + 3)) / 2 + bx;
-
-    u8g2.setFont(F_HELV14);
-    u8g2.drawStr(startX, 26 + by, hm);
-    u8g2.setFont(F_SMALL);
-    u8g2.drawStr(startX + tw + 3, 26 + by, sBuf);
-
-    // Real-time animated ECG heartbeat wave
+    // ECG wave — richer PQRST shape
     uint32_t ms = millis();
-    int beatX = (ms / 15) % 128;
+    int beatX = (int)(ms / 12) % 128;
+    static const int8_t ecgShape[20] = {0, 0, 1, 1, -1, 0, 0, 10, -12, 6, -2, 0, 2, 3, 2, 1, 0, 0, 0, 0};
     for (int x = 0; x < 128; x++) {
       int dist = (x - beatX + 128) % 128;
-      int yOffset = 0;
-      if (dist >= 112 && dist <= 126) {
-        int p = dist - 112;
-        static const int8_t ecgShape[15] = {0, 1, 2, 0, -2, 8, -4, 0, 1, 3, 2, 0, 0, 0, 0};
-        yOffset = ecgShape[p];
-      }
-      u8g2.drawPixel(x + bx, 39 + by - yOffset);
+      int yo = 0;
+      if (dist < 20) yo = ecgShape[dist];
+      u8g2.drawPixel(x + bx, 42 + by - yo);
     }
-    u8g2.drawDisc(beatX + bx, 39 + by, 2);
+    // Bright head dot
+    u8g2.drawDisc(beatX + bx, 42 + by, 2);
+    // Fading tail
+    for (int t2 = 1; t2 <= 4; t2++) {
+      int tx = (beatX - t2 * 3 + 128) % 128;
+      u8g2.drawPixel(tx + bx, 42 + by);
+    }
 
-    // Bottom fitness metrics
-    u8g2.drawHLine(0, 48 + by, 128);
+    // Bottom: BPM + sec bar
+    u8g2.drawHLine(0, 51 + by, 128);
+    bool pulse2 = (ms % 850) < 170;
     u8g2.setFont(F_TINY);
-    bool pulse = (ms % 800) < 200;
-    char bpmBuf[24];
-    snprintf(bpmBuf, sizeof(bpmBuf), "%s 72 BPM", pulse ? "<3" : " -");
-    u8g2.drawStr(4 + bx, 61 + by, bpmBuf);
-    drawBar(66 + bx, 54 + by, 58, 5, t.tm_sec / 60.0f);
+    char bpm2[14]; snprintf(bpm2, sizeof(bpm2), "%s 72 BPM", pulse2 ? "<3" : " -");
+    u8g2.drawStr(2 + bx, 62 + by, bpm2);
+    // sec progress right
+    int sp = (t.tm_sec * 56) / 60;
+    drawBar(70 + bx, 54 + by, 56, 6, t.tm_sec / 60.0f);
+    char sBuf[6]; snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    textRight(126 + bx, 62 + by, sBuf);
 
   } else if (!strcmp(style, "orbit")) {
-    // ------------------------------------------------------------- 4. Planetary Orbit (Galaxy Watch)
-    int cx = 28 + bx, cy = 32 + by;
-    // Central Celestial Globe
-    u8g2.drawCircle(cx, cy, 14);
-    u8g2.drawEllipse(cx, cy, 14, 5);
-    u8g2.drawLine(cx, cy - 14, cx, cy + 14);
+    // ============================================================= 4. PLANETARY ORBIT
+    int cx = 30 + bx, cy = 32 + by;
 
-    // Orbiting Satellite / Moon
-    float a = millis() * 0.0022f;
-    int ox = cx + lroundf(cosf(a) * 23);
-    int oy = cy + lroundf(sinf(a) * 9);
+    // Globe with meridians & parallels
+    u8g2.drawCircle(cx, cy, 15);
+    // Meridian lines
+    u8g2.drawEllipse(cx, cy, 10, 15);  // main ellipse
+    u8g2.drawEllipse(cx, cy, 5, 15);   // inner ellipse
+    // Equator
+    u8g2.drawHLine(cx - 15, cy, 31);
+    // Tropic lines (dashed-ish using pixels)
+    for (int px = cx - 12; px <= cx + 12; px += 3)
+      u8g2.drawPixel(px, cy - 7);
+    for (int px = cx - 12; px <= cx + 12; px += 3)
+      u8g2.drawPixel(px, cy + 7);
+
+    // Elliptical orbit track (dashed)
+    for (float a = 0; a < 6.2832f; a += 0.25f)
+      u8g2.drawPixel(cx + lroundf(cosf(a) * 24), cy + lroundf(sinf(a) * 10));
+
+    // Orbiting moon — full 3D-ish orbit
+    float oa = millis() * 0.0020f;
+    int ox = cx + lroundf(cosf(oa) * 24);
+    int oy = cy + lroundf(sinf(oa) * 10);
     u8g2.drawDisc(ox, oy, 2);
 
-    // Stacked modern time on right
-    int h = t.tm_hour;
-    if (!h24) { h %= 12; if (!h) h = 12; }
-    char hStr[6], mStr[6];
-    snprintf(hStr, sizeof(hStr), "%02d", h);
-    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+    // Right: stacked HH / MM with separator
+    int h3 = t.tm_hour;
+    if (!h24) { h3 %= 12; if (!h3) h3 = 12; }
+    char hStr2[4], mStr2[4];
+    snprintf(hStr2, sizeof(hStr2), "%02d", h3);
+    snprintf(mStr2, sizeof(mStr2), "%02d", t.tm_min);
 
     u8g2.setFont(F_NUM24);
-    drawDigits(1, hStr, 74 + bx, 27 + by, 24, anim);
-    drawDigits(2, mStr, 74 + bx, 56 + by, 24, anim);
+    drawDigits(1, hStr2, 72 + bx, 28 + by, 24, anim);
+    u8g2.drawHLine(72 + bx, 32 + by, 54); // separator
+    drawDigits(2, mStr2, 72 + bx, 56 + by, 24, anim);
 
-    char sBuf[12];
-    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    // Day label + seconds
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(108 + bx, 56 + by, sBuf);
-    u8g2.drawUTF8(74 + bx, 8 + by, WDAY[t.tm_wday]);
+    u8g2.drawUTF8(72 + bx, 7 + by, WDAY[t.tm_wday]);
+    char sBuf[6]; snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    textRight(126 + bx, 62 + by, sBuf);
 
   } else if (!strcmp(style, "chrono")) {
-    // ------------------------------------------------------------- 5. Chronograph Pro (Luxury Smartwatch)
+    // ============================================================= 5. CHRONOGRAPH PRO
     int cx = 64 + bx, cy = 32 + by, r = 30;
+
+    // Outer ring
     u8g2.drawCircle(cx, cy, r);
 
-    // 60 tick marks
-    for (int mark = 0; mark < 60; mark += 5) {
-      float q = mark * 6.2831853f / 60.0f - 1.5708f;
-      int inner = (mark % 15 == 0) ? 24 : 26;
+    // Tick marks: every 5° (12 marks), major every 15° (4 marks)
+    for (int mark = 0; mark < 60; mark++) {
+      if (mark % 5 != 0) continue;
+      float q = mark * 6.2832f / 60.0f - 1.5708f;
+      int inner = (mark % 15 == 0) ? 22 : 25;
       u8g2.drawLine(cx + lroundf(cosf(q) * inner), cy + lroundf(sinf(q) * inner),
-                     cx + lroundf(cosf(q) * 28), cy + lroundf(sinf(q) * 28));
+                    cx + lroundf(cosf(q) * 29), cy + lroundf(sinf(q) * 29));
+      // Extra thickness for major ticks
+      if (mark % 15 == 0) {
+        u8g2.drawLine(cx + lroundf(cosf(q) * (inner-1)), cy + lroundf(sinf(q) * (inner-1)),
+                      cx + lroundf(cosf(q) * 29), cy + lroundf(sinf(q) * 29));
+      }
     }
 
-    // Dual Subdials
-    // Left subdial (Seconds sweep)
-    int lx = 48 + bx, ly = 32 + by, lr = 7;
-    u8g2.drawCircle(lx, ly, lr);
-    float sAng = t.tm_sec * 6.2831853f / 60.0f - 1.5708f;
-    u8g2.drawLine(lx, ly, lx + lroundf(cosf(sAng) * 5), ly + lroundf(sinf(sAng) * 5));
+    // Left subdial: seconds sweep (r=8, pos left of center)
+    int lx = 44 + bx, ly = 32 + by;
+    u8g2.drawCircle(lx, ly, 8);
+    float sAng = t.tm_sec * 6.2832f / 60.0f - 1.5708f;
+    u8g2.drawLine(lx, ly, lx + lroundf(cosf(sAng) * 6), ly + lroundf(sinf(sAng) * 6));
+    u8g2.drawDisc(lx, ly, 1);
 
-    // Right subdial (Day of week)
-    int rx = 80 + bx, ry = 32 + by, rr = 7;
-    u8g2.drawCircle(rx, ry, rr);
-    float dAng = t.tm_wday * 6.2831853f / 7.0f - 1.5708f;
-    u8g2.drawLine(rx, ry, rx + lroundf(cosf(dAng) * 5), ry + lroundf(sinf(dAng) * 5));
+    // Right subdial: day-of-week pointer
+    int rsx = 84 + bx, rsy = 32 + by;
+    u8g2.drawCircle(rsx, rsy, 8);
+    float dAng = t.tm_wday * 6.2832f / 7.0f - 1.5708f;
+    u8g2.drawLine(rsx, rsy, rsx + lroundf(cosf(dAng) * 6), rsy + lroundf(sinf(dAng) * 6));
+    u8g2.drawDisc(rsx, rsy, 1);
 
-    // Main Hands
-    float sec = t.tm_sec * 6.2831853f / 60.0f - 1.5708f;
-    float minu = (t.tm_min + t.tm_sec / 60.0f) * 6.2831853f / 60.0f - 1.5708f;
-    float hour = ((t.tm_hour % 12) + t.tm_min / 60.0f) * 6.2831853f / 12.0f - 1.5708f;
+    // Main hands (smooth motion)
+    float secA  = (t.tm_sec + (millis() % 1000) * 0.001f) * 6.2832f / 60.0f - 1.5708f;
+    float minuA = (t.tm_min + t.tm_sec / 60.0f) * 6.2832f / 60.0f - 1.5708f;
+    float hourA = ((t.tm_hour % 12) + t.tm_min / 60.0f) * 6.2832f / 12.0f - 1.5708f;
 
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(hour) * 13), cy + lroundf(sinf(hour) * 13));
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(minu) * 21), cy + lroundf(sinf(minu) * 21));
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(sec) * 25), cy + lroundf(sinf(sec) * 25));
-    u8g2.drawLine(cx, cy, cx - lroundf(cosf(sec) * 6), cy - lroundf(sinf(sec) * 6));
+    // Hour: thick (3 lines)
+    for (int d = -1; d <= 1; d++)
+      u8g2.drawLine(cx + d, cy, cx + lroundf(cosf(hourA) * 14) + d, cy + lroundf(sinf(hourA) * 14));
+    // Minute
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(minuA) * 22), cy + lroundf(sinf(minuA) * 22));
+    // Second (thin + counterweight)
+    u8g2.drawLine(cx, cy, cx + lroundf(cosf(secA) * 26), cy + lroundf(sinf(secA) * 26));
+    u8g2.drawLine(cx, cy, cx - lroundf(cosf(secA) * 7), cy - lroundf(sinf(secA) * 7));
+    // Centre disc
     u8g2.drawDisc(cx, cy, 2);
 
-    // Inset digital time at 12 o'clock
+    // Digital time inset (12 o'clock area)
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(cx - 10, cy - 14, hm);
+    int tw4 = u8g2.getStrWidth(hm);
+    u8g2.drawStr(cx - tw4 / 2, cy - 15 + by, hm);
 
-    // Inset date window at 6 o'clock
-    char dStr[6];
-    snprintf(dStr, sizeof(dStr), "%d", t.tm_mday);
-    u8g2.drawStr(cx - 3, cy + 22, dStr);
+    // Date at 6 o'clock
+    char dStr[6]; snprintf(dStr, sizeof(dStr), "%d", t.tm_mday);
+    u8g2.drawStr(cx - 3, cy + 23, dStr);
 
   } else if (!strcmp(style, "stacked")) {
-    // ------------------------------------------------------------- 6. Nike Typography (Orbiting Second)
-    int h = t.tm_hour;
-    if (!h24) { h %= 12; if (!h) h = 12; }
-    char hStr[6], mStr[6];
-    snprintf(hStr, sizeof(hStr), "%02d", h);
-    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+    // ============================================================= 6. STACKED — Nike Typeface
+    // Thin vertical separator
+    u8g2.drawVLine(44 + bx, 0, 64);
 
-    // Stacked Giant Numbers
-    u8g2.setFont(F_NUM32);
-    drawDigits(1, hStr, 48 + bx, 30 + by, 32, anim);
-    drawDigits(2, mStr, 48 + bx, 61 + by, 32, anim);
-
-    // Left Column Info
+    // Left column: day, date, month, temp
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(4 + bx, 12 + by, WDAY[t.tm_wday]);
-    char dBuf[8];
-    snprintf(dBuf, sizeof(dBuf), "%d", t.tm_mday);
+    u8g2.drawUTF8(2 + bx, 10 + by, WDAY[t.tm_wday]);
+    char dBuf[4]; snprintf(dBuf, sizeof(dBuf), "%d", t.tm_mday);
     u8g2.setFont(F_HELV14);
-    u8g2.drawStr(4 + bx, 28 + by, dBuf);
+    u8g2.drawStr(2 + bx, 28 + by, dBuf);
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(4 + bx, 42 + by, MONTH[t.tm_mon]);
+    u8g2.drawUTF8(2 + bx, 42 + by, MONTH[t.tm_mon]);
     if (homeW.ok) {
-      char tb[8];
-      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
-      u8g2.drawStr(4 + bx, 58 + by, tb);
+      char tb[8]; snprintf(tb, sizeof(tb), "%d\xc2\xb0", (int)roundf(homeW.temp));
+      u8g2.drawUTF8(2 + bx, 59 + by, tb);
     } else {
-      u8g2.drawStr(4 + bx, 58 + by, ap);
+      u8g2.drawStr(2 + bx, 59 + by, ap);
     }
 
-    // Orbiting perimeter second dot gliding continuously along border
-    int perimPos = (t.tm_sec * 380 + (millis() % 1000) * 380 / 1000) / 60;
-    int ox = 0, oy = 0;
-    if (perimPos < 127) {
-      ox = perimPos; oy = 0;
-    } else if (perimPos < 190) {
-      ox = 127; oy = perimPos - 127;
-    } else if (perimPos < 317) {
-      ox = 127 - (perimPos - 190); oy = 63;
-    } else {
-      ox = 0; oy = 63 - (perimPos - 317);
+    // Right: HH / MM stacked in F_NUM32
+    int h4 = t.tm_hour;
+    if (!h24) { h4 %= 12; if (!h4) h4 = 12; }
+    char hStr3[4], mStr3[4];
+    snprintf(hStr3, sizeof(hStr3), "%02d", h4);
+    snprintf(mStr3, sizeof(mStr3), "%02d", t.tm_min);
+
+    u8g2.setFont(F_NUM32);
+    drawDigits(1, hStr3, 50 + bx, 30 + by, 32, anim);
+    u8g2.drawHLine(50 + bx, 33 + by, 76);  // separator between HH and MM
+    drawDigits(2, mStr3, 50 + bx, 62 + by, 32, anim);
+
+    // Blinking colon between HH and MM at the separator
+    if ((millis() / 500) % 2 == 0) {
+      u8g2.drawBox(47 + bx, 28 + by, 2, 2);
+      u8g2.drawBox(47 + bx, 35 + by, 2, 2);
     }
-    u8g2.drawDisc(ox, oy, 1);
+
+    // Orbiting second dot (2px disc) along perimeter
+    int perim = (t.tm_sec * 380 + (millis() % 1000) * 380 / 1000) / 60;
+    int odx, ody;
+    if (perim < 127)      { odx = perim; ody = 0; }
+    else if (perim < 190) { odx = 127; ody = perim - 127; }
+    else if (perim < 317) { odx = 127 - (perim - 190); ody = 63; }
+    else                  { odx = 0; ody = 63 - (perim - 317); }
+    u8g2.drawDisc(odx + bx, ody + by, 2);
 
   } else if (!strcmp(style, "cube")) {
-    // ------------------------------------------------------------- 7. 3D Wireframe Cube (NWatch)
-    float ax = millis() * 0.00085f, ay = millis() * 0.00105f, az = millis() * 0.00065f;
-    float cax = cosf(ax), sax = sinf(ax), cay = cosf(ay), say = sinf(ay), caz = cosf(az), saz = sinf(az);
-    int sx[8], sy[8];
+    // ============================================================= 7. 3D WIREFRAME CUBE
+    float ax5 = millis() * 0.00085f, ay5 = millis() * 0.00110f, az5 = millis() * 0.00065f;
+    float cax = cosf(ax5), sax = sinf(ax5), cay = cosf(ay5), say = sinf(ay5), caz = cosf(az5), saz = sinf(az5);
+    int sx5[8], sy5[8];
     for (int i = 0; i < 8; i++) {
-      float x = (i & 1) ? 1.0f : -1.0f, y = (i & 2) ? 1.0f : -1.0f, z = (i & 4) ? 1.0f : -1.0f;
-      float y1 = y * cax - z * sax, z1 = y * sax + z * cax;
-      float x2 = x * cay + z1 * say, z2 = -x * say + z1 * cay;
+      float xv = (i & 1) ? 1.0f : -1.0f, yv = (i & 2) ? 1.0f : -1.0f, zv = (i & 4) ? 1.0f : -1.0f;
+      float y1 = yv * cax - zv * sax, z1 = yv * sax + zv * cax;
+      float x2 = xv * cay + z1 * say, z2 = -xv * say + z1 * cay;
       float x3 = x2 * caz - y1 * saz, y3 = x2 * saz + y1 * caz;
-      float scale = 54.0f / (z2 + 4.0f);
-      sx[i] = 34 + bx + lroundf(x3 * scale);
-      sy[i] = 32 + by + lroundf(y3 * scale);
+      float scale = 58.0f / (z2 + 4.0f);
+      sx5[i] = 32 + bx + lroundf(x3 * scale);
+      sy5[i] = 32 + by + lroundf(y3 * scale);
     }
     for (int i = 0; i < 8; i++) {
       for (int bit = 0; bit < 3; bit++) {
         int j = i ^ (1 << bit);
-        if (i < j) u8g2.drawLine(sx[i], sy[i], sx[j], sy[j]);
+        if (i < j) u8g2.drawLine(sx5[i], sy5[i], sx5[j], sy5[j]);
       }
     }
 
-    int h = t.tm_hour;
-    if (!h24) { h %= 12; if (!h) h = 12; }
-    char hStr[6], mStr[6];
-    snprintf(hStr, sizeof(hStr), "%02d", h);
-    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
-    u8g2.setFont(F_NUM24);
-    drawDigits(1, hStr, 78 + bx, 27 + by, 24, anim);
-    drawDigits(2, mStr, 78 + bx, 56 + by, 24, anim);
+    // Vertices as small dots for crispness
+    for (int i = 0; i < 8; i++) u8g2.drawPixel(sx5[i], sy5[i]);
 
-    char sBuf[12];
-    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
+    // Right panel: clean time display
+    int h5 = t.tm_hour;
+    if (!h24) { h5 %= 12; if (!h5) h5 = 12; }
+    char hStr4[4], mStr4[4];
+    snprintf(hStr4, sizeof(hStr4), "%02d", h5);
+    snprintf(mStr4, sizeof(mStr4), "%02d", t.tm_min);
+
+    u8g2.drawVLine(70 + bx, 0, 64);
+    u8g2.setFont(F_NUM24);
+    drawDigits(1, hStr4, 76 + bx, 27 + by, 24, anim);
+    u8g2.drawHLine(76 + bx, 30 + by, 50);
+    drawDigits(2, mStr4, 76 + bx, 56 + by, 24, anim);
+
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(112 + bx, 56 + by, sBuf);
-    u8g2.drawUTF8(2 + bx, 8 + by, WDAY[t.tm_wday]);
+    u8g2.drawUTF8(74 + bx, 7 + by, WDAY[t.tm_wday]);
+    char sBuf2[6]; snprintf(sBuf2, sizeof(sBuf2), ":%02d", t.tm_sec);
+    textRight(126 + bx, 62 + by, sBuf2);
+
+    // Mini arc showing seconds progress (bottom right)
+    float sFr5 = t.tm_sec / 60.0f;
+    float sE5 = sFr5 * 6.2832f - 1.5708f;
+    int arcCx = 113 + bx, arcCy = 44 + by, arcR = 7;
+    u8g2.drawCircle(arcCx, arcCy, arcR);
+    for (float a = -1.5708f; a < sE5 && a < 4.7124f; a += 0.18f)
+      u8g2.drawPixel(arcCx + lroundf(cosf(a) * arcR), arcCy + lroundf(sinf(a) * arcR));
 
   } else if (!strcmp(style, "matrix")) {
-    // ------------------------------------------------------------- 8. Matrix Rain (Cyberpunk Code)
-    uint32_t now = millis();
-    static const int8_t laneX[10] = {4, 16, 28, 42, 54, 68, 80, 94, 106, 118};
-    static const uint8_t laneSpeed[10] = {29, 53, 37, 71, 43, 31, 67, 47, 83, 59};
-    for (int lane = 0; lane < 10; lane++) {
-      uint32_t tick = now / laneSpeed[lane];
-      int head = (int)(tick * 3) % 80 - 16;
-      for (int n = 0; n < 6; n++) {
-        int y = head - n * 7 + by;
-        if (y >= 0 && y < 64) {
-          int x = laneX[lane] + bx;
-          if (n == 0) u8g2.drawBox(x, y, 2, 3);
-          else u8g2.drawPixel(x, y);
-        }
+    // ============================================================= 8. MATRIX RAIN
+    uint32_t now6 = millis();
+    static const int8_t laneX[16]    = {2,10,18,27,35,43,52,60,68,76,85,93,101,110,118,126};
+    static const uint8_t laneSpd[16] = {29,53,37,71,43,31,67,47,83,59,41,73,37,61,53,43};
+    for (int lane = 0; lane < 16; lane++) {
+      uint32_t tick = now6 / laneSpd[lane];
+      int head6 = (int)(tick * 3) % 90 - 20;
+      for (int n = 0; n < 8; n++) {
+        int y6 = head6 - n * 7 + by;
+        if (y6 < 0 || y6 >= 64) continue;
+        int x6 = laneX[lane] + bx;
+        if (n == 0)      u8g2.drawBox(x6, y6, 3, 4);  // bright head
+        else if (n == 1) u8g2.drawBox(x6, y6, 2, 2);  // secondary
+        else             u8g2.drawPixel(x6, y6);        // tail
       }
     }
 
+    // Time plate with double-border effect
     u8g2.setFont(F_NUM24);
-    int tw = u8g2.getStrWidth(hm);
-    int plateW = tw + 28;
-    int plateX = (128 - plateW) / 2 + bx;
-    u8g2.setDrawColor(0);
-    u8g2.drawRBox(plateX - 2, 14 + by, plateW + 4, 34, 3);
-    u8g2.setDrawColor(1);
-    u8g2.drawRFrame(plateX - 2, 14 + by, plateW + 4, 34, 3);
-
+    int tw5 = u8g2.getStrWidth(hm);
+    int plateW = tw5 + 24, plateX = (128 - plateW) / 2 + bx;
+    u8g2.setDrawColor(0); u8g2.drawRBox(plateX - 3, 13 + by, plateW + 6, 36, 4); u8g2.setDrawColor(1);
+    u8g2.drawRFrame(plateX - 3, 13 + by, plateW + 6, 36, 4);
+    u8g2.drawRFrame(plateX - 1, 15 + by, plateW + 2, 32, 3);  // inner border
     drawDigits(0, hm, plateX + 3, 40 + by, 24, anim);
-    u8g2.setFont(F_SMALL);
-    char secStr[6];
-    snprintf(secStr, sizeof(secStr), "%02d", t.tm_sec);
-    u8g2.drawStr(plateX + tw + 6, 28 + by, secStr);
-    u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(plateX + tw + 6, 38 + by, ap);
 
+    // Seconds and date in plate corners
     u8g2.setFont(F_TINY);
+    char secStr6[6]; snprintf(secStr6, sizeof(secStr6), "%02d", t.tm_sec);
+    u8g2.drawStr(plateX + tw5 + 5, 27 + by, secStr6);
     textCenter(60 + by, date);
 
   } else if (!strcmp(style, "scan")) {
-    // ------------------------------------------------------------- 9. Sci-Fi Scan (Radar Sweep)
-    uint32_t now = millis();
-    int scanY = 14 + (now / 40) % 36;
-    for (int y = 14; y < 50; y += 4) {
-      if (abs(y - scanY) <= 3) u8g2.drawHLine(0, y + by, 128);
-      else {
-        for (int x = 0; x < 128; x += 6) u8g2.drawPixel(x, y + by);
+    // ============================================================= 9. RADAR SCAN
+    uint32_t now7 = millis();
+    int rcx = 32 + bx, rcy = 32 + by, rr = 28;
+
+    // Circle + cross-hair
+    u8g2.drawCircle(rcx, rcy, rr);
+    u8g2.drawCircle(rcx, rcy, rr / 2);
+    u8g2.drawPixel(rcx, rcy);
+    for (int i = 0; i < rr; i += 4) {
+      u8g2.drawPixel(rcx + i, rcy);
+      u8g2.drawPixel(rcx - i, rcy);
+      u8g2.drawPixel(rcx, rcy + i);
+      u8g2.drawPixel(rcx, rcy - i);
+    }
+
+    // Rotating sweep line with fading trail
+    float sweepA = (now7 % 3000) * 6.2832f / 3000.0f - 1.5708f;
+    for (int seg = 0; seg < 5; seg++) {
+      float ta = sweepA - seg * 0.25f;
+      if (seg > 0) {
+        // Draw fading trail pixels
+        for (int d = 4; d < rr - 2; d += 2)
+          u8g2.drawPixel(rcx + lroundf(cosf(ta) * d), rcy + lroundf(sinf(ta) * d));
+      } else {
+        // Bright main sweep line
+        u8g2.drawLine(rcx, rcy, rcx + lroundf(cosf(ta) * (rr - 1)), rcy + lroundf(sinf(ta) * (rr - 1)));
       }
     }
 
-    u8g2.setFont(F_NUM24);
-    int tw = u8g2.getStrWidth(hm);
-    int plateW = tw + 18;
-    int plateX = (128 - plateW) / 2 + bx;
-    u8g2.setDrawColor(0);
-    u8g2.drawRBox(plateX - 2, 17 + by, plateW + 4, 30, 2);
-    u8g2.setDrawColor(1);
-    u8g2.drawRFrame(plateX - 2, 17 + by, plateW + 4, 30, 2);
-    drawDigits(0, hm, plateX + 3, 39 + by, 24, anim);
+    // Ping dot on radar edge moving with seconds
+    float pingA = t.tm_sec * 6.2832f / 60.0f - 1.5708f;
+    u8g2.drawDisc(rcx + lroundf(cosf(pingA) * (rr - 3)), rcy + lroundf(sinf(pingA) * (rr - 3)), 2);
 
-    u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(4 + bx, 8 + by, date);
-
-    char sBuf[6];
-    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
-    u8g2.setFont(F_SMALL);
-    textRight(124 + bx, 8 + by, sBuf);
-
-    u8g2.drawHLine(0, 52 + by, 128);
+    // Right panel: time + date
+    u8g2.drawVLine(68 + bx, 0, 64);
+    u8g2.setFont(F_HELV14);
+    u8g2.drawStr(72 + bx, 24 + by, hm);
     u8g2.setFont(F_TINY);
-    textCenter(61 + by, "RADAR SCAN ACTIVE");
+    u8g2.drawUTF8(72 + bx, 8 + by, date);
+    char sBuf3[6]; snprintf(sBuf3, sizeof(sBuf3), ":%02d", t.tm_sec);
+    u8g2.drawStr(72 + bx, 36 + by, sBuf3);
+    u8g2.drawHLine(72 + bx, 39 + by, 55);
+    u8g2.drawStr(72 + bx, 50 + by, "RADAR");
+    u8g2.drawStr(72 + bx, 60 + by, "ACTIVE");
 
   } else if (!strcmp(style, "data")) {
-    // ------------------------------------------------------------- 10. Cyberpunk Data (Tech HUD)
+    // ============================================================= 10. CYBERPUNK DATA HUD
     u8g2.setFont(F_TINY);
+    // Header line
     u8g2.drawStr(2 + bx, 7 + by, "ESP32-C3 SUPER MINI");
     if (netOnline()) {
-      char rssiBuf[16];
-      snprintf(rssiBuf, sizeof(rssiBuf), "SIG %ddBm", netRSSI());
-      textRight(126 + bx, 7 + by, rssiBuf);
-    } else {
-      textRight(126 + bx, 7 + by, "OFFLINE");
-    }
+      char rb[16]; snprintf(rb, sizeof(rb), "%ddBm", netRSSI());
+      textRight(126 + bx, 7 + by, rb);
+    } else textRight(126 + bx, 7 + by, "OFFLINE");
     u8g2.drawHLine(0, 9 + by, 128);
 
-    char timeLine[24];
-    snprintf(timeLine, sizeof(timeLine), "TIME  %02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
+    // Terminal lines
     u8g2.setFont(F_SMALL);
-    u8g2.drawStr(2 + bx, 21 + by, timeLine);
+    char tl[28]; snprintf(tl, sizeof(tl), ">> %02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
+    u8g2.drawStr(2 + bx, 20 + by, tl);
 
-    char dateLine[28];
-    snprintf(dateLine, sizeof(dateLine), "DATE  %s %02d/%02d/%04d", WDAY[t.tm_wday], t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
-    u8g2.drawStr(2 + bx, 33 + by, dateLine);
+    char dl[32]; snprintf(dl, sizeof(dl), ">> %s %02d/%02d/%04d",
+      WDAY[t.tm_wday], t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
+    u8g2.drawStr(2 + bx, 31 + by, dl);
 
     if (homeW.ok) {
-      char wLine[32];
+      char wl[36];
       const char* tu = (cfg["units"] == "imperial") ? "F" : "C";
-      snprintf(wLine, sizeof(wLine), "ENV   %d%s  %s", (int)roundf(homeW.temp), tu, wmoText(homeW.code));
-      u8g2.drawStr(2 + bx, 45 + by, wLine);
-    } else {
-      u8g2.drawStr(2 + bx, 45 + by, "ENV   WAITING FOR SYNC");
-    }
+      snprintf(wl, sizeof(wl), ">> %d\xc2\xb0%s  %s", (int)roundf(homeW.temp), tu, wmoText(homeW.code));
+      u8g2.drawUTF8(2 + bx, 42 + by, wl);
+    } else u8g2.drawStr(2 + bx, 42 + by, ">> WEATHER OFFLINE");
 
-    u8g2.drawHLine(0, 49 + by, 128);
-    char memLine[28];
-    snprintf(memLine, sizeof(memLine), "FREE  %uKB", (unsigned)(ESP.getFreeHeap() / 1024));
+    // Blinking cursor
+    bool cur = (millis() % 600) < 300;
+    if (cur) {
+      u8g2.setFont(F_TINY);
+      u8g2.drawStr(2 + bx, 51 + by, "_");
+    }
+    u8g2.drawHLine(0, 51 + by, 128);
+
+    // Status bar: heap + seconds loading bar
+    char ml[20]; snprintf(ml, sizeof(ml), "MEM %uK", (unsigned)(ESP.getFreeHeap() / 1024));
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(2 + bx, 61 + by, memLine);
-    drawBar(70 + bx, 54 + by, 56, 6, t.tm_sec / 60.0f);
+    u8g2.drawStr(2 + bx, 62 + by, ml);
+    // Seconds bar on right
+    drawBar(60 + bx, 55 + by, 66, 6, t.tm_sec / 60.0f);
+    char sp2[6]; snprintf(sp2, sizeof(sp2), "%02ds", t.tm_sec);
+    // show percent inside bar area conceptually
+    u8g2.drawStr(60 + bx + 68, 62 + by, sp2);  // just past bar
 
   } else if (!strcmp(style, "normal")) {
-    // ------------------------------------------------------------- 11. Classic Ticker (Zak Kemble)
+    // ============================================================= 11. CLEAN CLASSIC
+    // Top: bold day + date
+    u8g2.setFont(F_BOLD);
+    u8g2.drawUTF8(2 + bx, 10 + by, WDAY_LONG[t.tm_wday]);
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(4 + bx, 8 + by, date);
+    char dLine[20]; snprintf(dLine, sizeof(dLine), "%d %s", t.tm_mday, MONTH_LONG[t.tm_mon]);
+    textRight(126 + bx, 10 + by, dLine);
+    u8g2.drawHLine(0, 12 + by, 128);
 
-    if (homeW.ok) {
-      char tb[10];
-      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
-      textRight(124 + bx, 8 + by, tb);
-    } else {
-      textRight(124 + bx, 8 + by, ap);
+    // Centre: huge time
+    int h6 = t.tm_hour;
+    if (!h24) { h6 %= 12; if (!h6) h6 = 12; }
+    char hStr5[4], mStr5[4];
+    snprintf(hStr5, sizeof(hStr5), "%02d", h6);
+    snprintf(mStr5, sizeof(mStr5), "%02d", t.tm_min);
+    u8g2.setFont(F_NUM24);
+    int hw6 = u8g2.getStrWidth(hStr5), mw6 = u8g2.getStrWidth(mStr5);
+    int cX6 = (128 - hw6 - 4 - mw6) / 2 + bx;
+    drawDigits(0, hStr5, cX6,          40 + by, 24, anim);
+    if ((millis() / 500) % 2 == 0) {
+      u8g2.drawBox(cX6 + hw6, 25 + by, 2, 2);
+      u8g2.drawBox(cX6 + hw6, 32 + by, 2, 2);
     }
-    u8g2.drawHLine(0, 11 + by, 128);
+    drawDigits(1, mStr5, cX6 + hw6 + 4, 40 + by, 24, anim);
 
-    char sBuf[6];
-    snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
-    u8g2.setFont(F_NUM24);
-    int tw = u8g2.getStrWidth(hm);
+    // Seconds tag right-aligned
     u8g2.setFont(F_NUM16);
-    int sw = u8g2.getStrWidth(sBuf);
-    int startX = (128 - (tw + sw + 2)) / 2 + bx;
+    char sBuf4[6]; snprintf(sBuf4, sizeof(sBuf4), ":%02d", t.tm_sec);
+    textRight(126 + bx, 40 + by, sBuf4);
 
-    u8g2.setFont(F_NUM24);
-    drawDigits(0, hm, startX, 39 + by, 24, anim);
-    u8g2.setFont(F_NUM16);
-    u8g2.drawStr(startX + tw + 2, 39 + by, sBuf);
+    // Bottom separator + info
+    u8g2.drawHLine(0, 44 + by, 128);
 
-    u8g2.drawHLine(0, 48 + by, 128);
+    // 1px second progress line
+    int secLine6 = (t.tm_sec * 128) / 60;
+    if (secLine6 > 0) u8g2.drawHLine(0, 45 + by, secLine6);
 
     u8g2.setFont(F_TINY);
     if (netOnline()) {
-      char netBuf[24];
-      snprintf(netBuf, sizeof(netBuf), "WiFi %ddBm", netRSSI());
-      u8g2.drawStr(4 + bx, 59 + by, netBuf);
-    } else {
-      u8g2.drawStr(4 + bx, 59 + by, "OFFLINE");
-    }
-
-    char statBuf[24];
-    snprintf(statBuf, sizeof(statBuf), "HEAP %uK", (unsigned)(ESP.getFreeHeap() / 1024));
-    textRight(124 + bx, 59 + by, statBuf);
-
-    int secProg = (t.tm_sec * 128) / 60;
-    if (secProg > 0) u8g2.drawHLine(0, 50 + by, secProg);
-
-  } else {
-    // ------------------------------------------------------------- 12. Modern Big Time
-    int h = t.tm_hour;
-    if (!h24) { h %= 12; if (!h) h = 12; }
-    char b[8];
-    snprintf(b, sizeof(b), h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
-
-    u8g2.setFont(F_NUM42);
-    int w = u8g2.getStrWidth(b);
-    int x = (128 - w) / 2 + bx;
-    if (x < 0) x = 0;
-    drawDigits(0, b, x, 46 + by, 42, anim);
-
-    int sw = (t.tm_sec * 128) / 60;
-    if (sw > 0) u8g2.drawHLine(0, 50 + by, sw);
-
-    char fullDate[36];
-    u8g2.setFont(F_MED);
-    if (!h24) {
-      snprintf(fullDate, sizeof(fullDate), "%s %d %s  %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], ap);
-      if (u8g2.getStrWidth(fullDate) > 126) {
-        snprintf(fullDate, sizeof(fullDate), "%s, %d %s  %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], ap);
-      }
-    } else {
-      snprintf(fullDate, sizeof(fullDate), "%s %d %s", WDAY_LONG[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-      if (u8g2.getStrWidth(fullDate) > 126) {
-        snprintf(fullDate, sizeof(fullDate), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-      }
-    }
-    textCenter(62 + by, fullDate);
+      char nb[20]; snprintf(nb, sizeof(nb), "WiFi %ddBm", netRSSI());
+      u8g2.drawStr(2 + bx, 60 + by, nb);
+    } else u8g2.drawStr(2 + bx, 60 + by, "OFFLINE");
 
     if (homeW.ok) {
-      char tb[10];
-      snprintf(tb, sizeof(tb), "%d°", (int)roundf(homeW.temp));
-      u8g2.setFont(F_TINY);
-      u8g2.drawUTF8(1 + bx, 6 + by, tb);
+      char tb[8]; snprintf(tb, sizeof(tb), "%d\xc2\xb0", (int)roundf(homeW.temp));
+      textRight(126 + bx, 60 + by, tb);
+    } else {
+      char hb[12]; snprintf(hb, sizeof(hb), "HEAP %uK", (unsigned)(ESP.getFreeHeap()/1024));
+      textRight(126 + bx, 60 + by, hb);
     }
+
+  } else {
+    // ============================================================= 12. BIG TIME
+    int h7 = t.tm_hour;
+    if (!h24) { h7 %= 12; if (!h7) h7 = 12; }
+    char hStr6[4], mStr6[4];
+    snprintf(hStr6, sizeof(hStr6), "%02d", h7);
+    snprintf(mStr6, sizeof(mStr6), "%02d", t.tm_min);
+
+    // Giant digits — draw HH and MM separately to allow animated transitions
+    u8g2.setFont(F_NUM42);
+    int hw7 = u8g2.getStrWidth(hStr6), mw7 = u8g2.getStrWidth(mStr6);
+    int gap7 = 8;
+    int cX7 = (128 - hw7 - gap7 - mw7) / 2 + bx;
+    if (cX7 < 0) cX7 = 0;
+    drawDigits(0, hStr6, cX7,            48 + by, 42, anim);
+    drawDigits(1, mStr6, cX7 + hw7 + gap7, 48 + by, 42, anim);
+
+    // Blinking colon
+    if ((millis() / 500) % 2 == 0) {
+      u8g2.drawBox(cX7 + hw7 + 1, 20 + by, 3, 3);
+      u8g2.drawBox(cX7 + hw7 + 1, 33 + by, 3, 3);
+    }
+
+    // AM/PM badge (12h only) — top right corner
+    if (!h24) {
+      u8g2.setFont(F_TINY);
+      u8g2.drawRFrame(108 + bx, 1 + by, 18, 9, 2);
+      u8g2.drawStr(111 + bx, 8 + by, ap);
+    }
+
+    // Weather / temp — top left
+    if (homeW.ok) {
+      char tb2[8]; snprintf(tb2, sizeof(tb2), "%d\xc2\xb0", (int)roundf(homeW.temp));
+      u8g2.setFont(F_TINY);
+      u8g2.drawUTF8(2 + bx, 8 + by, tb2);
+    }
+
+    // Thin separator line + date + dotted second progress
+    u8g2.drawHLine(0, 51 + by, 128);
+    char fullDate[36];
+    snprintf(fullDate, sizeof(fullDate), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
+    u8g2.setFont(F_MED);
+    textCenter(62 + by, fullDate);
+
+    // Dotted seconds progress at very bottom
+    int dotSec = (t.tm_sec * 128) / 60;
+    for (int dp = 0; dp < dotSec; dp += 3) u8g2.drawPixel(dp + bx, 63 + by);
   }
 }
 
