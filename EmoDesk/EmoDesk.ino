@@ -150,8 +150,10 @@ void loop() {
   cardsLoop();
 
   uint32_t now = millis();
-  if (now - lastFrame >= powerFrameMs()) {
-    lastFrame = now;
+  uint16_t frameMs = powerFrameMs();
+  if (now - lastFrame >= frameMs) {
+    if (now - lastFrame > frameMs * 2) lastFrame = now;
+    else lastFrame += frameMs;
     render();
   }
   delay(!displayIsOn() ? 20 : (powerSaver() ? 6 : 1));   // longer idle slices let the CPU nap between frames

@@ -1046,12 +1046,12 @@ static void cDateFmt(char* b, size_t n, const char* s, int16_t d) {
 }
 
 static int16_t daysFromDate(const char* s) {
-  if (!s || strlen(s) < 4) return 0;
+  if (!s || strlen(s) < 4) return -9999;
   int yr = atoi(s);
   int mo = 1, dy = 1;
   if (strlen(s) >= 7 && s[4] == '-') mo = atoi(s + 5);
   if (strlen(s) >= 10 && s[7] == '-') dy = atoi(s + 8);
-  if (yr < 1970 || mo < 1 || mo > 12 || dy < 1 || dy > 31) return 0;
+  if (yr < 1970 || mo < 1 || mo > 12 || dy < 1 || dy > 31) return -9999;
 
   struct tm target;
   memset(&target, 0, sizeof(target));
@@ -1066,13 +1066,14 @@ static int16_t daysFromDate(const char* s) {
     double diff = difftime(targetTime, now);
     return (int16_t)round(diff / 86400.0);
   }
-  return 0;
+  return -9999;
 }
 
 static int cFilter(const CinemaData* cd, bool upcoming, int* outIdx) {
   if (!cd || !cd->n) return 0;
   int count = 0;
   for (int i = 0; i < cd->n; i++) {
+    if (cd->items[i].days == -9999) continue;
     // Days >= 0 are Upcoming (Today, Tomorrow, X days). Days < 0 are Released (Past).
     if ((cd->items[i].days >= 0) == upcoming) {
       if (outIdx && count < 8) outIdx[count] = i;
