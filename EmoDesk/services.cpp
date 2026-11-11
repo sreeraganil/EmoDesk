@@ -39,15 +39,24 @@ bool notifActive() { return active; }
 
 void toastDraw() {
   if (millis() > toastUntil) return;
-  u8g2.setFont(F_MED);
-  int w = u8g2.getUTF8Width(toast) + 10;
+  u8g2.setFont(F_SMALL);
+  char buf[40];
+  safeCopy(buf, toast, sizeof(buf));
+  int maxW = 114;
+  int len = strlen(buf);
+  while (len > 3 && u8g2.getUTF8Width(buf) > maxW) {
+    len--;
+    while (len > 0 && ((uint8_t)buf[len] & 0xC0) == 0x80) len--;
+    buf[len] = 0;
+  }
+  int w = u8g2.getUTF8Width(buf) + 12;
   int x = (128 - w) / 2;
   u8g2.setDrawColor(0);
-  u8g2.drawRBox(x - 1, 46, w + 2, 17, 4);
+  u8g2.drawRBox(x - 1, 48, w + 2, 15, 4);
   u8g2.setDrawColor(1);
-  u8g2.drawRBox(x, 47, w, 15, 4);
+  u8g2.drawRBox(x, 49, w, 13, 3);
   u8g2.setDrawColor(0);
-  u8g2.drawUTF8(x + 5, 58, toast);
+  u8g2.drawUTF8(x + 6, 59, buf);
   u8g2.setDrawColor(1);
 }
 
@@ -187,37 +196,43 @@ void notifDraw() {
     }
     return;
   }
-  u8g2.drawRBox(0, 0, 128, 14, 3);
+  u8g2.drawRBox(0, 0, 128, 13, 2);
   u8g2.setDrawColor(0);
-  u8g2.setFont(F_BOLD);
-  u8g2.drawUTF8(5, 11, cur.title);
+  u8g2.setFont(F_SMALL);
+  const char* tag = (cur.kind == NK_ALARM) ? "ALARM" : "ALERT";
   u8g2.setFont(F_TINY);
-  if (cur.kind == NK_ALARM) textRight(124, 11, "ALARM");
-  else textRight(124, 11, "ALERT");
+  int tagW = u8g2.getUTF8Width(tag) + 6;
+  textRight(125, 9, tag);
+  u8g2.setFont(F_SMALL);
+  drawTextFit(4, 10, 122 - tagW, cur.title);
   u8g2.setDrawColor(1);
 
   if (cur.kind == NK_ALARM) {
-    bool inv = (now / 500) % 2;
-    if (inv) u8g2.drawRBox(4, 16, 120, 32, 2);
+    bool inv = (now / 450) % 2;
+    if (inv) u8g2.drawRBox(2, 15, 40, 35, 3);
+    else u8g2.drawRFrame(2, 15, 40, 35, 3);
     u8g2.setDrawColor(inv ? 0 : 1);
-    emoRender(64, 31, 0.48f);
+    emoRender(22, 32, 0.44f);
     u8g2.setDrawColor(1);
     u8g2.setFont(F_MED);
-    textCenter(54, cur.text);
+    wrapText(46, 26, 80, 11, cur.text, 2);
+    u8g2.drawRBox(0, 52, 128, 12, 2);
+    u8g2.setDrawColor(0);
     u8g2.setFont(F_TINY);
-    textCenter(63, "tap: stop   hold: snooze");
+    textCenter(60, "TAP: STOP   |   HOLD: SNOOZE");
+    u8g2.setDrawColor(1);
     return;
   }
-  emoRender(18, 38, 0.35f);
-  drawDottedHLine(36, 17, 92);
+  u8g2.drawRFrame(1, 15, 34, 47, 3);
+  emoRender(18, 38, 0.38f);
   u8g2.setFont(F_SMALL);
-  int lines = wrapText(0, 0, 88, 9, cur.text, 0);
+  int lines = wrapText(0, 0, 86, 10, cur.text, 0);
   int skip = 0;
-  if (lines > 5) {
-    skip = ((now - shownAt) / 2000);
-    skip = min(skip, lines - 5);
+  if (lines > 4) {
+    skip = ((now - shownAt) / 2200) % (lines - 3);
   }
-  wrapText(38, 26, 88, 9, cur.text, 4, skip);
+  wrapText(39, 25, 87, 10, cur.text, 4, skip);
+  if (lines > 4) drawPageDots(126, 61, min(lines - 3, 6), skip % 6);
 }
 
 static void notifLoop() {

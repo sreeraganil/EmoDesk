@@ -8,7 +8,7 @@ struct Btn {
 
 static Btn btn[2];
 static bool rawMode = false;
-static uint16_t longMs = 700, vlongMs = 3000, multiMs = 320;
+static uint16_t longMs = 700, vlongMs = 3000, multiMs = 220;
 static uint32_t lastAct = 0;
 struct GEv { uint8_t g, src; };
 static GEv ring[12];
@@ -33,7 +33,7 @@ void inputApply() {
   }
   longMs = cfg["input"]["longMs"] | 700;
   vlongMs = cfg["input"]["vlongMs"] | 3000;
-  multiMs = cfg["input"]["multiMs"] | 320;
+  multiMs = cfg["input"]["multiMs"] | 220;
 }
 
 void inputBegin() {
@@ -48,6 +48,8 @@ void inputBegin() {
 void inputSetRaw(bool raw) {
   rawMode = raw;
   btn[0].taps = 0;
+  btn[0].longF = false;
+  btn[0].vlongF = false;
 }
 
 void inputPoll() {
@@ -58,7 +60,7 @@ void inputPoll() {
     bool lvl = digitalRead(b.pin);
     bool pressed = b.activeHigh ? lvl : !lvl;
     bool raw = rawMode && i == SRC_TOUCH;
-    if (pressed != b.st && now - b.chg > 25) {
+    if (pressed != b.st && now - b.chg > 20) {
       b.st = pressed;
       b.chg = now;
       lastAct = now;
@@ -71,7 +73,7 @@ void inputPoll() {
         if (raw) push(G_RELEASE, i);
         else if (b.vlongF) { /* already handled */ }
         else if (d >= longMs) push(G_LONG, i);
-        else if (d >= 35) { b.taps++; b.lastUp = now; }
+        else if (d >= 15) { b.taps++; b.lastUp = now; }
       }
     }
     if (b.st) {
@@ -79,7 +81,7 @@ void inputPoll() {
       if (raw && !b.longF && d >= (uint32_t)longMs * 2) { b.longF = true; push(G_LONG, i); }
       if (!raw && !b.vlongF && d >= vlongMs) { b.vlongF = true; b.taps = 0; push(G_VLONG, i); }
     }
-    if (!raw && b.taps && !b.st && now - b.lastUp > multiMs) {
+    if (!raw && b.taps && !b.st && (b.taps >= 3 || now - b.lastUp > multiMs)) {
       push(b.taps == 1 ? G_TAP : b.taps == 2 ? G_DOUBLE : G_TRIPLE, i);
       b.taps = 0;
     }

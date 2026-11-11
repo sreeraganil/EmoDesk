@@ -62,7 +62,7 @@
 #define PIN_I2S_DIN     10             // MAX98357 DIN
 #define PIN_AMP_SD      1              // MAX98357 SD (amp on/off)
 
-#define OLED_I2C_HZ     800000
+#define OLED_I2C_HZ     400000
 
 // ---------------- Optional features ----------------
 // Robot voice (needs libraries ESP8266Audio + ESP8266SAM). Set 0 if they fail to build.

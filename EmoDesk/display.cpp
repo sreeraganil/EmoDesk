@@ -6,11 +6,18 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SD
 int8_t burnX = 0, burnY = 0;
 static bool dispOn = true;
 static uint32_t lastBurn = 0;
+static int batReserve = 0;
+
+static uint8_t lastSentBuf[1024];
+static bool hasSentFrame = false;
+static uint32_t lastSendMs = 0;
 
 void displayBegin() {
   Wire.begin(PIN_SDA, PIN_SCL);
   u8g2.setBusClock(OLED_I2C_HZ);
   u8g2.begin();
+  Wire.setTimeOut(25);
+  Wire.setClock(OLED_I2C_HZ);
   u8g2.enableUTF8Print();
   u8g2.setFontMode(1);
   displayApply();
@@ -20,6 +27,7 @@ void displayApply() {
   u8g2.setFlipMode((cfg["display"]["flip"] | false) ? 1 : 0);
   u8g2.sendF("c", (cfg["display"]["invert"] | false) ? 0xA7 : 0xA6);
   displaySetContrast(cfg["display"]["bright"] | 200);
+  hasSentFrame = false;
 }
 
 void displaySetContrast(uint8_t c) {
@@ -29,6 +37,9 @@ void displaySetContrast(uint8_t c) {
   u8g2.setContrast(c);
 }
 
+void displaySetBatReserve(int w) { batReserve = max(0, w); }
+int  displayBatReserve() { return batReserve; }
+
 void displaySend() {
   if (cfg["display"]["burn"] | true) {
     if (millis() - lastBurn > 120000) {
@@ -37,24 +48,75 @@ void displaySend() {
       burnY = (int8_t)(esp_random() % 3) - 1;
     }
   } else { burnX = burnY = 0; }
-  if (dispOn) u8g2.sendBuffer();
+  if (!dispOn) return;
+  uint8_t* buf = u8g2.getBufferPtr();
+  uint32_t now = millis();
+  if (!buf || !hasSentFrame || memcmp(buf, lastSentBuf, 1024) != 0 || (now - lastSendMs >= 2000)) {
+    u8g2.sendBuffer();
+    if (buf) memcpy(lastSentBuf, buf, 1024);
+    hasSentFrame = true;
+    lastSendMs = now;
+  }
 }
 
 void displayPower(bool on) {
   if (on == dispOn) return;
   dispOn = on;
+  hasSentFrame = false;
   u8g2.setPowerSave(on ? 0 : 1);
 }
 
 bool displayIsOn() { return dispOn; }
 
 // ------------------------------------------------------------------ text
+static void fitBuf(char* buf, size_t cap, int maxW, const char* s) {
+  if (!buf || !cap) return;
+  safeCopy(buf, s ? s : "", cap);
+  if (maxW <= 0) { buf[0] = 0; return; }
+  if (u8g2.getUTF8Width(buf) <= maxW) return;
+  int dw = u8g2.getUTF8Width("..");
+  int len = (int)strlen(buf);
+  while (len > 0) {
+    len--;
+    while (len > 0 && ((uint8_t)buf[len] & 0xC0) == 0x80) len--;
+    buf[len] = 0;
+    if (u8g2.getUTF8Width(buf) + dw <= maxW) break;
+  }
+  if (len + 2 < (int)cap && u8g2.getUTF8Width("..") <= maxW) strcat(buf, "..");
+}
+
 void textCenter(int y, const char* s) {
+  if (!s) return;
   int w = u8g2.getUTF8Width(s);
   u8g2.drawUTF8((128 - w) / 2, y, s);
 }
 
-void textRight(int xr, int y, const char* s) { u8g2.drawUTF8(xr - u8g2.getUTF8Width(s), y, s); }
+void textRight(int xr, int y, const char* s) {
+  if (!s) return;
+  u8g2.drawUTF8(xr - u8g2.getUTF8Width(s), y, s);
+}
+
+void drawTextFit(int x, int y, int maxW, const char* s) {
+  if (!s || !*s || maxW <= 4) return;
+  char buf[72];
+  fitBuf(buf, sizeof(buf), maxW, s);
+  u8g2.drawUTF8(x, y, buf);
+}
+
+void drawTextFitCenter(int cx, int y, int maxW, const char* s) {
+  if (!s || !*s || maxW <= 4) return;
+  char buf[72];
+  fitBuf(buf, sizeof(buf), maxW, s);
+  int w = u8g2.getUTF8Width(buf);
+  u8g2.drawUTF8(cx - w / 2, y, buf);
+}
+
+void drawTextRightFit(int xr, int y, int maxW, const char* s) {
+  if (!s || !*s || maxW <= 4) return;
+  char buf[72];
+  fitBuf(buf, sizeof(buf), maxW, s);
+  u8g2.drawUTF8(xr - u8g2.getUTF8Width(buf), y, buf);
+}
 
 int wrapText(int x, int y, int w, int lineH, const char* s, int maxLines, int skip) {
   char buf[100];
@@ -87,12 +149,15 @@ int wrapText(int x, int y, int w, int lineH, const char* s, int maxLines, int sk
 }
 
 void marquee(int x, int y, int w, const char* s, uint32_t t0, int pxPerSec) {
+  if (!s || !*s || w <= 0) return;
   int tw = u8g2.getUTF8Width(s);
   if (tw <= w) { u8g2.drawUTF8(x, y, s); return; }
-  int span = tw + 30;
+  int span = tw + 28;
   uint32_t el = millis() - t0;
-  int off = el < 1500 ? 0 : (int)(((el - 1500) * pxPerSec / 1000) % span);
-  u8g2.setClipWindow(x, 0, x + w, 64);
+  int off = el < 1300 ? 0 : (int)(((el - 1300) * pxPerSec / 1000) % span);
+  int x0 = constrain(x, 0, 127);
+  int x1 = constrain(x + w, x0 + 1, 128);
+  u8g2.setClipWindow(x0, 0, x1, 64);
   u8g2.drawUTF8(x - off, y, s);
   u8g2.drawUTF8(x - off + span, y, s);
   u8g2.setMaxClipWindow();
@@ -103,12 +168,19 @@ void drawBar(int x, int y, int w, int h, float f) {
   if (f > 1.0f) f = 1.0f;
   int r = h >= 6 ? 2 : 1;
   u8g2.drawRFrame(x, y, w, h, r);
-  int fw = (int)((w - 4) * f);
-  if (fw > 0) u8g2.drawBox(x + 2, y + 2, fw, h - 4);
+  int maxFill = w - 4;
+  if (maxFill > 0) {
+    int fw = (int)(maxFill * f + 0.5f);
+    if (fw > 0) u8g2.drawBox(x + 2, y + 2, min(fw, maxFill), max(1, h - 4));
+  }
 }
 
 void drawDottedHLine(int x, int y, int w) {
   for (int i = 0; i < w; i += 2) u8g2.drawPixel(x + i, y);
+}
+
+void drawDottedVLine(int x, int y, int h) {
+  for (int i = 0; i < h; i += 2) u8g2.drawPixel(x, y + i);
 }
 
 void drawBadge(int xr, int y, const char* text) {
@@ -117,6 +189,9 @@ void drawBadge(int xr, int y, const char* text) {
   int tw = u8g2.getUTF8Width(text);
   int bw = tw + 6;
   int bx = xr - bw;
+  u8g2.setDrawColor(0);
+  u8g2.drawRBox(bx - 1, y - 7, bw + 2, 10, 2);
+  u8g2.setDrawColor(1);
   u8g2.drawRFrame(bx, y - 6, bw, 8, 2);
   u8g2.drawUTF8(bx + 3, y, text);
 }
@@ -140,89 +215,73 @@ void drawPill(int x, int y, int w, int h, const char* text, bool filled) {
 void drawSignalBars(int x, int y, int rssi) {
   int bars = rssi > -55 ? 4 : (rssi > -68 ? 3 : (rssi > -80 ? 2 : (rssi > -92 ? 1 : 0)));
   for (int i = 0; i < 4; i++) {
-    int bh = 3 + i * 2;
+    int bh = 2 + i * 2;
     int by = y - bh;
     int bx = x + i * 4;
     if (i < bars) u8g2.drawBox(bx, by, 3, bh);
-    else u8g2.drawPixel(bx + 1, y - 1);
+    else u8g2.drawBox(bx, y - 1, 2, 1);
   }
 }
 
 void drawHeader(const char* title, const char* right) {
+  int rightEdge = 127 - batReserve;
   bool hasRight = (right && *right);
-  int rightX = 127;
+  int rightX = rightEdge;
   bool framed = false;
-  int bw = 0, bx = 127;
+  int bw = 0, bx = rightEdge;
+  char rBuf[24] = "";
 
   if (hasRight) {
     u8g2.setFont(F_TINY);
-    int rw = u8g2.getUTF8Width(right);
+    int maxRW = max(20, rightEdge - 48);
+    fitBuf(rBuf, sizeof(rBuf), maxRW, right);
+    int rw = u8g2.getUTF8Width(rBuf);
     bw = rw + 6;
-    bx = 127 - bw;
-    framed = (bw <= 50 && bx >= 40);
-    rightX = framed ? bx : (127 - rw);
+    bx = rightEdge - bw;
+    framed = (bw <= 54 && bx >= 36);
+    rightX = framed ? (bx - 2) : (rightEdge - rw - 2);
   }
 
-  int maxTitleW = hasRight ? (rightX - 3) : 126;
-  if (maxTitleW < 20) maxTitleW = 20;
+  int maxTitleW = hasRight ? (rightX - 2) : (rightEdge - 2);
+  if (maxTitleW < 18) maxTitleW = 18;
 
   if (title && *title) {
     u8g2.setFont(F_SMALL);
-    int tw = u8g2.getUTF8Width(title);
-    if (tw <= maxTitleW) {
+    if (u8g2.getUTF8Width(title) <= maxTitleW) {
       u8g2.drawUTF8(1, 8, title);
     } else {
       u8g2.setFont(F_TINY);
-      tw = u8g2.getUTF8Width(title);
-      if (tw <= maxTitleW) {
-        u8g2.drawUTF8(1, 8, title);
-      } else {
-        char buf[64];
-        safeCopy(buf, title, sizeof(buf));
-        int len = strlen(buf);
-        int avgW = max(1, tw / max(1, len));
-        int targetLen = max(2, min(len - 2, (maxTitleW - 6) / avgW));
-        while (len > targetLen) {
-          len--;
-          while (len > 0 && ((uint8_t)buf[len] & 0xC0) == 0x80) len--;
-          buf[len] = '\0';
-        }
-        if (len >= 2) { buf[len - 1] = '.'; buf[len - 2] = '.'; }
-        while (len > 2 && u8g2.getUTF8Width(buf) > maxTitleW) {
-          len--;
-          while (len > 0 && ((uint8_t)buf[len] & 0xC0) == 0x80) len--;
-          buf[len] = '\0';
-          if (len >= 2) { buf[len - 1] = '.'; buf[len - 2] = '.'; }
-        }
-        u8g2.drawUTF8(1, 8, buf);
-      }
+      drawTextFit(1, 8, maxTitleW, title);
     }
   }
 
-  if (hasRight) {
+  if (hasRight && rBuf[0]) {
     u8g2.setFont(F_TINY);
-    bool inverse = (!strcmp(right, "LIVE") || !strcmp(right, "FT") || !strcmp(right, "PROB") || !strcmp(right, "ALERT"));
+    bool inverse = (!strcasecmp(rBuf, "LIVE") || !strcasecmp(rBuf, "FT") || !strcasecmp(rBuf, "PROB") ||
+                    !strcasecmp(rBuf, "ALERT") || !strcasecmp(rBuf, "RUN") || !strcasecmp(rBuf, "PLAY") ||
+                    !strcasecmp(rBuf, "ON") || !strcasecmp(rBuf, "AP") || !strcasecmp(rBuf, "BUSY") ||
+                    !strcasecmp(rBuf, "ONLINE") || !strcasecmp(rBuf, "NEW"));
     if (inverse) {
       u8g2.drawRBox(bx, 1, bw, 8, 2);
       u8g2.setDrawColor(0);
-      u8g2.drawUTF8(bx + 3, 7, right);
+      u8g2.drawUTF8(bx + 3, 7, rBuf);
       u8g2.setDrawColor(1);
     } else if (framed) {
       u8g2.drawRFrame(bx, 1, bw, 8, 2);
-      u8g2.drawUTF8(bx + 3, 7, right);
+      u8g2.drawUTF8(bx + 3, 7, rBuf);
     } else {
-      textRight(127, 8, right);
+      textRight(rightEdge, 8, rBuf);
     }
   }
   u8g2.drawHLine(0, 10, 128);
 }
 
 void drawSpark(int x, int y, int w, int h, const float* v, int n) {
-  if (n < 2) return;
+  if (n < 2 || w < 4 || h < 4) return;
   float mn = v[0], mx = v[0];
   for (int i = 1; i < n; i++) { mn = min(mn, v[i]); mx = max(mx, v[i]); }
   float rng = mx - mn;
-  if (rng <= 0) rng = 1;
+  if (rng <= 0.00001f) rng = 1.0f;
   int px = x, py = y + h - 1 - (int)((v[0] - mn) / rng * (h - 1));
   for (int i = 1; i < n; i++) {
     int nx = x + i * (w - 1) / (n - 1);
@@ -234,23 +293,33 @@ void drawSpark(int x, int y, int w, int h, const float* v, int n) {
 
 void drawCenteredMsg(const char* l1, const char* l2) {
   if (!l1) return;
+  char b1[44], b2[48];
   u8g2.setFont(F_MED);
-  int w1 = u8g2.getUTF8Width(l1);
-  int w2 = l2 ? u8g2.getUTF8Width(l2) : 0;
-  int boxW = min(126, max(w1, w2) + 16);
-  boxW = max(70, boxW);
-  int boxH = l2 ? 38 : 26;
-  int bx = (128 - boxW) / 2;
-  int by = (64 - boxH) / 2;
-  u8g2.drawRFrame(bx, by, boxW, boxH, 3);
-  u8g2.drawPixel(bx + 4, by + 4);
-  u8g2.drawPixel(bx + boxW - 5, by + 4);
-
-  int y1 = l2 ? by + 16 : by + 17;
-  textCenter(y1, l1);
-  if (l2) {
+  fitBuf(b1, sizeof(b1), 110, l1);
+  int w1 = u8g2.getUTF8Width(b1);
+  int w2 = 0;
+  if (l2 && *l2) {
     u8g2.setFont(F_SMALL);
-    textCenter(y1 + 13, l2);
+    fitBuf(b2, sizeof(b2), 112, l2);
+    w2 = u8g2.getUTF8Width(b2);
+  }
+  int boxW = constrain(max(w1, w2) + 16, 76, 124);
+  int boxH = (l2 && *l2) ? 38 : 26;
+  int bx = (128 - boxW) / 2;
+  int by = (64 - boxH) / 2 + 2;
+  if (by < 13) by = (64 - boxH) / 2;
+  u8g2.drawRFrame(bx, by, boxW, boxH, 3);
+  u8g2.drawPixel(bx + 3, by + 3);
+  u8g2.drawPixel(bx + boxW - 4, by + 3);
+  u8g2.drawPixel(bx + 3, by + boxH - 4);
+  u8g2.drawPixel(bx + boxW - 4, by + boxH - 4);
+
+  int y1 = (l2 && *l2) ? by + 16 : by + 17;
+  u8g2.setFont(F_MED);
+  textCenter(y1, b1);
+  if (l2 && *l2) {
+    u8g2.setFont(F_SMALL);
+    textCenter(y1 + 13, b2);
   }
 }
 
@@ -361,7 +430,6 @@ void drawWeatherIcon(int x, int y, int s, int code, bool day) {
   }
 }
 
-
 void drawQRCode(int x, int y, const char* text, uint8_t scale) {
   if (!text || !*text) return;
   QRCode qr;
@@ -399,17 +467,16 @@ void drawIconBall(int cx, int cy, int r, uint8_t fg) {
 }
 
 void drawIconBell(int x, int y) {
-  u8g2.drawDisc(x + 5, y + 4, 4, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
-  u8g2.drawBox(x + 1, y + 4, 9, 4);
-  u8g2.drawBox(x, y + 8, 11, 2);
-  u8g2.drawBox(x + 4, y + 10, 3, 2);
-  u8g2.drawPixel(x + 5, y);
+  u8g2.drawDisc(x + 4, y + 3, 3, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  u8g2.drawBox(x + 1, y + 3, 7, 3);
+  u8g2.drawBox(x, y + 6, 9, 1);
+  u8g2.drawBox(x + 3, y + 7, 3, 1);
 }
 
 void drawIconMail(int x, int y) {
-  u8g2.drawFrame(x, y, 13, 9);
-  u8g2.drawLine(x, y, x + 6, y + 5);
-  u8g2.drawLine(x + 12, y, x + 6, y + 5);
+  u8g2.drawFrame(x, y, 11, 8);
+  u8g2.drawLine(x, y, x + 5, y + 4);
+  u8g2.drawLine(x + 10, y, x + 5, y + 4);
 }
 
 void drawIconBat(int x, int y, int pct) {
@@ -468,12 +535,36 @@ void drawIconClock(int x, int y) {
   u8g2.drawHLine(x + 3, y + 3, 3);
 }
 
+void drawIconHeart(int x, int y) {
+  u8g2.drawHLine(x + 1, y, 2); u8g2.drawHLine(x + 4, y, 2);
+  u8g2.drawHLine(x, y + 1, 7);
+  u8g2.drawHLine(x, y + 2, 7);
+  u8g2.drawHLine(x + 1, y + 3, 5);
+  u8g2.drawHLine(x + 2, y + 4, 3);
+  u8g2.drawPixel(x + 3, y + 5);
+}
+
+void drawIconStar(int x, int y) {
+  u8g2.drawPixel(x + 2, y);
+  u8g2.drawHLine(x, y + 1, 5);
+  u8g2.drawHLine(x + 1, y + 2, 3);
+  u8g2.drawPixel(x + 1, y + 3); u8g2.drawPixel(x + 3, y + 3);
+}
+
+void drawIconMusic(int x, int y) {
+  u8g2.drawDisc(x + 1, y + 5, 1);
+  u8g2.drawVLine(x + 2, y + 1, 5);
+  u8g2.drawLine(x + 2, y + 1, x + 5, y);
+  u8g2.drawVLine(x + 5, y, 4);
+  u8g2.drawDisc(x + 4, y + 4, 1);
+}
+
 void drawPageDots(int xr, int y, int n, int cur) {
   if (n < 2) return;
   if (n > 8) n = 8;
-  int x = xr - (n - 1) * 4;
+  int x = xr - (n - 1) * 5;
   for (int i = 0; i < n; i++) {
-    if (i == cur) u8g2.drawBox(x + i * 4 - 1, y - 1, 3, 3);
-    else u8g2.drawPixel(x + i * 4, y);
+    if (i == cur) u8g2.drawBox(x + i * 5 - 1, y - 1, 3, 3);
+    else u8g2.drawPixel(x + i * 5, y);
   }
 }

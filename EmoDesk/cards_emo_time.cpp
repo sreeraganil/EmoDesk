@@ -4,7 +4,7 @@
 
 static bool needTime(struct tm& t) {
   if (nowTm(t)) return true;
-  drawCenteredMsg("Syncing time...", netOnline() ? "waiting for NTP" : "needs Wi-Fi once");
+  drawCenteredMsg("Syncing time...", netOnline() ? "Waiting for NTP" : "Needs Wi-Fi once");
   return false;
 }
 
@@ -24,30 +24,38 @@ static int daysInMonth(int y, int m) {   // m 0..11
 // ================================================================== emo
 static void emo_draw(CardCtx& c) {
   if (inputHeldMs() > 600) emoPetting();
-  emoRender(64, 30, 1.0f);
+  emoRender(64, 32, 1.0f);
 }
 static bool emo_input(CardCtx& c, uint8_t g) {
   if (g == G_TRIPLE) { emoPoke(2); return true; }
-  if (g == G_LONG) { emoPlay(); return true; }   // petting happens while holding
-  return false;   // G_TAP -> Next Card, G_DOUBLE -> Prev Card
+  if (g == G_LONG) { emoPlay(); return true; }
+  return false;
 }
 static void emo_speak(CardCtx&, String& s) { s = emoSpeech(); }
 const CardType CT_emo = {"emo", 0, 0, 0, nullptr, emo_draw, emo_input, nullptr, emo_speak, nullptr};
 
 // ================================================================== pet
 static void pet_draw(CardCtx& c) {
-  drawTitle(c, "Pet Care", "virtual pet");
-  emoRender(20, 36, 0.45f);
+  drawTitle(c, "Pet Care", "hold: care");
+  u8g2.drawRFrame(1, 13, 44, 49, 4);
+  emoRender(23, 33, 0.42f);
+  char pts[16];
+  snprintf(pts, sizeof(pts), "%lu pts", (unsigned long)pet.interactions);
   u8g2.setFont(F_TINY);
+  drawTextFitCenter(23, 59, 40, pts);
+
   static const char* const lab[3] = {"JOY", "NRG", "FED"};
-  float v[3] = {pet.happy, pet.energy, 100 - pet.hunger};
+  float v[3] = {pet.happy, pet.energy, 100.0f - pet.hunger};
   for (int i = 0; i < 3; i++) {
-    int y = 14 + i * 13;
-    u8g2.drawStr(44, y + 7, lab[i]);
-    drawBar(64, y, 60, 8, v[i] / 100.0f);
+    int y0 = 13 + i * 17;
+    int pct = constrain((int)roundf(v[i]), 0, 100);
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(49, y0 + 6, lab[i]);
+    char pb[8];
+    snprintf(pb, sizeof(pb), "%d%%", pct);
+    textRight(126, y0 + 6, pb);
+    drawBar(49, y0 + 8, 77, 6, pct / 100.0f);
   }
-  u8g2.setFont(F_TINY);
-  textCenter(62, "tap: next   |   hold: care");
 }
 static bool pet_input(CardCtx& c, uint8_t g) {
   if (g == G_LONG) { emoFeed(); emoPlay(); return true; }
@@ -55,7 +63,7 @@ static bool pet_input(CardCtx& c, uint8_t g) {
 }
 const CardType CT_pet = {"pet", 0, 0, 0, nullptr, pet_draw, pet_input, nullptr, emo_speak, nullptr};
 
-// ================================================================== digital clock
+// ================================================================== clock LUTs & digit animations
 struct DigitAnimSlot {
   char lastShown[16] = "";
   char prevShown[16] = "";
@@ -64,7 +72,7 @@ struct DigitAnimSlot {
 };
 static DigitAnimSlot s_animSlots[4];
 
-// Fast 32-entry sine lookup table for silky-smooth wave and rotation (no float FPU on ESP32-C3)
+// 32-step sine LUT (-28..+28) for smooth waves and 3D cube
 static const int8_t FAST_SIN[32] = {
   0,  6, 12, 18, 22, 25, 27, 28,
  28, 27, 25, 22, 18, 12,  6,  0,
@@ -73,6 +81,18 @@ static const int8_t FAST_SIN[32] = {
 };
 static inline int fastSin(uint8_t step) { return FAST_SIN[step & 31]; }
 static inline int fastCos(uint8_t step) { return FAST_SIN[(step + 8) & 31]; }
+
+// Exact 60-step sine table (0=12 o'clock, clockwise, range -127..127)
+static const int8_t SIN60[60] = {
+    0,  13,  26,  39,  52,  64,  75,  85,  94, 103, 110, 116, 121, 124, 126,
+  127, 126, 124, 121, 116, 110, 103,  94,  85,  75,  64,  52,  39,  26,  13,
+    0, -13, -26, -39, -52, -64, -75, -85, -94,-103,-110,-116,-121,-124,-126,
+ -127,-126,-124,-121,-116,-110,-103, -94, -85, -75, -64, -52, -39, -26, -13
+};
+static inline int sin60(int step) { int i = (step % 60 + 60) % 60; return SIN60[i]; }
+static inline int cos60(int step) { int i = ((step + 15) % 60 + 60) % 60; return SIN60[i]; }
+static inline int dialX(int cx, int r, int step60) { return cx + (sin60(step60) * r + (sin60(step60) >= 0 ? 63 : -63)) / 127; }
+static inline int dialY(int cy, int r, int step60) { return cy - (cos60(step60) * r + (cos60(step60) >= 0 ? 63 : -63)) / 127; }
 
 static void drawDigits(int slot, const char* str, int x, int y, int hClip, const char* animMode) {
   if (!str || !str[0]) return;
@@ -88,7 +108,6 @@ static void drawDigits(int slot, const char* str, int x, int y, int hClip, const
     as.hasPrior = true;
     as.animStartTime = 0;
   }
-
   if (strcmp(str, as.lastShown) != 0) {
     safeCopy(as.prevShown, as.lastShown, sizeof(as.prevShown));
     safeCopy(as.lastShown, str, sizeof(as.lastShown));
@@ -96,26 +115,20 @@ static void drawDigits(int slot, const char* str, int x, int y, int hClip, const
   }
 
   uint32_t elapsed = (as.animStartTime > 0) ? (millis() - as.animStartTime) : 999999;
-  uint32_t animDur = 300; // default duration
-
+  const uint32_t animDur = 280;
   if (elapsed >= animDur || as.prevShown[0] == '\0') {
     u8g2.drawStr(x, y, str);
     return;
   }
 
-  float p = (float)elapsed / (float)animDur;
-  if (p < 0.0f) p = 0.0f;
-  if (p > 1.0f) p = 1.0f;
+  float p = constrain((float)elapsed / (float)animDur, 0.0f, 1.0f);
   float ease = p * p * (3.0f - 2.0f * p);
-
-  size_t lenCur = strlen(str);
-  size_t lenPrev = strlen(as.prevShown);
-
-  int padDown = (hClip >= 30) ? 9 : 6;
+  size_t lenCur = strlen(str), lenPrev = strlen(as.prevShown);
+  int padDown = (hClip >= 30) ? 7 : 5;
 
   if (lenCur != lenPrev) {
-    int cY0 = (y - hClip < 0) ? 0 : (y - hClip);
-    int cY1 = (y + padDown > 64) ? 64 : (y + padDown);
+    int cY0 = constrain(y - hClip, 0, 63);
+    int cY1 = constrain(y + padDown, cY0 + 1, 64);
     u8g2.setClipWindow(0, cY0, 128, cY1);
     int dy = (int)((float)hClip * ease);
     if (!strcmp(animMode, "slide_down")) {
@@ -138,12 +151,11 @@ static void drawDigits(int slot, const char* str, int x, int y, int hClip, const
     if (str[i] == as.prevShown[i]) {
       u8g2.drawStr(curX, y, chCur);
     } else {
-      int clipX0 = (curX - 1 < 0) ? 0 : (curX - 1);
-      int clipX1 = (curX + cw + 2 > 128) ? 128 : (curX + cw + 2);
-      int clipY0 = (y - hClip < 0) ? 0 : (y - hClip);
-      int clipY1 = (y + padDown > 64) ? 64 : (y + padDown);
-
-      u8g2.setClipWindow(clipX0, clipY0, clipX1, clipY1);
+      int cx0 = constrain(curX - 1, 0, 126);
+      int cx1 = constrain(curX + cw + 2, cx0 + 1, 128);
+      int cy0 = constrain(y - hClip, 0, 62);
+      int cy1 = constrain(y + padDown, cy0 + 1, 64);
+      u8g2.setClipWindow(cx0, cy0, cx1, cy1);
 
       if (!strcmp(animMode, "slide_down")) {
         int dy = (int)((float)hClip * ease);
@@ -151,28 +163,19 @@ static void drawDigits(int slot, const char* str, int x, int y, int hClip, const
         u8g2.drawStr(curX, y - hClip + dy, chCur);
       } else if (!strcmp(animMode, "flip")) {
         int midY = y - (hClip / 2);
-        if (ease < 0.5f) {
-          float sub = ease * 2.0f;
-          int dy = (int)((float)(hClip / 2) * sub);
-          u8g2.drawStr(curX, y - dy, chPrev);
-        } else {
-          float sub = (ease - 0.5f) * 2.0f;
-          int dy = (int)((float)(hClip / 2) * (1.0f - sub));
-          u8g2.drawStr(curX, y + dy, chCur);
-        }
+        if (ease < 0.5f) u8g2.drawStr(curX, y - (int)((hClip / 2) * ease * 2.0f), chPrev);
+        else u8g2.drawStr(curX, y + (int)((hClip / 2) * (1.0f - (ease - 0.5f) * 2.0f)), chCur);
         u8g2.drawHLine(curX, midY, cw);
       } else if (!strcmp(animMode, "fade")) {
         u8g2.drawStr(curX, y, (ease < 0.5f) ? chPrev : chCur);
       } else if (!strcmp(animMode, "bounce")) {
         float be = 1.0f - cosf(ease * 3.14159f * 2.5f) * expf(-ease * 3.5f);
-        int dy = (int)((float)hClip * (1.0f - be));
-        u8g2.drawStr(curX, y - dy, chCur);
+        u8g2.drawStr(curX, y - (int)((float)hClip * (1.0f - be)), chCur);
       } else {
         int dy = (int)((float)hClip * ease);
         u8g2.drawStr(curX, y - dy, chPrev);
         u8g2.drawStr(curX, y + hClip - dy, chCur);
       }
-
       u8g2.setMaxClipWindow();
     }
     curX += cw;
@@ -180,52 +183,60 @@ static void drawDigits(int slot, const char* str, int x, int y, int hClip, const
 }
 
 static const char* const CLOCK_STYLES[] = {
-  "modular",   // 0: Modern Modular (Apple Watch Ultra)
-  "activity",  // 1: Activity Rings (Smartwatch Fitness)
-  "horizon",   // 2: Horizon Wave (Pixel Watch)
-  "pulse",     // 3: Health ECG Pulse (Smartwatch Health)
-  "orbit",     // 4: Planetary Orbit (Galaxy Watch)
-  "chrono",    // 5: Chronograph Pro (Luxury Smartwatch)
-  "stacked",   // 6: Nike Typography (Orbiting Second)
-  "cube",      // 7: 3D Wireframe Cube (NWatch 3D)
-  "matrix",    // 8: Matrix Rain (Cyberpunk Code)
-  "scan",      // 9: Sci-Fi Scan (Radar Sweep)
-  "data",      // 10: Cyberpunk Data (Tech HUD)
-  "normal",    // 11: Classic Ticker (Zak Kemble)
-  "big"        // 12: Big Time (Modern Giant)
+  "modular", "activity", "horizon", "pulse", "orbit", "chrono",
+  "stacked", "cube", "matrix", "scan", "data", "normal", "big"
 };
 static const char* const CLOCK_STYLE_NAMES[] = {
   "1. Modern Modular", "2. Activity Rings", "3. Horizon Wave",
-  "4. Health ECG Pulse", "5. Planetary Orbit", "6. Chronograph Pro",
-  "7. Nike Typography", "8. 3D Wireframe Cube", "9. Matrix Rain",
-  "10. Sci-Fi Scan", "11. Cyberpunk Data", "12. Classic Ticker",
-  "13. Modern Big Time"
+  "4. Vital Pulse", "5. Planetary Orbit", "6. Chronograph Pro",
+  "7. Nike Stacked", "8. 3D Cube", "9. Matrix Rain",
+  "10. Radar Scan", "11. Tech HUD", "12. Classic Ticker",
+  "13. Big Time"
 };
 static const int NUM_CLOCK_STYLES = 13;
 
+static void drawColon(int x, int yMid, int s) {
+  if ((millis() / 500) % 2 == 0) {
+    u8g2.drawBox(x, yMid - 4 - s / 2, s, s);
+    u8g2.drawBox(x, yMid + 4 - s / 2, s, s);
+  }
+}
+
+static void drawDialRing(int cx, int cy, int r, int uptoStep60, bool thick) {
+  u8g2.drawCircle(cx, cy, r);
+  int lim = constrain(uptoStep60, 0, 60);
+  for (int i = 0; i <= lim; i++) {
+    int px = dialX(cx, r, i), py = dialY(cy, r, i);
+    u8g2.drawPixel(px, py);
+    if (thick) {
+      int px2 = dialX(cx, r - 1, i), py2 = dialY(cy, r - 1, i);
+      u8g2.drawPixel(px2, py2);
+    }
+  }
+  if (lim > 0) u8g2.drawDisc(dialX(cx, r, lim), dialY(cy, r, lim), 1);
+}
+
 static void clock_draw(CardCtx& c) {
   struct tm t;
-  int bx = burnX, by = burnY;
+  int bx = constrain((int)burnX, -1, 1);
+  int by = constrain((int)burnY, -1, 1);
   if (!nowTm(t)) {
     u8g2.setFont(F_NUM32);
     textCenter(38 + by, "--:--");
-    u8g2.setFont(F_MED);
-    textCenter(56 + by, netOnline() ? "Getting the time..." : "Waiting for Wi-Fi");
+    u8g2.setFont(F_SMALL);
+    textCenter(56 + by, netOnline() ? "Syncing NTP time..." : "Waiting for Wi-Fi");
     return;
   }
 
-  // Initialize style from card params on first run, or respect touch switch / saved cfg
   if (c.st[1] == 0) {
     const char* defStyle = c.p["style"].is<const char*>() ? c.p["style"].as<const char*>() :
                            (cfg["clock"]["style"].is<const char*>() ? cfg["clock"]["style"].as<const char*>() : "modular");
-    // Backward compatibility mappings
     if (!strcmp(defStyle, "dial") || !strcmp(defStyle, "clock")) defStyle = "chrono";
     else if (!strcmp(defStyle, "dual")) defStyle = "activity";
     else if (!strcmp(defStyle, "pixel")) defStyle = "stacked";
     else if (!strcmp(defStyle, "minimal")) defStyle = "modular";
     else if (!strcmp(defStyle, "rain")) defStyle = "matrix";
     else if (!strcmp(defStyle, "seconds")) defStyle = "normal";
-
     for (int i = 0; i < NUM_CLOCK_STYLES; i++) {
       if (!strcmp(defStyle, CLOCK_STYLES[i])) { c.st[0] = i; break; }
     }
@@ -236,608 +247,484 @@ static void clock_draw(CardCtx& c) {
   const char* style = CLOCK_STYLES[styleIdx];
   const char* anim = c.p["anim"].is<const char*>() ? (c.p["anim"] | "slide") : (cfg["clock"]["anim"] | "slide");
   bool h24 = cfgH24();
-  char hm[8], date[32];
+  int hShow = t.tm_hour;
+  if (!h24) { hShow %= 12; if (!hShow) hShow = 12; }
+  char hStr[4], mStr[4], sStr[6], hm[10], date[28], wBuf[24];
+  snprintf(hStr, sizeof(hStr), "%02d", hShow);
+  snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
+  snprintf(sStr, sizeof(sStr), ":%02d", t.tm_sec);
   fmtHM(hm, t.tm_hour, t.tm_min, h24);
   snprintf(date, sizeof(date), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-  const char* ap = t.tm_hour < 12 ? "AM" : "PM";
+  const char* ap = h24 ? "24H" : (t.tm_hour < 12 ? "AM" : "PM");
+  const char* tu = (cfg["units"] == "imperial") ? "F" : "C";
+  if (homeW.ok) snprintf(wBuf, sizeof(wBuf), "%d°%s %s", (int)roundf(homeW.temp), tu, wmoText(homeW.code));
+  else wBuf[0] = 0;
 
   if (!strcmp(style, "modular")) {
-    // ============================================================= 0. MODULAR — Apple Ultra Infograph
-    // Top bar: weather left, signal/AM-PM right
-    u8g2.setFont(F_TINY);
-    if (homeW.ok) {
-      char wBuf[20];
-      snprintf(wBuf, sizeof(wBuf), "%d\xc2\xb0 %s", (int)roundf(homeW.temp), wmoText(homeW.code));
-      u8g2.drawUTF8(2 + bx, 7 + by, wBuf);
-    } else {
-      u8g2.drawUTF8(2 + bx, 7 + by, date);
-    }
-    if (netOnline()) {
-      char nb[12]; snprintf(nb, sizeof(nb), "%ddB", netRSSI());
-      textRight(126, 7 + by, nb);
-    } else {
-      textRight(126, 7 + by, ap);
-    }
-    u8g2.drawHLine(0, 9 + by, 128);
-
-    // Centre: HH large | blinking colon | MM large (baseline at 39: top=14, bottom=45, fits cleanly!)
-    int h2 = t.tm_hour, m2 = t.tm_min;
-    if (!h24) { h2 %= 12; if (!h2) h2 = 12; }
-    char hStr[4], mStr[4];
-    snprintf(hStr, sizeof(hStr), "%02d", h2);
-    snprintf(mStr, sizeof(mStr), "%02d", m2);
-
+    // 0. MODERN MODULAR
+    drawHeader(homeW.ok ? wBuf : date, ap);
     u8g2.setFont(F_NUM32);
-    int hw = u8g2.getStrWidth(hStr);
-    int mw = u8g2.getStrWidth(mStr);
-    int gap = 6;
-    int totalW = hw + gap + mw;
-    int startX = (128 - totalW) / 2 + bx;
+    int hw = u8g2.getStrWidth(hStr), mw = u8g2.getStrWidth(mStr);
+    int cX = (98 - hw - 7 - mw) / 2 + 4 + bx;
+    if (cX < 2) cX = 2;
+    drawDigits(0, hStr, cX, 45 + by, 32, anim);
+    drawColon(cX + hw + 2, 29 + by, 2);
+    drawDigits(1, mStr, cX + hw + 7, 45 + by, 32, anim);
 
-    drawDigits(0, hStr, startX,        39 + by, 32, anim);
-    drawDigits(1, mStr, startX + hw + gap, 39 + by, 32, anim);
-    // Blinking colon dots centered vertically
-    if ((millis() / 500) % 2 == 0) {
-      u8g2.drawBox(startX + hw + 2, 22 + by, 2, 2);
-      u8g2.drawBox(startX + hw + 2, 30 + by, 2, 2);
-    }
+    u8g2.setFont(F_MED);
+    textRight(125, 45 + by, sStr);
+    if (netOnline()) drawSignalBars(107, 25 + by, netRSSI());
 
-    // Seconds progress bar
-    u8g2.drawHLine(0, 46 + by, 128);
-    int secPx = (t.tm_sec * 128) / 60;
-    if (secPx > 0) u8g2.drawHLine(0, 47 + by, secPx);
-    if (secPx < 127) u8g2.drawBox(secPx, 46 + by, 2, 3);
+    u8g2.drawRFrame(2, 48, 124, 4, 1);
+    int sFill = (t.tm_sec * 120) / 59;
+    if (sFill > 0) u8g2.drawBox(4, 49, sFill, 2);
 
-    // Bottom row: clean date + seconds tag
-    u8g2.setFont(F_TINY);
-    char foot[32];
-    snprintf(foot, sizeof(foot), "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
-    u8g2.drawUTF8(2 + bx, 59 + by, foot);
-    char sBuf[6]; snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
-    textRight(126, 59 + by, sBuf);
+    u8g2.setFont(F_SMALL);
+    drawTextFit(2 + bx, 62, 78, date);
+    char dPct[16];
+    snprintf(dPct, sizeof(dPct), "Day %d%%", ((t.tm_hour * 60 + t.tm_min) * 100) / 1440);
+    textRight(126, 62, dPct);
 
   } else if (!strcmp(style, "activity")) {
-    // ============================================================= 1. ACTIVITY RINGS
-    int cx = 28 + bx, cy = 32 + by;
-
-    // Track rings
-    u8g2.drawCircle(cx, cy, 26);
-    u8g2.drawCircle(cx, cy, 19);
-    u8g2.drawCircle(cx, cy, 12);
-
-    // Outer ring: Seconds
-    float sFrac = (t.tm_sec + (millis() % 1000) * 0.001f) / 60.0f;
-    float sEnd  = sFrac * 6.2832f - 1.5708f;
-    for (float a = -1.5708f; a < sEnd; a += 0.15f) {
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 26), cy + lroundf(sinf(a) * 26));
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 25), cy + lroundf(sinf(a) * 25));
-    }
-    u8g2.drawDisc(cx + lroundf(cosf(sEnd) * 25.5f), cy + lroundf(sinf(sEnd) * 25.5f), 1);
-
-    // Middle ring: Minutes
-    float mFrac = (t.tm_min + t.tm_sec / 60.0f) / 60.0f;
-    float mEnd  = mFrac * 6.2832f - 1.5708f;
-    for (float a = -1.5708f; a < mEnd; a += 0.20f) {
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 19), cy + lroundf(sinf(a) * 19));
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 18), cy + lroundf(sinf(a) * 18));
-    }
-    u8g2.drawDisc(cx + lroundf(cosf(mEnd) * 18.5f), cy + lroundf(sinf(mEnd) * 18.5f), 1);
-
-    // Inner ring: Hours
-    float hFrac = ((t.tm_hour % 12) + t.tm_min / 60.0f) / 12.0f;
-    float hEnd  = hFrac * 6.2832f - 1.5708f;
-    for (float a = -1.5708f; a < hEnd; a += 0.25f) {
-      u8g2.drawPixel(cx + lroundf(cosf(a) * 12), cy + lroundf(sinf(a) * 12));
-    }
-
-    // Right side: Time + date + sec
+    // 1. ACTIVITY RINGS (pure integer LUT, zero FPU loops)
+    int cx = 29 + bx, cy = 32 + by;
+    drawDialRing(cx, cy, 27, t.tm_sec, true);
+    drawDialRing(cx, cy, 20, t.tm_min, true);
+    drawDialRing(cx, cy, 13, ((t.tm_hour % 12) * 5) + t.tm_min / 12, false);
     u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(62 + bx, 11 + by, date);
+    int aw = u8g2.getStrWidth(ap);
+    u8g2.drawStr(cx - aw / 2, cy + 3, ap);
+
+    drawDottedVLine(60, 2, 60);
+    u8g2.setFont(F_TINY);
+    drawTextFit(64, 8 + by, 62, date);
+    u8g2.drawHLine(63, 10 + by, 64);
 
     u8g2.setFont(F_HELV14);
-    u8g2.drawStr(62 + bx, 32 + by, hm);
+    u8g2.drawStr(64, 31 + by, hm);
 
-    char sl[12]; snprintf(sl, sizeof(sl), "SEC :%02d", t.tm_sec);
+    u8g2.setFont(F_SMALL);
+    char secTxt[12];
+    snprintf(secTxt, sizeof(secTxt), "SEC %02d", t.tm_sec);
+    u8g2.drawStr(64, 43 + by, secTxt);
+
+    drawBar(64, 46 + by, 62, 5, t.tm_sec / 60.0f);
+
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(62 + bx, 45 + by, sl);
-
-    u8g2.drawHLine(60 + bx, 48 + by, 66);
-    bool pulse = (millis() % 900) < 180;
-    char bpm[16]; snprintf(bpm, sizeof(bpm), "%s 72 BPM", pulse ? "<3" : " -");
-    u8g2.drawStr(62 + bx, 60 + by, bpm);
-    textRight(126, 60 + by, ap);
+    if (homeW.ok) drawTextFit(64, 61 + by, 62, wBuf);
+    else if (netOnline()) {
+      char nb[18]; snprintf(nb, sizeof(nb), "WiFi %ddBm", netRSSI());
+      u8g2.drawStr(64, 61 + by, nb);
+    } else {
+      u8g2.drawStr(64, 61 + by, "LOCAL RTC");
+    }
 
   } else if (!strcmp(style, "horizon")) {
-    // ============================================================= 2. HORIZON WAVE (LUT-accelerated)
-    uint32_t tMs = millis();
-    uint8_t wavePhase = (tMs >> 5) & 31;
-    int baseY = 46 + by;
+    // 2. HORIZON WAVE
+    drawHeader(date, homeW.ok ? wBuf : ap);
 
-    // Fast integer-based wave: step by 2 pixels for smooth 30 FPS rendering
+    u8g2.setFont(F_NUM24);
+    int hw = u8g2.getStrWidth(hStr), mw = u8g2.getStrWidth(mStr);
+    int cX = (128 - hw - 6 - mw) / 2 + bx;
+    drawDigits(0, hStr, cX, 38 + by, 24, anim);
+    drawColon(cX + hw + 2, 26 + by, 2);
+    drawDigits(1, mStr, cX + hw + 6, 38 + by, 24, anim);
+
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(cX + hw + 6 + mw + 3, 38 + by, sStr + 1);
+
+    uint8_t wavePh = (millis() >> 5) & 31;
+    int baseY = 50 + by;
     for (int x = 0; x < 128; x += 2) {
-      int w = (fastSin((x >> 2) + wavePhase) * 3 + fastCos((x >> 3) - wavePhase) * 2) >> 4;
-      int wy = baseY + w;
-      if (wy >= 0 && wy < 64) {
-        u8g2.drawPixel(x, wy);
-        u8g2.drawPixel(x + 1, wy);
-        for (int y = wy + 3; y < 64; y += 3) {
-          if (((x + y) & 3) == 0) u8g2.drawPixel(x, y);
-        }
+      int w = (fastSin((x >> 2) + wavePh) * 3 + fastCos((x >> 3) - wavePh) * 2) >> 4;
+      int wy = constrain(baseY + w, 42, 61);
+      u8g2.drawHLine(x, wy, 2);
+      for (int y = wy + 2; y < 64; y += 2) {
+        if (((x + y) & 3) == 0) u8g2.drawPixel(x, y);
       }
     }
-
-    // Date bar at top
-    u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(2 + bx, 8 + by, date);
-    if (homeW.ok) {
-      char tb[8]; snprintf(tb, sizeof(tb), "%d\xc2\xb0", (int)roundf(homeW.temp));
-      textRight(126, 8 + by, tb);
-    } else textRight(126, 8 + by, ap);
-
-    // Centre time elevated above wave with protective black background box
-    int h2 = t.tm_hour;
-    if (!h24) { h2 %= 12; if (!h2) h2 = 12; }
-    char hStr[4], mStr[4];
-    snprintf(hStr, sizeof(hStr), "%02d", h2);
-    snprintf(mStr, sizeof(mStr), "%02d", t.tm_min);
-    u8g2.setFont(F_NUM24);
-    int hw = u8g2.getStrWidth(hStr), mw2 = u8g2.getStrWidth(mStr);
-    int cX = (128 - hw - 6 - mw2) / 2 + bx;
-
-    u8g2.setDrawColor(0);
-    u8g2.drawBox(cX - 3, 14 + by, hw + mw2 + 12, 26);
-    u8g2.setDrawColor(1);
-
-    drawDigits(0, hStr, cX, 35 + by, 24, anim);
-    if ((millis() / 500) % 2 == 0) {
-      u8g2.drawBox(cX + hw + 1, 20 + by, 2, 2);
-      u8g2.drawBox(cX + hw + 1, 27 + by, 2, 2);
-    }
-    drawDigits(1, mStr, cX + hw + 5, 35 + by, 24, anim);
+    int sx = 2 + (t.tm_sec * 123) / 59;
+    int sw = (fastSin((sx >> 2) + wavePh) * 3 + fastCos((sx >> 3) - wavePh) * 2) >> 4;
+    u8g2.drawDisc(sx, constrain(baseY + sw - 1, 41, 61), 2);
 
   } else if (!strcmp(style, "pulse")) {
-    // ============================================================= 3. HEALTH ECG PULSE
-    // Header
-    u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(2 + bx, 8 + by, date);
-    textRight(126, 8 + by, ap);
-    u8g2.drawHLine(0, 10 + by, 128);
-
-    // Time centered in F_HELV14 with animated seconds
+    // 3. VITAL PULSE
+    drawHeader(date, ap);
     u8g2.setFont(F_HELV14);
     int tw = u8g2.getStrWidth(hm);
-    char sBuf[6]; snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
     u8g2.setFont(F_SMALL);
-    int sw = u8g2.getStrWidth(sBuf);
-    int startX = (128 - (tw + sw + 2)) / 2 + bx;
-
+    int sw = u8g2.getStrWidth(sStr);
+    int startX = (128 - tw - sw - 2) / 2 + bx;
     u8g2.setFont(F_HELV14);
-    u8g2.drawStr(startX, 26 + by, hm);
+    u8g2.drawStr(startX, 27 + by, hm);
     u8g2.setFont(F_SMALL);
-    u8g2.drawStr(startX + tw + 2, 26 + by, sBuf);
+    u8g2.drawStr(startX + tw + 2, 27 + by, sStr);
 
-    // ECG wave
     uint32_t ms = millis();
-    int beatX = (int)(ms / 15) % 128;
-    static const int8_t ecgShape[16] = {0, 1, 2, 0, -2, 8, -5, 0, 1, 3, 2, 0, 0, 0, 0, 0};
+    int beatX = (int)(ms / 18) % 128;
+    static const int8_t ecg[14] = {0, 1, 2, 0, -2, 8, -5, 0, 1, 3, 2, 0, 0, 0};
     for (int x = 0; x < 128; x++) {
       int dist = (x - beatX + 128) % 128;
-      int yo = 0;
-      if (dist < 16) yo = ecgShape[dist];
-      u8g2.drawPixel(x, 40 + by - yo);
+      int yo = (dist < 14) ? ecg[dist] : 0;
+      u8g2.drawPixel(x, 41 + by - yo);
     }
-    u8g2.drawDisc(beatX, 40 + by, 1);
+    u8g2.drawDisc(beatX, 41 + by, 1);
 
-    // Bottom: BPM left, seconds progress bar middle, seconds label right
-    u8g2.drawHLine(0, 48 + by, 128);
-    bool pulse2 = (ms % 850) < 170;
+    drawDottedHLine(0, 50, 128);
     u8g2.setFont(F_TINY);
-    char bpm2[14]; snprintf(bpm2, sizeof(bpm2), "%s 72 BPM", pulse2 ? "<3" : " -");
-    u8g2.drawStr(2 + bx, 60 + by, bpm2);
-    drawBar(56 + bx, 53 + by, 46, 5, t.tm_sec / 60.0f);
-    textRight(126, 60 + by, sBuf);
+    if (homeW.ok) drawTextFit(2, 61, 44, wBuf);
+    else u8g2.drawStr(2, 61, netOnline() ? "SYNC OK" : "OFFLINE");
+    drawBar(48, 54, 52, 5, t.tm_sec / 60.0f);
+    textRight(126, 61, sStr);
 
   } else if (!strcmp(style, "orbit")) {
-    // ============================================================= 4. PLANETARY ORBIT
-    int cx = 28 + bx, cy = 32 + by;
-
-    // Celestial Globe
-    u8g2.drawCircle(cx, cy, 14);
-    u8g2.drawEllipse(cx, cy, 14, 5);
-    u8g2.drawHLine(cx - 14, cy, 29);
-
-    // Orbiting Satellite
-    float oa = millis() * 0.0020f;
-    int ox = cx + lroundf(cosf(oa) * 22);
-    int oy = cy + lroundf(sinf(oa) * 9);
+    // 4. PLANETARY ORBIT
+    int cx = 29 + bx, cy = 32 + by;
+    u8g2.drawCircle(cx, cy, 11);
+    u8g2.drawEllipse(cx, cy, 11, 4);
+    u8g2.drawEllipse(cx, cy, 24, 10);
+    int st60 = (int)((millis() / 80) % 60);
+    int ox = cx + (sin60(st60) * 24) / 127;
+    int oy = cy - (cos60(st60) * 10) / 127;
     u8g2.drawDisc(ox, oy, 2);
+    int ox2 = cx + (sin60((st60 + 30) % 60) * 16) / 127;
+    int oy2 = cy - (cos60((st60 + 30) % 60) * 7) / 127;
+    u8g2.drawPixel(ox2, oy2);
 
-    // Right: stacked HH / MM with separator
-    int h3 = t.tm_hour;
-    if (!h24) { h3 %= 12; if (!h3) h3 = 12; }
-    char hStr2[4], mStr2[4];
-    snprintf(hStr2, sizeof(hStr2), "%02d", h3);
-    snprintf(mStr2, sizeof(mStr2), "%02d", t.tm_min);
+    u8g2.drawVLine(60, 2, 60);
+    u8g2.setFont(F_TINY);
+    drawTextFit(64, 7, 62, date);
+    u8g2.drawHLine(62, 9, 64);
 
     u8g2.setFont(F_NUM24);
-    drawDigits(1, hStr2, 70 + bx, 27 + by, 24, anim);
-    u8g2.drawHLine(68 + bx, 31 + by, 56);
-    drawDigits(2, mStr2, 70 + bx, 55 + by, 24, anim);
-
-    // Day label + seconds
+    drawDigits(1, hStr, 65 + bx, 34, 24, anim);
     u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(70 + bx, 7 + by, WDAY[t.tm_wday]);
-    char sBuf[6]; snprintf(sBuf, sizeof(sBuf), ":%02d", t.tm_sec);
-    textRight(126, 55 + by, sBuf);
+    textRight(126, 22, ap);
+
+    u8g2.drawHLine(62, 36, 64);
+    u8g2.setFont(F_NUM24);
+    drawDigits(2, mStr, 65 + bx, 62, 24, anim);
+    u8g2.setFont(F_SMALL);
+    textRight(126, 61, sStr);
 
   } else if (!strcmp(style, "chrono")) {
-    // ============================================================= 5. CHRONOGRAPH PRO
-    int cx = 64 + bx, cy = 32 + by, r = 30;
+    // 5. CHRONOGRAPH PRO
+    int cx = 31 + bx, cy = 32 + by, r = 29;
     u8g2.drawCircle(cx, cy, r);
-
-    // 12 hour ticks
-    for (int h = 0; h < 12; h++) {
-      float q = h * 30 * PI / 180.0f - 1.5708f;
-      int inner = (h % 3 == 0) ? 23 : 26;
-      u8g2.drawLine(cx + lroundf(cosf(q) * inner), cy + lroundf(sinf(q) * inner),
-                    cx + lroundf(cosf(q) * 28), cy + lroundf(sinf(q) * 28));
+    for (int i = 0; i < 12; i++) {
+      int st = i * 5;
+      int inner = (i % 3 == 0) ? r - 6 : r - 3;
+      u8g2.drawLine(dialX(cx, inner, st), dialY(cy, inner, st), dialX(cx, r - 1, st), dialY(cy, r - 1, st));
     }
+    int subY = cy + 13;
+    u8g2.drawCircle(cx, subY, 7);
+    u8g2.drawLine(cx, subY, dialX(cx, 5, t.tm_sec), dialY(subY, 5, t.tm_sec));
+    u8g2.drawDisc(cx, subY, 1);
 
-    // Lower Subdial (Seconds sweep at 6 o'clock)
-    int lx = 64 + bx, ly = 43 + by;
-    u8g2.drawCircle(lx, ly, 7);
-    float sAng = t.tm_sec * 6.2832f / 60.0f - 1.5708f;
-    u8g2.drawLine(lx, ly, lx + lroundf(cosf(sAng) * 5), ly + lroundf(sinf(sAng) * 5));
-    u8g2.drawDisc(lx, ly, 1);
-
-    // Main Hands
-    float minuA = (t.tm_min + t.tm_sec / 60.0f) * 6.2832f / 60.0f - 1.5708f;
-    float hourA = ((t.tm_hour % 12) + t.tm_min / 60.0f) * 6.2832f / 12.0f - 1.5708f;
-
-    // Hour hand (thick)
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(hourA) * 14), cy + lroundf(sinf(hourA) * 14));
-    u8g2.drawLine(cx + 1, cy, cx + lroundf(cosf(hourA) * 14) + 1, cy + lroundf(sinf(hourA) * 14));
-    // Minute hand
-    u8g2.drawLine(cx, cy, cx + lroundf(cosf(minuA) * 22), cy + lroundf(sinf(minuA) * 22));
+    int hStep = ((t.tm_hour % 12) * 5 + t.tm_min / 12) % 60;
+    int hx = dialX(cx, 14, hStep), hy = dialY(cy, 14, hStep);
+    u8g2.drawLine(cx, cy, hx, hy);
+    u8g2.drawLine(cx + 1, cy, hx + 1, hy);
+    u8g2.drawLine(cx, cy, dialX(cx, 22, t.tm_min), dialY(cy, 22, t.tm_min));
     u8g2.drawDisc(cx, cy, 2);
 
-    // Digital time inset at 12 o'clock
+    u8g2.drawRFrame(66, 2, 60, 19, 2);
     u8g2.setFont(F_TINY);
-    int tw4 = u8g2.getStrWidth(hm);
-    u8g2.drawStr(cx - tw4 / 2, cy - 14, hm);
+    u8g2.drawStr(70, 10, WDAY[t.tm_wday]);
+    textRight(122, 10, ap);
+    u8g2.setFont(F_SMALL);
+    char md[12]; snprintf(md, sizeof(md), "%d %s", t.tm_mday, MONTH[t.tm_mon]);
+    u8g2.drawStr(70, 18, md);
 
-    // Date window at 3 o'clock
-    char dStr[6]; snprintf(dStr, sizeof(dStr), "%d", t.tm_mday);
-    u8g2.drawStr(cx + 15, cy + 3, dStr);
+    u8g2.drawRFrame(66, 24, 60, 21, 2);
+    u8g2.setFont(F_MED);
+    u8g2.drawStr(71, 38, hm);
+    u8g2.setFont(F_TINY);
+    textRight(122, 38, sStr);
+
+    u8g2.drawRFrame(66, 48, 60, 14, 2);
+    u8g2.setFont(F_TINY);
+    if (homeW.ok) drawTextFit(70, 57, 52, wBuf);
+    else {
+      drawBar(70, 52, 52, 5, t.tm_sec / 60.0f);
+    }
 
   } else if (!strcmp(style, "stacked")) {
-    // ============================================================= 6. STACKED — Nike Typeface
-    u8g2.drawVLine(43 + bx, 0, 64);
-
-    // Left column: day, date, month, temp
+    // 6. NIKE STACKED
+    u8g2.drawRFrame(2, 2, 39, 60, 3);
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(2 + bx, 10 + by, WDAY[t.tm_wday]);
+    drawTextFitCenter(21, 12, 34, WDAY[t.tm_wday]);
     char dBuf[4]; snprintf(dBuf, sizeof(dBuf), "%d", t.tm_mday);
     u8g2.setFont(F_HELV14);
-    u8g2.drawStr(2 + bx, 27 + by, dBuf);
+    int dw = u8g2.getStrWidth(dBuf);
+    u8g2.drawStr(21 - dw / 2, 30, dBuf);
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(2 + bx, 41 + by, MONTH[t.tm_mon]);
+    drawTextFitCenter(21, 42, 34, MONTH[t.tm_mon]);
+    u8g2.setFont(F_TINY);
     if (homeW.ok) {
-      char tb[8]; snprintf(tb, sizeof(tb), "%d\xc2\xb0", (int)roundf(homeW.temp));
-      u8g2.drawUTF8(2 + bx, 58 + by, tb);
-    } else {
-      u8g2.drawStr(2 + bx, 58 + by, ap);
-    }
-
-    // Right: HH / MM stacked (cleanly sized so descent never exceeds 63)
-    int h4 = t.tm_hour;
-    if (!h24) { h4 %= 12; if (!h4) h4 = 12; }
-    char hStr3[4], mStr3[4];
-    snprintf(hStr3, sizeof(hStr3), "%02d", h4);
-    snprintf(mStr3, sizeof(mStr3), "%02d", t.tm_min);
+      char tb[10]; snprintf(tb, sizeof(tb), "%d°%s", (int)roundf(homeW.temp), tu);
+      drawTextFitCenter(21, 56, 34, tb);
+    } else drawTextFitCenter(21, 56, 34, ap);
 
     u8g2.setFont(F_NUM24);
-    drawDigits(1, hStr3, 50 + bx, 27 + by, 24, anim);
-    u8g2.drawHLine(47 + bx, 31 + by, 78);
-    drawDigits(2, mStr3, 50 + bx, 57 + by, 24, anim);
+    drawDigits(1, hStr, 48 + bx, 29, 24, anim);
+    u8g2.setFont(F_TINY);
+    u8g2.drawRFrame(98, 12, 24, 10, 2);
+    drawTextFitCenter(110, 19, 20, ap);
 
-    // Blinking colon indicator on divider
-    if ((millis() / 500) % 2 == 0) {
-      u8g2.drawBox(46 + bx, 29 + by, 2, 2);
-      u8g2.drawBox(46 + bx, 33 + by, 2, 2);
-    }
+    u8g2.drawHLine(47, 32, 77);
+    drawColon(45, 32, 2);
 
-    // Orbiting second dot along perimeter (strictly clamped within 0..127 and 0..63)
+    u8g2.setFont(F_NUM24);
+    drawDigits(2, mStr, 48 + bx, 60, 24, anim);
+    u8g2.setFont(F_MED);
+    textRight(123, 58, sStr);
+
     int perim = (t.tm_sec * 376 + (millis() % 1000) * 376 / 1000) / 60;
-    int odx, ody;
-    if (perim < 126)      { odx = perim + 1; ody = 0; }
-    else if (perim < 188) { odx = 127; ody = perim - 126; }
-    else if (perim < 314) { odx = 127 - (perim - 188); ody = 63; }
-    else                  { odx = 0; ody = 63 - (perim - 314); }
-    u8g2.drawPixel(odx, ody);
-    if (odx > 0 && odx < 127 && ody > 0 && ody < 63) u8g2.drawDisc(odx, ody, 1);
+    int odx = 0, ody = 0;
+    if (perim < 127)      { odx = perim; ody = 0; }
+    else if (perim < 190) { odx = 127; ody = perim - 127; }
+    else if (perim < 317) { odx = 127 - (perim - 190); ody = 63; }
+    else                  { odx = 0; ody = 63 - (perim - 317); }
+    u8g2.drawDisc(constrain(odx, 1, 126), constrain(ody, 1, 62), 1);
 
   } else if (!strcmp(style, "cube")) {
-    // ============================================================= 7. 3D WIREFRAME CUBE
-    float ax5 = millis() * 0.00085f, ay5 = millis() * 0.00110f, az5 = millis() * 0.00065f;
-    float cax = cosf(ax5), sax = sinf(ax5), cay = cosf(ay5), say = sinf(ay5), caz = cosf(az5), saz = sinf(az5);
+    // 7. 3D WIREFRAME CUBE (LUT accelerated, zero overlap)
+    uint32_t ms = millis();
+    uint8_t ax = (ms / 48) & 31, ay = (ms / 36) & 31, az = (ms / 62) & 31;
+    int sax = fastSin(ax), cax = fastCos(ax);
+    int say = fastSin(ay), cay = fastCos(ay);
+    int saz = fastSin(az), caz = fastCos(az);
     int sx5[8], sy5[8];
     for (int i = 0; i < 8; i++) {
-      float xv = (i & 1) ? 1.0f : -1.0f, yv = (i & 2) ? 1.0f : -1.0f, zv = (i & 4) ? 1.0f : -1.0f;
-      float y1 = yv * cax - zv * sax, z1 = yv * sax + zv * cax;
-      float x2 = xv * cay + z1 * say, z2 = -xv * say + z1 * cay;
-      float x3 = x2 * caz - y1 * saz, y3 = x2 * saz + y1 * caz;
-      float scale = 54.0f / (z2 + 4.0f);
-      sx5[i] = 30 + bx + lroundf(x3 * scale);
-      sy5[i] = 32 + by + lroundf(y3 * scale);
+      int xv = (i & 1) ? 28 : -28;
+      int yv = (i & 2) ? 28 : -28;
+      int zv = (i & 4) ? 28 : -28;
+      int y1 = (yv * cax - zv * sax) / 28, z1 = (yv * sax + zv * cax) / 28;
+      int x2 = (xv * cay + z1 * say) / 28, z2 = (-xv * say + z1 * cay) / 28;
+      int x3 = (x2 * caz - y1 * saz) / 28, y3 = (x2 * saz + y1 * caz) / 28;
+      int d = 115 + z2;
+      sx5[i] = 30 + bx + (x3 * 52) / d;
+      sy5[i] = 32 + by + (y3 * 52) / d;
     }
     for (int i = 0; i < 8; i++) {
       for (int bit = 0; bit < 3; bit++) {
         int j = i ^ (1 << bit);
         if (i < j) u8g2.drawLine(sx5[i], sy5[i], sx5[j], sy5[j]);
       }
+      u8g2.drawPixel(sx5[i], sy5[i]);
     }
 
-    // Right panel: clean time display
-    int h5 = t.tm_hour;
-    if (!h24) { h5 %= 12; if (!h5) h5 = 12; }
-    char hStr4[4], mStr4[4];
-    snprintf(hStr4, sizeof(hStr4), "%02d", h5);
-    snprintf(mStr4, sizeof(mStr4), "%02d", t.tm_min);
-
-    u8g2.drawVLine(66 + bx, 0, 64);
-    u8g2.setFont(F_NUM24);
-    drawDigits(1, hStr4, 72 + bx, 27 + by, 24, anim);
-    u8g2.drawHLine(70 + bx, 30 + by, 54);
-    drawDigits(2, mStr4, 72 + bx, 56 + by, 24, anim);
-
+    u8g2.drawVLine(62, 2, 60);
     u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(72 + bx, 7 + by, WDAY[t.tm_wday]);
-    char sBuf2[6]; snprintf(sBuf2, sizeof(sBuf2), ":%02d", t.tm_sec);
-    textRight(126, 56 + by, sBuf2);
+    drawTextFit(66, 7, 60, date);
+    u8g2.drawHLine(64, 9, 62);
+
+    u8g2.setFont(F_NUM24);
+    drawDigits(1, hStr, 67 + bx, 34, 24, anim);
+    u8g2.setFont(F_TINY);
+    textRight(126, 22, ap);
+
+    u8g2.drawHLine(64, 36, 62);
+    u8g2.setFont(F_NUM24);
+    drawDigits(2, mStr, 67 + bx, 62, 24, anim);
+    u8g2.setFont(F_SMALL);
+    textRight(126, 61, sStr);
 
   } else if (!strcmp(style, "matrix")) {
-    // ============================================================= 8. MATRIX RAIN
+    // 8. MATRIX RAIN
     uint32_t now6 = millis();
-    static const int8_t laneX[14]    = {4, 13, 22, 31, 40, 49, 58, 67, 76, 85, 94, 103, 112, 121};
-    static const uint8_t laneSpd[14] = {31, 53, 37, 71, 43, 33, 67, 47, 83, 59, 41, 73, 53, 43};
-    for (int lane = 0; lane < 14; lane++) {
+    static const uint8_t laneSpd[16] = {31, 53, 37, 71, 43, 33, 67, 47, 83, 59, 41, 73, 53, 43, 61, 49};
+    for (int lane = 0; lane < 16; lane++) {
       uint32_t tick = now6 / laneSpd[lane];
       int head6 = (int)(tick * 3) % 86 - 16;
+      int x6 = 2 + lane * 8;
       for (int n = 0; n < 6; n++) {
-        int y6 = head6 - n * 7 + by;
+        int y6 = head6 - n * 7;
         if (y6 < 0 || y6 >= 64) continue;
-        int x6 = laneX[lane];
-        if (n == 0)      u8g2.drawBox(x6, y6, 2, 3);
-        else             u8g2.drawPixel(x6, y6);
+        if (n == 0) u8g2.drawBox(x6, y6, 2, 3);
+        else u8g2.drawPixel(x6, y6);
       }
     }
-
-    // Floating double-border time plate in center
-    int h6 = t.tm_hour;
-    if (!h24) { h6 %= 12; if (!h6) h6 = 12; }
-    char hStr5[4], mStr5[4];
-    snprintf(hStr5, sizeof(hStr5), "%02d", h6);
-    snprintf(mStr5, sizeof(mStr5), "%02d", t.tm_min);
+    int px = 11 + bx, pw = 106;
+    u8g2.setDrawColor(0);
+    u8g2.drawRBox(px, 9, pw, 36, 3);
+    u8g2.setDrawColor(1);
+    u8g2.drawRFrame(px, 9, pw, 36, 3);
+    u8g2.drawRFrame(px + 2, 11, pw - 4, 32, 2);
 
     u8g2.setFont(F_NUM24);
-    int hw5 = u8g2.getStrWidth(hStr5), mw5 = u8g2.getStrWidth(mStr5);
-    int gap5 = 6;
-    int plateW = hw5 + gap5 + mw5 + 24;
-    int plateX = (128 - plateW) / 2 + bx;
+    int hw5 = u8g2.getStrWidth(hStr), mw5 = u8g2.getStrWidth(mStr);
+    int sx5 = px + 8;
+    drawDigits(0, hStr, sx5, 39, 24, anim);
+    drawColon(sx5 + hw5 + 2, 27, 2);
+    drawDigits(1, mStr, sx5 + hw5 + 7, 39, 24, anim);
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(sx5 + hw5 + 7 + mw5 + 3, 39, sStr);
 
-    u8g2.setDrawColor(0);
-    u8g2.drawRBox(plateX - 2, 12 + by, plateW + 4, 34, 3);
-    u8g2.setDrawColor(1);
-    u8g2.drawRFrame(plateX - 2, 12 + by, plateW + 4, 34, 3);
-    u8g2.drawRFrame(plateX,     14 + by, plateW,     30, 2);
-
-    int startX5 = plateX + 10;
-    drawDigits(0, hStr5, startX5,              38 + by, 24, anim);
-    if ((millis() / 500) % 2 == 0) {
-      u8g2.drawBox(startX5 + hw5 + 2, 23 + by, 2, 2);
-      u8g2.drawBox(startX5 + hw5 + 2, 30 + by, 2, 2);
-    }
-    drawDigits(1, mStr5, startX5 + hw5 + gap5, 38 + by, 24, anim);
-
-    // Date at bottom with clear-box so matrix rain doesn't interfere
     u8g2.setFont(F_TINY);
-    int dw = u8g2.getUTF8Width(date);
-    int dx = (128 - dw) / 2 + bx;
+    int dw = u8g2.getUTF8Width(date) + 22;
+    int dx = (128 - dw) / 2;
     u8g2.setDrawColor(0);
-    u8g2.drawBox(dx - 3, 52 + by, dw + 6, 11);
+    u8g2.drawRBox(dx, 49, dw, 13, 2);
     u8g2.setDrawColor(1);
-    u8g2.drawUTF8(dx, 61 + by, date);
+    u8g2.drawRFrame(dx, 49, dw, 13, 2);
+    char foot[36]; snprintf(foot, sizeof(foot), "%s · %s", date, ap);
+    drawTextFitCenter(64, 58, dw - 6, foot);
 
   } else if (!strcmp(style, "scan")) {
-    // ============================================================= 9. RADAR SCAN
-    uint32_t now7 = millis();
-    int rcx = 30 + bx, rcy = 32 + by, rr = 26;
-
-    // Circle + cross-hair
-    u8g2.drawCircle(rcx, rcy, rr);
-    u8g2.drawCircle(rcx, rcy, rr / 2);
-    u8g2.drawPixel(rcx, rcy);
-    for (int i = 0; i < rr; i += 4) {
-      u8g2.drawPixel(rcx + i, rcy);
-      u8g2.drawPixel(rcx - i, rcy);
-      u8g2.drawPixel(rcx, rcy + i);
-      u8g2.drawPixel(rcx, rcy - i);
+    // 9. RADAR SCAN (LUT accelerated)
+    int cx = 30 + bx, cy = 32 + by, rr = 28;
+    u8g2.drawCircle(cx, cy, rr);
+    u8g2.drawCircle(cx, cy, 18);
+    u8g2.drawCircle(cx, cy, 9);
+    for (int i = -rr + 3; i < rr; i += 4) {
+      u8g2.drawPixel(cx + i, cy);
+      u8g2.drawPixel(cx, cy + i);
     }
+    int sw = (int)((millis() / 50) % 60);
+    u8g2.drawLine(cx, cy, dialX(cx, rr - 1, sw), dialY(cy, rr - 1, sw));
+    u8g2.drawDisc(dialX(cx, rr - 4, t.tm_sec), dialY(cy, rr - 4, t.tm_sec), 2);
 
-    // Rotating sweep line
-    float sweepA = (now7 % 3000) * 6.2832f / 3000.0f - 1.5708f;
-    u8g2.drawLine(rcx, rcy, rcx + lroundf(cosf(sweepA) * (rr - 1)), rcy + lroundf(sinf(sweepA) * (rr - 1)));
-    float pingA = t.tm_sec * 6.2832f / 60.0f - 1.5708f;
-    u8g2.drawDisc(rcx + lroundf(cosf(pingA) * (rr - 3)), rcy + lroundf(sinf(pingA) * (rr - 3)), 2);
-
-    // Right panel: time + date
-    u8g2.drawVLine(64 + bx, 0, 64);
-    u8g2.setFont(F_HELV14);
-    u8g2.drawStr(68 + bx, 24 + by, hm);
+    u8g2.drawVLine(62, 2, 60);
+    u8g2.drawRBox(65, 2, 61, 10, 2);
+    u8g2.setDrawColor(0);
     u8g2.setFont(F_TINY);
-    u8g2.drawUTF8(68 + bx, 8 + by, date);
-    char sBuf3[6]; snprintf(sBuf3, sizeof(sBuf3), ":%02d", t.tm_sec);
-    u8g2.drawStr(68 + bx, 36 + by, sBuf3);
-    u8g2.drawHLine(66 + bx, 40 + by, 58);
-    u8g2.drawStr(68 + bx, 51 + by, "RADAR");
-    u8g2.drawStr(68 + bx, 61 + by, "ACTIVE");
+    u8g2.drawStr(68, 9, "RADAR");
+    textRight(123, 9, ap);
+    u8g2.setDrawColor(1);
+
+    u8g2.setFont(F_SMALL);
+    drawTextFit(65, 22, 61, date);
+    u8g2.setFont(F_HELV14);
+    u8g2.drawStr(65, 39, hm);
+
+    drawBar(65, 43, 41, 5, t.tm_sec / 60.0f);
+    u8g2.setFont(F_TINY);
+    textRight(126, 48, sStr);
+
+    drawDottedHLine(65, 52, 61);
+    if (homeW.ok) drawTextFit(65, 61, 61, wBuf);
+    else if (netOnline()) {
+      char nb[18]; snprintf(nb, sizeof(nb), "RSSI %ddBm", netRSSI());
+      u8g2.drawStr(65, 61, nb);
+    } else u8g2.drawStr(65, 61, "SCANNING");
 
   } else if (!strcmp(style, "data")) {
-    // ============================================================= 10. CYBERPUNK DATA HUD
+    // 10. TECH HUD
+    u8g2.drawRBox(0, 0, 128, 11, 1);
+    u8g2.setDrawColor(0);
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(2 + bx, 7 + by, "ESP32-C3 SUPER MINI");
+    u8g2.drawStr(3, 8, "EMO // SYS HUD");
     if (netOnline()) {
       char rb[16]; snprintf(rb, sizeof(rb), "%ddBm", netRSSI());
-      textRight(126, 7 + by, rb);
-    } else textRight(126, 7 + by, "OFFLINE");
-    u8g2.drawHLine(0, 9 + by, 128);
+      textRight(125, 8, rb);
+    } else textRight(125, 8, "OFFLINE");
+    u8g2.setDrawColor(1);
 
-    // Terminal lines
-    u8g2.setFont(F_SMALL);
-    char tl[28]; snprintf(tl, sizeof(tl), ">> %02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
-    u8g2.drawStr(2 + bx, 20 + by, tl);
-
-    char dl[32]; snprintf(dl, sizeof(dl), ">> %s %02d/%02d/%04d",
-      WDAY[t.tm_wday], t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
-    u8g2.drawStr(2 + bx, 31 + by, dl);
-
-    if (homeW.ok) {
-      char wl[32];
-      const char* tu = (cfg["units"] == "imperial") ? "F" : "C";
-      snprintf(wl, sizeof(wl), ">> %d\xc2\xb0%s %s", (int)roundf(homeW.temp), tu, wmoText(homeW.code));
-      u8g2.setFont(F_TINY);
-      u8g2.drawUTF8(2 + bx, 42 + by, wl);
-    } else {
-      u8g2.drawStr(2 + bx, 42 + by, ">> READY");
-    }
-
-    u8g2.drawHLine(0, 48 + by, 128);
-
-    // Status bar: heap + seconds loading bar (x=52..102, 50px wide) + seconds label (x=106..124)
-    char ml[20]; snprintf(ml, sizeof(ml), "MEM %uK", (unsigned)(ESP.getFreeHeap() / 1024));
+    u8g2.setFont(F_BOLD);
+    char tl[20]; snprintf(tl, sizeof(tl), "> %s%s", hm, sStr);
+    u8g2.drawStr(2, 24, tl);
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(2 + bx, 60 + by, ml);
-    drawBar(50 + bx, 53 + by, 50, 5, t.tm_sec / 60.0f);
+    textRight(126, 23, ap);
+
+    u8g2.setFont(F_SMALL);
+    char dl[28];
+    snprintf(dl, sizeof(dl), "> %s %02d/%02d/%04d", WDAY[t.tm_wday], t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
+    u8g2.drawStr(2, 35, dl);
+
+    u8g2.setFont(F_TINY);
+    char env[36];
+    if (homeW.ok) snprintf(env, sizeof(env), "> ENV %s", wBuf);
+    else snprintf(env, sizeof(env), "> IP  %s", netIP().c_str());
+    drawTextFit(2, 46, 124, env);
+
+    drawDottedHLine(0, 50, 128);
+    char ml[18]; snprintf(ml, sizeof(ml), "MEM %uK", (unsigned)(ESP.getFreeHeap() / 1024));
+    u8g2.drawStr(2, 61, ml);
+    drawBar(46, 54, 56, 6, t.tm_sec / 60.0f);
     char sp2[8]; snprintf(sp2, sizeof(sp2), "%02ds", t.tm_sec);
-    textRight(126, 60 + by, sp2);
+    textRight(126, 61, sp2);
 
   } else if (!strcmp(style, "normal")) {
-    // ============================================================= 11. CLEAN CLASSIC
-    // Top: bold day + date
+    // 11. CLASSIC TICKER
     u8g2.setFont(F_BOLD);
     u8g2.drawUTF8(2 + bx, 10 + by, WDAY[t.tm_wday]);
     u8g2.setFont(F_SMALL);
-    char dLine[20]; snprintf(dLine, sizeof(dLine), "%d %s", t.tm_mday, MONTH[t.tm_mon]);
+    char dLine[20]; snprintf(dLine, sizeof(dLine), "%d %s %04d", t.tm_mday, MONTH[t.tm_mon], t.tm_year + 1900);
     textRight(126, 10 + by, dLine);
     u8g2.drawHLine(0, 12 + by, 128);
 
-    // Centre: time in F_NUM24 with animated digits (baseline 38: top=19, bottom=43, divider at 45)
-    int h6 = t.tm_hour;
-    if (!h24) { h6 %= 12; if (!h6) h6 = 12; }
-    char hStr5[4], mStr5[4];
-    snprintf(hStr5, sizeof(hStr5), "%02d", h6);
-    snprintf(mStr5, sizeof(mStr5), "%02d", t.tm_min);
     u8g2.setFont(F_NUM24);
-    int hw6 = u8g2.getStrWidth(hStr5), mw6 = u8g2.getStrWidth(mStr5);
-    int cX6 = (128 - hw6 - 6 - mw6) / 2 + bx;
-    drawDigits(0, hStr5, cX6,          38 + by, 24, anim);
-    if ((millis() / 500) % 2 == 0) {
-      u8g2.drawBox(cX6 + hw6 + 2, 23 + by, 2, 2);
-      u8g2.drawBox(cX6 + hw6 + 2, 30 + by, 2, 2);
-    }
-    drawDigits(1, mStr5, cX6 + hw6 + 6, 38 + by, 24, anim);
+    int hw6 = u8g2.getStrWidth(hStr), mw6 = u8g2.getStrWidth(mStr);
+    int cX6 = (98 - hw6 - 6 - mw6) / 2 + 4 + bx;
+    if (cX6 < 2) cX6 = 2;
+    drawDigits(0, hStr, cX6, 41 + by, 24, anim);
+    drawColon(cX6 + hw6 + 2, 29 + by, 2);
+    drawDigits(1, mStr, cX6 + hw6 + 6, 41 + by, 24, anim);
 
-    // Seconds tag
-    u8g2.setFont(F_SMALL);
-    char sBuf4[6]; snprintf(sBuf4, sizeof(sBuf4), ":%02d", t.tm_sec);
-    textRight(126, 38 + by, sBuf4);
+    u8g2.setFont(F_TINY);
+    textRight(125, 25 + by, ap);
+    u8g2.setFont(F_MED);
+    textRight(125, 41 + by, sStr);
 
-    // Bottom separator + info
-    u8g2.drawHLine(0, 45 + by, 128);
-    int secLine6 = (t.tm_sec * 128) / 60;
-    if (secLine6 > 0) u8g2.drawHLine(0, 46 + by, secLine6);
+    u8g2.drawHLine(0, 46 + by, 128);
+    int secPx = (t.tm_sec * 128) / 59;
+    if (secPx > 0) u8g2.drawBox(0, 46 + by, secPx, 2);
 
     u8g2.setFont(F_TINY);
     if (netOnline()) {
-      char nb[20]; snprintf(nb, sizeof(nb), "WiFi %ddBm", netRSSI());
-      u8g2.drawStr(2 + bx, 59 + by, nb);
-    } else u8g2.drawStr(2 + bx, 59 + by, "OFFLINE");
+      drawSignalBars(2, 61 + by, netRSSI());
+      char nb[18]; snprintf(nb, sizeof(nb), "%ddBm", netRSSI());
+      u8g2.drawStr(21, 61 + by, nb);
+    } else u8g2.drawStr(2, 61 + by, "OFFLINE");
 
-    if (homeW.ok) {
-      char tb[8]; snprintf(tb, sizeof(tb), "%d\xc2\xb0", (int)roundf(homeW.temp));
-      textRight(126, 59 + by, tb);
-    } else {
-      char hb[12]; snprintf(hb, sizeof(hb), "HEAP %uK", (unsigned)(ESP.getFreeHeap()/1024));
-      textRight(126, 59 + by, hb);
+    if (homeW.ok) drawTextRightFit(126, 61 + by, 68, wBuf);
+    else {
+      char hb[16]; snprintf(hb, sizeof(hb), "HEAP %uK", (unsigned)(ESP.getFreeHeap() / 1024));
+      textRight(126, 61 + by, hb);
     }
 
   } else {
-    // ============================================================= 12. BIG TIME (Modern Giant)
-    int h7 = t.tm_hour;
-    if (!h24) { h7 %= 12; if (!h7) h7 = 12; }
-    char hStr6[4], mStr6[4];
-    snprintf(hStr6, sizeof(hStr6), "%02d", h7);
-    snprintf(mStr6, sizeof(mStr6), "%02d", t.tm_min);
+    // 12. MODERN BIG TIME (zero top/bottom overlap)
+    u8g2.setFont(F_TINY);
+    if (homeW.ok) drawTextFit(2 + bx, 8 + by, 92, wBuf);
+    else u8g2.drawStr(2 + bx, 8 + by, netOnline() ? "SYNCED" : "LOCAL");
+    u8g2.drawRFrame(103, 0 + by, 24, 9, 2);
+    drawTextFitCenter(115, 7 + by, 20, ap);
+    u8g2.drawHLine(0, 10 + by, 128);
 
-    // Giant digits at baseline 44 (top=10, bottom=51)
-    u8g2.setFont(F_NUM42);
-    int hw7 = u8g2.getStrWidth(hStr6), mw7 = u8g2.getStrWidth(mStr6);
-    int gap7 = 8;
-    int cX7 = (128 - hw7 - gap7 - mw7) / 2 + bx;
-    if (cX7 < 0) cX7 = 0;
-    drawDigits(0, hStr6, cX7,            44 + by, 42, anim);
-    drawDigits(1, mStr6, cX7 + hw7 + gap7, 44 + by, 42, anim);
+    u8g2.setFont(F_NUM32);
+    int hw7 = u8g2.getStrWidth(hStr), mw7 = u8g2.getStrWidth(mStr);
+    int cX7 = (102 - hw7 - 7 - mw7) / 2 + 2 + bx;
+    if (cX7 < 2) cX7 = 2;
+    drawDigits(0, hStr, cX7, 46 + by, 32, anim);
+    drawColon(cX7 + hw7 + 2, 30 + by, 3);
+    drawDigits(1, mStr, cX7 + hw7 + 7, 46 + by, 32, anim);
 
-    // Blinking colon dots centered
-    if ((millis() / 500) % 2 == 0) {
-      u8g2.drawBox(cX7 + hw7 + 2, 21 + by, 3, 3);
-      u8g2.drawBox(cX7 + hw7 + 2, 33 + by, 3, 3);
-    }
+    u8g2.setFont(F_MED);
+    textRight(126, 46 + by, sStr);
 
-    // AM/PM badge (12h only) — top right corner
-    if (!h24) {
-      u8g2.setFont(F_TINY);
-      u8g2.drawRFrame(108, 1 + by, 18, 9, 2);
-      u8g2.drawStr(111, 8 + by, ap);
-    }
+    u8g2.drawHLine(0, 50 + by, 128);
+    int sPx = (t.tm_sec * 128) / 59;
+    if (sPx > 0) u8g2.drawBox(0, 50 + by, sPx, 2);
 
-    // Weather / temp — top left
-    if (homeW.ok) {
-      char tb2[8]; snprintf(tb2, sizeof(tb2), "%d\xc2\xb0", (int)roundf(homeW.temp));
-      u8g2.setFont(F_TINY);
-      u8g2.drawUTF8(2 + bx, 8 + by, tb2);
-    }
-
-    // Thin separator line at y=52 (cleanly below digits that end at 51)
-    u8g2.drawHLine(0, 52 + by, 128);
-
-    // Date at y=62 (fits within screen height 64)
-    char fullDate[36];
-    snprintf(fullDate, sizeof(fullDate), "%s, %d %s", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon]);
     u8g2.setFont(F_SMALL);
-    textCenter(61 + by, fullDate);
-
-    // Dotted seconds progress on very bottom line
-    int dotSec = (t.tm_sec * 128) / 60;
-    for (int dp = 0; dp < dotSec; dp += 3) u8g2.drawPixel(dp, 63);
+    char fullDate[28];
+    snprintf(fullDate, sizeof(fullDate), "%s, %d %s %04d", WDAY[t.tm_wday], t.tm_mday, MONTH[t.tm_mon], t.tm_year + 1900);
+    textCenter(62 + by, fullDate);
   }
 }
 
 static bool clock_input(CardCtx& c, uint8_t g) {
-  if (g == G_LONG || g == G_TRIPLE) {
-    if (g == G_LONG) {
-      c.st[0] = (c.st[0] + 1) % NUM_CLOCK_STYLES;
-    } else {
-      c.st[0] = (c.st[0] + NUM_CLOCK_STYLES - 1) % NUM_CLOCK_STYLES;
-    }
+  if (g == G_LONG) {
+    c.st[0] = (c.st[0] + 1) % NUM_CLOCK_STYLES;
     c.st[1] = 1;
     const char* newStyle = CLOCK_STYLES[c.st[0]];
     c.p["style"] = newStyle;
     markDirty(DIRTY_CARDS);
     cfg["clock"]["style"] = newStyle;
     markDirty(DIRTY_CFG);
-    // Non-blocking: markDirty schedules background flash save without pausing display loop
     toastShow(CLOCK_STYLE_NAMES[c.st[0] % NUM_CLOCK_STYLES]);
     audioSfx("pop", EV_UI);
     return true;
@@ -847,35 +734,40 @@ static bool clock_input(CardCtx& c, uint8_t g) {
 const CardType CT_clock = {"clock", 0, 0, 0, nullptr, clock_draw, clock_input, nullptr, speakTime, nullptr};
 
 // ================================================================== analog clock
-static void hand(int cx, int cy, float deg, int len, bool thick) {
-  float a = (deg - 90) * PI / 180.0f;
-  int x = cx + (int)(cosf(a) * len), y = cy + (int)(sinf(a) * len);
-  u8g2.drawLine(cx, cy, x, y);
-  if (thick) { u8g2.drawLine(cx + 1, cy, x + 1, y); u8g2.drawLine(cx, cy + 1, x, y + 1); }
-}
 static void analog_draw(CardCtx& c) {
   struct tm t;
   if (!needTime(t)) return;
-  int cx = 32 + burnX, cy = 32 + burnY, r = 30;
+  int cx = 32 + constrain((int)burnX, -1, 1);
+  int cy = 32 + constrain((int)burnY, -1, 1);
+  int r = 30;
   u8g2.drawCircle(cx, cy, r);
   for (int i = 0; i < 12; i++) {
-    float a = i * 30 * PI / 180.0f;
-    int len = i % 3 == 0 ? 5 : 2;
-    u8g2.drawLine(cx + sinf(a) * (r - len), cy - cosf(a) * (r - len), cx + sinf(a) * (r - 1), cy - cosf(a) * (r - 1));
+    int st = i * 5;
+    int inner = (i % 3 == 0) ? r - 5 : r - 2;
+    u8g2.drawLine(dialX(cx, inner, st), dialY(cy, inner, st), dialX(cx, r - 1, st), dialY(cy, r - 1, st));
   }
-  float s = t.tm_sec, m = t.tm_min + s / 60.0f, h = (t.tm_hour % 12) + m / 60.0f;
-  hand(cx, cy, h * 30, 15, true);
-  hand(cx, cy, m * 6, 23, true);
-  hand(cx, cy, s * 6, 27, false);
+  int hStep = ((t.tm_hour % 12) * 5 + t.tm_min / 12) % 60;
+  int hx = dialX(cx, 15, hStep), hy = dialY(cy, 15, hStep);
+  u8g2.drawLine(cx, cy, hx, hy);
+  u8g2.drawLine(cx + 1, cy, hx + 1, hy);
+  u8g2.drawLine(cx, cy, dialX(cx, 22, t.tm_min), dialY(cy, 22, t.tm_min));
+  u8g2.drawLine(cx, cy, dialX(cx, 26, t.tm_sec), dialY(cy, 26, t.tm_sec));
   u8g2.drawDisc(cx, cy, 2);
+
+  drawDottedVLine(65, 2, 60);
   u8g2.setFont(F_HELV14);
-  u8g2.drawStr(72, 22, WDAY[t.tm_wday]);
+  u8g2.drawStr(70, 19, WDAY[t.tm_wday]);
   char b[16];
   snprintf(b, sizeof(b), "%d %s", t.tm_mday, MONTH[t.tm_mon]);
   u8g2.setFont(F_MED);
-  u8g2.drawStr(72, 38, b);
+  u8g2.drawStr(70, 33, b);
   fmtHM(b, t.tm_hour, t.tm_min, cfgH24());
-  u8g2.drawStr(72, 54, b);
+  u8g2.drawStr(70, 47, b);
+  if (!cfgH24()) {
+    u8g2.setFont(F_TINY);
+    textRight(126, 47, t.tm_hour < 12 ? "AM" : "PM");
+  }
+  drawBar(70, 54, 56, 6, t.tm_sec / 60.0f);
 }
 const CardType CT_analog = {"analog", 0, 0, 0, nullptr, analog_draw, nullptr, nullptr, speakTime, nullptr};
 
@@ -883,19 +775,30 @@ const CardType CT_analog = {"analog", 0, 0, 0, nullptr, analog_draw, nullptr, nu
 static void binary_draw(CardCtx& c) {
   struct tm t;
   if (!needTime(t)) return;
+  char hm[12];
+  snprintf(hm, sizeof(hm), "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
+  drawTitle(c, "Binary Clock", hm);
+
   int digits[6] = {t.tm_hour / 10, t.tm_hour % 10, t.tm_min / 10, t.tm_min % 10, t.tm_sec / 10, t.tm_sec % 10};
-  int bits[6] = {2, 4, 3, 4, 3, 4};
+  static const uint8_t bits[6] = {2, 4, 3, 4, 3, 4};
+  static const uint8_t xs[6] = {20, 35, 57, 72, 94, 109};
   static const char* const lab = "HHMMSS";
+
+  u8g2.setFont(F_TINY);
+  for (int b = 0; b < 4; b++) {
+    int y = 51 - b * 11;
+    char w[2] = {(char)('0' + (1 << b)), 0};
+    u8g2.drawStr(2, y + 2, w);
+  }
   for (int col = 0; col < 6; col++) {
-    int x = 14 + col * 18 + (col / 2) * 6 + burnX;
+    int x = xs[col] + burnX;
     for (int b = 0; b < 4; b++) {
-      int y = 50 - b * 12 + burnY;
+      int y = 51 - b * 11 + burnY;
       if (b >= bits[col]) continue;
       if (digits[col] & (1 << b)) u8g2.drawDisc(x, y, 4);
       else u8g2.drawCircle(x, y, 4);
     }
     char l[2] = {lab[col], 0};
-    u8g2.setFont(F_TINY);
     u8g2.drawStr(x - 1, 63, l);
   }
 }
@@ -905,6 +808,9 @@ const CardType CT_binary = {"binary", 0, 0, 0, nullptr, binary_draw, nullptr, nu
 static void wordclock_draw(CardCtx& c) {
   struct tm t;
   if (!needTime(t)) return;
+  char tag[16];
+  snprintf(tag, sizeof(tag), "%s %d", WDAY[t.tm_wday], t.tm_mday);
+  drawTitle(c, "Word Clock", tag);
   static const char* const H[] = {"twelve", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"};
   static const char* const M[] = {"", "five past", "ten past", "quarter past", "twenty past", "twenty-five past", "half past",
                                   "twenty-five to", "twenty to", "quarter to", "ten to", "five to"};
@@ -913,10 +819,17 @@ static void wordclock_draw(CardCtx& c) {
   char s[64];
   if (idx == 0) snprintf(s, sizeof(s), "It's %s o'clock", H[h % 12]);
   else snprintf(s, sizeof(s), "It's %s %s", M[idx], H[h % 12]);
+
   u8g2.setFont(F_HELV14);
-  int lines = wrapText(0, 0, 120, 17, s, 0);   // count only
-  int y0 = 32 - lines * 17 / 2 + 13;
-  wrapText(4 + burnX, y0 + burnY, 120, 17, s, 4);
+  int lines = wrapText(0, 0, 120, 15, s, 0);
+  int lh = 15;
+  if (lines > 3) {
+    u8g2.setFont(F_MED);
+    lh = 12;
+    lines = wrapText(0, 0, 120, lh, s, 0);
+  }
+  int y0 = 37 - (lines * lh) / 2 + lh - 2;
+  wrapText(4 + burnX, max(24, y0) + burnY, 120, lh, s, 4);
 }
 const CardType CT_wordclock = {"wordclock", 0, 0, 0, nullptr, wordclock_draw, nullptr, nullptr, speakTime, nullptr};
 
@@ -924,29 +837,35 @@ const CardType CT_wordclock = {"wordclock", 0, 0, 0, nullptr, wordclock_draw, nu
 static void calendar_draw(CardCtx& c) {
   struct tm t;
   if (!needTime(t)) return;
-  char hdr[24];
+  char hdr[24], dayTag[12];
   snprintf(hdr, sizeof(hdr), "%s %d", MONTH_LONG[t.tm_mon], t.tm_year + 1900);
-  u8g2.setFont(F_SMALL);
-  textCenter(7, hdr);
+  snprintf(dayTag, sizeof(dayTag), "%s %d", WDAY[t.tm_wday], t.tm_mday);
+  drawHeader(hdr, dayTag);
+
   bool mon = cfg["time"]["weekMon"] | true;
   const char* dn = mon ? "MoTuWeThFrSaSu" : "SuMoTuWeThFrSa";
   u8g2.setFont(F_TINY);
   for (int i = 0; i < 7; i++) {
     char b[3] = {dn[i * 2], dn[i * 2 + 1], 0};
-    u8g2.drawStr(4 + i * 18, 15, b);
+    u8g2.drawStr(4 + i * 18, 18, b);
   }
+  drawDottedHLine(0, 20, 128);
   int firstW = ((t.tm_wday - (t.tm_mday - 1)) % 7 + 7) % 7;
   int off = mon ? (firstW + 6) % 7 : firstW;
   int dim = daysInMonth(t.tm_year + 1900, t.tm_mon);
-  u8g2.setFont(F_SMALL);
+  u8g2.setFont(F_TINY);
   for (int d = 1; d <= dim; d++) {
     int pos = off + d - 1, row = pos / 7, col = pos % 7;
-    int x = 1 + col * 18, y = 23 + row * 8;
+    int x = 1 + col * 18, y = 27 + row * 7;
     if (y > 63) break;
-    char b[3];
+    char b[4];
     snprintf(b, sizeof(b), "%d", d);
-    if (d == t.tm_mday) { u8g2.drawBox(x, y - 7, 16, 8); u8g2.setDrawColor(0); }
-    u8g2.drawStr(x + (d < 10 ? 6 : 3), y, b);
+    if (d == t.tm_mday) {
+      u8g2.drawRBox(x + 1, y - 6, 15, 7, 1);
+      u8g2.setDrawColor(0);
+    }
+    int tw = u8g2.getStrWidth(b);
+    u8g2.drawStr(x + (17 - tw) / 2, y, b);
     u8g2.setDrawColor(1);
   }
 }
@@ -962,8 +881,13 @@ const CardType CT_calendar = {"calendar", 0, 0, 0, nullptr, calendar_draw, nullp
 static void world_draw(CardCtx& c) {
   struct tm t;
   if (!needTime(t)) return;
+  bool h24 = cfgH24();
+  char localHm[10];
+  fmtHM(localHm, t.tm_hour, t.tm_min, h24);
+  drawTitle(c, "World Clock", localHm);
+
   JsonArray a = c.p["cities"];
-  if (a.isNull() || !a.size()) { drawCenteredMsg("No cities yet", "Add them in the dashboard"); return; }
+  if (a.isNull() || !a.size()) { drawCenteredMsg("No cities yet", "Add them in dashboard"); return; }
   static struct tm cache[4];
   static uint32_t calcAt = 0;
   static int calcIdx = -1;
@@ -974,22 +898,29 @@ static void world_draw(CardCtx& c) {
     time_t now = time(nullptr);
     for (int i = 0; i < n; i++) localIn(a[i]["tz"] | "UTC0", now, cache[i]);
   }
-  int rowH = 64 / n;
-  bool h24 = cfgH24();
+  int rowH = 52 / n;
   for (int i = 0; i < n; i++) {
-    int y = i * rowH + rowH / 2 + 5;
-    u8g2.setFont(F_MED);
-    u8g2.drawUTF8(2, y, a[i]["n"] | "?");
-    char hm[8];
-    fmtHM(hm, cache[i].tm_hour, cache[i].tm_min, h24);
-    u8g2.setFont(F_BOLD);
-    textRight(126, y + 1, hm);
-    int dd = cache[i].tm_yday - t.tm_yday;
-    if (dd) {
+    int yTop = 12 + i * rowH;
+    int yBase = yTop + rowH / 2 + 3;
+    if (i > 0) drawDottedHLine(0, yTop, 128);
+    u8g2.setFont(F_SMALL);
+    drawTextFit(2, yBase, 64, a[i]["n"] | "?");
+
+    int dd = (cache[i].tm_year > t.tm_year) ? 1 :
+             (cache[i].tm_year < t.tm_year ? -1 :
+             (cache[i].tm_yday > t.tm_yday ? 1 : (cache[i].tm_yday < t.tm_yday ? -1 : 0)));
+    if (dd != 0) {
       u8g2.setFont(F_TINY);
-      u8g2.drawStr(126 - u8g2.getStrWidth("+1") - 44, y - 3, dd > 0 ? "+1" : "-1");
+      u8g2.drawStr(69, yBase - 1, dd > 0 ? "+1d" : "-1d");
     }
-    if (i) u8g2.drawHLine(0, i * rowH, 128);
+    char hm[12];
+    fmtHM(hm, cache[i].tm_hour, cache[i].tm_min, h24);
+    if (!h24) {
+      int l = strlen(hm);
+      snprintf(hm + l, sizeof(hm) - l, " %c", cache[i].tm_hour < 12 ? 'a' : 'p');
+    }
+    u8g2.setFont(F_MED);
+    textRight(126, yBase, hm);
   }
 }
 const CardType CT_world = {"world", 0, 0, 0, nullptr, world_draw, nullptr, nullptr, nullptr, nullptr};
@@ -1000,26 +931,28 @@ static void calcProgress() {
   struct tm t;
   if (!nowTm(t)) return;
   int y = t.tm_year + 1900;
-  float min = t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f;
+  float mn = t.tm_hour * 60 + t.tm_min + t.tm_sec / 60.0f;
   int diy = ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) ? 366 : 365;
-  progs[0] = min / 1440.0f;
-  progs[1] = (((t.tm_wday + 6) % 7) * 1440 + min) / (7 * 1440.0f);
-  progs[2] = ((t.tm_mday - 1) * 1440 + min) / (daysInMonth(y, t.tm_mon) * 1440.0f);
-  progs[3] = (t.tm_yday * 1440 + min) / (diy * 1440.0f);
+  progs[0] = mn / 1440.0f;
+  progs[1] = (((t.tm_wday + 6) % 7) * 1440 + mn) / (7 * 1440.0f);
+  progs[2] = ((t.tm_mday - 1) * 1440 + mn) / (daysInMonth(y, t.tm_mon) * 1440.0f);
+  progs[3] = (t.tm_yday * 1440 + mn) / (diy * 1440.0f);
 }
 static void progress_draw(CardCtx& c) {
   struct tm t;
   if (!needTime(t)) return;
   calcProgress();
+  char yr[8]; snprintf(yr, sizeof(yr), "%d", t.tm_year + 1900);
+  drawTitle(c, "Progress", yr);
   static const char* const L[] = {"Day", "Week", "Month", "Year"};
   for (int i = 0; i < 4; i++) {
-    int y0 = 2 + i * 16;
+    int y0 = 14 + i * 13;
     u8g2.setFont(F_SMALL);
-    u8g2.drawStr(0, y0 + 8, L[i]);
-    drawBar(32, y0, 70, 11, progs[i]);
-    char b[6];
+    u8g2.drawStr(1, y0 + 7, L[i]);
+    drawBar(35, y0, 64, 8, progs[i]);
+    char b[8];
     snprintf(b, sizeof(b), "%d%%", (int)(progs[i] * 100));
-    textRight(127, y0 + 8, b);
+    textRight(127, y0 + 7, b);
   }
 }
 static void progress_speak(CardCtx&, String& s) {
@@ -1031,20 +964,29 @@ const CardType CT_progress = {"progress", 0, 0, 0, nullptr, progress_draw, nullp
 
 // ================================================================== sun & moon
 static float moonAge() {
-  double days = (time(nullptr) - 947182440.0) / 86400.0;   // since new moon 2000-01-06 18:14 UTC
+  double days = (time(nullptr) - 947182440.0) / 86400.0;
   double a = fmod(days, 29.530588853);
   return a < 0 ? a + 29.530588853 : a;
 }
 static const char* moonName(float age) {
-  static const char* const N[] = {"New moon", "Waxing crescent", "First quarter", "Waxing gibbous", "Full moon",
-                                  "Waning gibbous", "Last quarter", "Waning crescent"};
+  static const char* const N[] = {"New moon", "Wax crescent", "1st quarter", "Wax gibbous", "Full moon",
+                                  "Wan gibbous", "Last quarter", "Wan crescent"};
   return N[(int)((age / 29.530588853f) * 8 + 0.5f) % 8];
+}
+static void fmtSunHM(const char* hhmm, char* out, size_t n) {
+  int m = parseHM(hhmm);
+  if (m < 0) { safeCopy(out, "--:--", n); return; }
+  fmtHM(out, m / 60, m % 60, cfgH24());
 }
 static void sunmoon_draw(CardCtx& c) {
   float age = moonAge(), p = age / 29.530588853f;
-  int cx = 104, cy = 26, r = 14;
+  int lit = (int)((1 - cosf(2 * PI * p)) * 50);
+  char litTag[10]; snprintf(litTag, sizeof(litTag), "%d%% lit", lit);
+  drawTitle(c, "Sun & Moon", litTag);
+
+  int cx = 103, cy = 29, r = 13;
   for (int y = -r; y <= r; y++) {
-    float w = sqrtf(r * r - y * y);
+    float w = sqrtf((float)(r * r - y * y));
     float k = cosf(2 * PI * p);
     int x0, x1;
     if (p < 0.5f) { x0 = (int)(w * k); x1 = (int)w; }
@@ -1053,25 +995,34 @@ static void sunmoon_draw(CardCtx& c) {
   }
   u8g2.drawCircle(cx, cy, r);
   u8g2.setFont(F_TINY);
-  const char* nm = moonName(age);
-  u8g2.drawStr(127 - u8g2.getStrWidth(nm), 50, nm);
-  char b[24];
-  snprintf(b, sizeof(b), "%d%% lit", (int)((1 - cosf(2 * PI * p)) * 50));
-  u8g2.drawStr(127 - u8g2.getStrWidth(b), 58, b);
-  drawWeatherIcon(2, 2, 18, 0, true);
-  u8g2.setFont(F_MED);
-  if (!homeW.ok) { u8g2.drawStr(2, 36, "Set location"); u8g2.drawStr(2, 48, "for sun times"); return; }
-  snprintf(b, sizeof(b), "Rise %s", homeW.sunrise);
-  u8g2.drawStr(24, 12, b);
-  snprintf(b, sizeof(b), "Set  %s", homeW.sunset);
-  u8g2.drawStr(24, 24, b);
+  drawTextFitCenter(103, 52, 46, moonName(age));
+  char ageB[16]; snprintf(ageB, sizeof(ageB), "Day %.0f", age);
+  drawTextFitCenter(103, 61, 46, ageB);
+
+  drawDottedVLine(76, 13, 50);
+  drawWeatherIcon(1, 14, 16, 0, true);
+  if (!homeW.ok) {
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(2, 42, "Set location");
+    u8g2.drawStr(2, 53, "for sun times");
+    return;
+  }
+  char srB[12], ssB[12], b[24];
+  fmtSunHM(homeW.sunrise, srB, sizeof(srB));
+  fmtSunHM(homeW.sunset, ssB, sizeof(ssB));
+  u8g2.setFont(F_SMALL);
+  snprintf(b, sizeof(b), "Up %s", srB);
+  u8g2.drawStr(20, 22, b);
+  snprintf(b, sizeof(b), "Dn %s", ssB);
+  u8g2.drawStr(20, 32, b);
+
   int sr = parseHM(homeW.sunrise), ss = parseHM(homeW.sunset);
   if (sr >= 0 && ss > sr) {
     snprintf(b, sizeof(b), "Day %dh %02dm", (ss - sr) / 60, (ss - sr) % 60);
-    u8g2.drawStr(2, 42, b);
+    u8g2.drawStr(2, 47, b);
   }
   snprintf(b, sizeof(b), "UV max %.0f", homeW.uv);
-  u8g2.drawStr(2, 56, b);
+  u8g2.drawStr(2, 59, b);
 }
 static void sunmoon_speak(CardCtx&, String& s) {
   s = String("The moon is ") + moonName(moonAge()) + ".";
@@ -1089,30 +1040,38 @@ static time_t paramDate(JsonObject p, const char* defTime) {
   return mktime(&t);
 }
 static void countdown_draw(CardCtx& c) {
-  time_t tgt = paramDate(c.p, "00:00");
-  u8g2.setFont(F_MED);
   String title = c.p["title"] | "Countdown";
-  textCenter(10, title.c_str());
-  if (!tgt || !timeOK()) { drawCenteredMsg(tgt ? "Syncing time..." : "Set a date in the dashboard"); return; }
+  drawHeader(title.c_str(), c.p["date"] | "");
+  time_t tgt = paramDate(c.p, "00:00");
+  if (!tgt || !timeOK()) { drawCenteredMsg(tgt ? "Syncing time..." : "Set a date", "In card settings"); return; }
   long diff = (long)(tgt - time(nullptr));
   char b[24];
   if (diff > 86400) {
-    snprintf(b, sizeof(b), "%ld", diff / 86400);
-    u8g2.setFont(F_NUM32);
-    int w = u8g2.getStrWidth(b);
-    u8g2.drawStr((128 - w) / 2 - 12 + burnX, 47, b);
-    u8g2.setFont(F_MED);
-    u8g2.drawStr((128 + w) / 2 - 8 + burnX, 47, diff / 86400 == 1 ? "day" : "days");
-    snprintf(b, sizeof(b), "%02ld:%02ld:%02ld", (diff % 86400) / 3600, (diff % 3600) / 60, diff % 60);
-    textCenter(62, b);
+    long days = diff / 86400;
+    snprintf(b, sizeof(b), "%ld", days);
+    u8g2.setFont(days >= 1000 ? F_NUM24 : F_NUM32);
+    int nw = u8g2.getStrWidth(b);
+    const char* unit = (days == 1) ? "DAY" : "DAYS";
+    u8g2.setFont(F_SMALL);
+    int uw = u8g2.getStrWidth(unit);
+    int sx = (128 - nw - 4 - uw) / 2 + burnX;
+    u8g2.setFont(days >= 1000 ? F_NUM24 : F_NUM32);
+    u8g2.drawStr(sx, 47, b);
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(sx + nw + 4, 47, unit);
+
+    drawDottedHLine(0, 51, 128);
+    snprintf(b, sizeof(b), "%02ld:%02ld:%02ld remaining", (diff % 86400) / 3600, (diff % 3600) / 60, diff % 60);
+    textCenter(61, b);
   } else if (diff > 0) {
     snprintf(b, sizeof(b), "%02ld:%02ld:%02ld", diff / 3600, (diff % 3600) / 60, diff % 60);
     u8g2.setFont(F_NUM24);
-    int w = u8g2.getStrWidth(b);
-    u8g2.drawStr((128 - w) / 2, 46, b);
+    textCenter(44, b);
+    u8g2.setFont(F_TINY);
+    textCenter(60, "HOURS : MIN : SEC LEFT");
   } else {
     u8g2.setFont(F_HELV14);
-    textCenter(40, diff > -86400 ? "It's here!" : "Done");
+    textCenter(38, diff > -86400 ? "It's Here!" : "Completed");
     snprintf(b, sizeof(b), "%ld days ago", -diff / 86400);
     u8g2.setFont(F_SMALL);
     if (diff <= -86400) textCenter(56, b);
@@ -1139,19 +1098,26 @@ static void countdown_speak(CardCtx& c, String& s) {
 const CardType CT_countdown = {"countdown", 0, 0, 0, nullptr, countdown_draw, nullptr, nullptr, countdown_speak, countdown_tick};
 
 static void dayssince_draw(CardCtx& c) {
-  time_t from = paramDate(c.p, "00:00");
-  u8g2.setFont(F_MED);
   String title = c.p["title"] | "Days since";
-  textCenter(10, title.c_str());
-  if (!from || !timeOK()) { drawCenteredMsg(from ? "Syncing time..." : "Set a date in the dashboard"); return; }
+  drawHeader(title.c_str(), c.p["date"] | "");
+  time_t from = paramDate(c.p, "00:00");
+  if (!from || !timeOK()) { drawCenteredMsg(from ? "Syncing time..." : "Set a date", "In card settings"); return; }
   long d = (long)(time(nullptr) - from) / 86400;
-  char b[12];
+  char b[16];
   snprintf(b, sizeof(b), "%ld", d);
-  u8g2.setFont(F_NUM32);
-  int w = u8g2.getStrWidth(b);
-  u8g2.drawStr((128 - w) / 2 + burnX, 50, b);
+  u8g2.setFont(abs(d) >= 1000 ? F_NUM24 : F_NUM32);
+  int nw = u8g2.getStrWidth(b);
+  const char* unit = (d == 1) ? "DAY" : "DAYS";
   u8g2.setFont(F_SMALL);
-  textCenter(62, d == 1 ? "day" : "days");
+  int uw = u8g2.getStrWidth(unit);
+  int sx = (128 - nw - 4 - uw) / 2 + burnX;
+  u8g2.setFont(abs(d) >= 1000 ? F_NUM24 : F_NUM32);
+  u8g2.drawStr(sx, 48, b);
+  u8g2.setFont(F_SMALL);
+  u8g2.drawStr(sx + nw + 4, 48, unit);
+  drawDottedHLine(0, 52, 128);
+  u8g2.setFont(F_TINY);
+  textCenter(61, "ELAPSED TIME");
 }
 static void dayssince_speak(CardCtx& c, String& s) {
   time_t from = paramDate(c.p, "00:00");

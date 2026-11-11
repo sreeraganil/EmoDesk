@@ -273,7 +273,7 @@ void emoUpdate() {
     }
   }
 
-  int activity = cfg["emo"]["activity"] | 60;
+  int activity = constrain((int)(cfg["emo"]["activity"] | 60), 0, 100);
   if ((int32_t)(now - nextIdle) > 0) {
     nextIdle = now + 3000 + esp_random() % (12000 - activity * 80);
     if (!sleeping && !held && !tempActive(now) && (int)(esp_random() % 100) < activity / 2) {

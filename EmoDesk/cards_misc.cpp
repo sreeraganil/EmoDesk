@@ -5,6 +5,7 @@
 struct Mx { bool init; float y[21], sp[21]; uint8_t len[21]; char ch[21][8]; };
 static void matrix_draw(CardCtx& c) {
   Mx* m = (Mx*)c.d;
+  if (!m) return;
   if (!m->init) {
     m->init = true;
     for (int i = 0; i < 21; i++) { m->y[i] = -(float)(esp_random() % 64); m->sp[i] = 0.6f + (esp_random() % 100) / 60.0f; m->len[i] = 3 + esp_random() % 5; }
@@ -29,6 +30,7 @@ const CardType CT_matrix = {"matrix", sizeof(Mx), 0, 0, nullptr, matrix_draw, nu
 struct Stars { bool init; float x[48], y[48], z[48]; };
 static void starfield_draw(CardCtx& c) {
   Stars* s = (Stars*)c.d;
+  if (!s) return;
   for (int i = 0; i < 48; i++) {
     if (!s->init || s->z[i] < 1) {
       s->x[i] = ((int)(esp_random() % 200) - 100);
@@ -52,6 +54,7 @@ static inline bool lget(const uint8_t* g, int x, int y) { x = (x + 64) % 64; y =
 static void life_seed(Life* l) { for (int i = 0; i < 256; i++) l->g[i] = esp_random() & esp_random(); l->gen = 0; }
 static void life_draw(CardCtx& c) {
   Life* l = (Life*)c.d;
+  if (!l) return;
   if (!l->init) { l->init = true; life_seed(l); }
   if (millis() - l->last > 120) {
     l->last = millis();
@@ -73,7 +76,7 @@ static void life_draw(CardCtx& c) {
     for (int x = 0; x < 64; x++)
       if (lget(l->g, x, y)) u8g2.drawBox(x * 2, y * 2, 2, 2);
 }
-static bool life_input(CardCtx& c, uint8_t g) { if (g == G_LONG) { life_seed((Life*)c.d); return true; } return false; }
+static bool life_input(CardCtx& c, uint8_t g) { Life* l = (Life*)c.d; if (l && g == G_LONG) { life_seed(l); return true; } return false; }
 const CardType CT_life = {"life", sizeof(Life), 0, 0, nullptr, life_draw, life_input, nullptr, nullptr, nullptr};
 
 // ================================================================== fireworks
@@ -81,6 +84,7 @@ struct Part { float x, y, vx, vy; uint8_t life; };
 struct Fw { Part p[48]; float rx, ry, rvy; bool rocket; uint32_t next; };
 static void fireworks_draw(CardCtx& c) {
   Fw* f = (Fw*)c.d;
+  if (!f) return;
   uint32_t now = millis();
   if (!f->rocket && now > f->next) { f->rocket = true; f->rx = 20 + esp_random() % 88; f->ry = 64; f->rvy = -2.6f - (esp_random() % 10) / 10.0f; }
   if (f->rocket) {
@@ -113,6 +117,7 @@ const CardType CT_fireworks = {"fireworks", sizeof(Fw), 0, 0, nullptr, fireworks
 struct Bounce { bool init; float x, y, vx, vy; };
 static void bounce_draw(CardCtx& c) {
   Bounce* b = (Bounce*)c.d;
+  if (!b) return;
   if (!b->init) { b->init = true; b->x = 40; b->y = 20; b->vx = 0.9f; b->vy = 0.6f; }
   b->x += b->vx; b->y += b->vy;
   bool hx = false, hy = false;
@@ -127,24 +132,24 @@ const CardType CT_bounce = {"bounce", sizeof(Bounce), 0, 0, nullptr, bounce_draw
 // ================================================================== network info
 static void netinfo_draw(CardCtx& c) {
   drawTitle(c, "Network", netOnline() ? "online" : "offline");
-  char b[48];
+  char b[56];
   if (netOnline()) {
     u8g2.setFont(F_SMALL);
     String ssid = WiFi.SSID();
-    if (ssid.length() > 14) ssid = ssid.substring(0, 14);
-    snprintf(b, sizeof(b), "%s", ssid.c_str());
-    u8g2.drawUTF8(4, 21, b);
+    drawTextFit(2, 21, 98, ssid.c_str());
     drawSignalBars(110, 21, netRSSI());
 
-    int ipW = u8g2.getUTF8Width(netIP().c_str()) + 14;
-    int ipX = (128 - ipW) / 2;
-    u8g2.drawRFrame(ipX, 25, ipW, 14, 3);
     u8g2.setFont(F_MED);
-    textCenter(36, netIP().c_str());
+    String ip = netIP();
+    int ipW = min(124, max(64, (int)u8g2.getUTF8Width(ip.c_str()) + 14));
+    int ipX = (128 - ipW) / 2;
+    u8g2.drawRFrame(ipX, 24, ipW, 14, 3);
+    drawTextFitCenter(64, 35, ipW - 6, ip.c_str());
 
     String host = String("http://") + (cfg["host"] | DEFAULT_HOST) + ".local";
     u8g2.setFont(F_TINY);
-    textCenter(49, host.c_str());
+    drawTextFitCenter(64, 48, 124, host.c_str());
+    drawDottedHLine(0, 52, 128);
 
     uint32_t up = millis() / 1000;
     snprintf(b, sizeof(b), "up %lud %02luh %02lum  |  %ddBm",
@@ -152,7 +157,7 @@ static void netinfo_draw(CardCtx& c) {
              (unsigned long)(up / 3600 % 24),
              (unsigned long)(up / 60 % 60),
              netRSSI());
-    textCenter(60, b);
+    drawTextFitCenter(64, 62, 124, b);
   } else {
     drawCenteredMsg(netPortal() ? "Hotspot Active" : "No Wi-Fi",
                     netPortal() ? "Join: EmoDesk-Setup" : "Check credentials");
@@ -167,33 +172,34 @@ const CardType CT_netinfo = {"netinfo", 0, 0, 0, nullptr, netinfo_draw, nullptr,
 // ================================================================== device health
 static void health_draw(CardCtx& c) {
   drawTitle(c, "Device Health", "v" FW_VERSION);
-  char b[40];
+  char b[48];
   uint32_t freeH = ESP.getFreeHeap();
   uint32_t totH = ESP.getHeapSize();
   float usedH = totH ? 1.0f - (float)freeH / totH : 0.0f;
   u8g2.setFont(F_TINY);
   u8g2.drawStr(2, 21, "RAM");
-  drawBar(24, 15, 60, 7, usedH);
+  drawBar(25, 15, 58, 7, usedH);
   snprintf(b, sizeof(b), "%uK free", (unsigned)(freeH / 1024));
-  textRight(126, 21, b);
+  drawTextRightFit(126, 21, 40, b);
 
   size_t totFS = LittleFS.totalBytes(), usedFS = LittleFS.usedBytes();
   float usedFSPct = totFS ? (float)usedFS / totFS : 0.0f;
   u8g2.drawStr(2, 32, "DISK");
-  drawBar(24, 26, 60, 7, usedFSPct);
+  drawBar(25, 26, 58, 7, usedFSPct);
   snprintf(b, sizeof(b), "%u/%uK", (unsigned)(usedFS / 1024), (unsigned)(totFS / 1024));
-  textRight(126, 32, b);
+  drawTextRightFit(126, 32, 40, b);
 
-  drawDottedHLine(2, 37, 124);
+  drawDottedHLine(0, 38, 128);
 
-  snprintf(b, sizeof(b), "CPU %uMHz  |  Chip %.0f C", (unsigned)ESP.getCpuFreqMHz(), temperatureRead());
-  textCenter(47, b);
+  u8g2.setFont(F_TINY);
+  snprintf(b, sizeof(b), "CPU %uMHz  |  Chip %.0fC", (unsigned)ESP.getCpuFreqMHz(), temperatureRead());
+  drawTextFitCenter(64, 49, 124, b);
 
   if (cric.limit > 0) {
     snprintf(b, sizeof(b), "Cricket API: %d/%d hits", cric.hits, cric.limit);
   } else {
-    snprintf(b, sizeof(b), "Max block %uK  |  Min %uK", (unsigned)(heapLargest() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024));
+    snprintf(b, sizeof(b), "Max blk %uK  |  Min %uK", (unsigned)(heapLargest() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024));
   }
-  textCenter(59, b);
+  drawTextFitCenter(64, 60, 124, b);
 }
 const CardType CT_health = {"health", 0, 0, 0, nullptr, health_draw, nullptr, nullptr, nullptr, nullptr};

@@ -40,6 +40,8 @@ uint32_t dayKey(const struct tm& t);              // YYYYMMDD
 time_t makeUTC(int y, int mo, int d, int h, int mi, int s);
 time_t parseISO(const char* s);                   // ISO8601, no zone = UTC
 void   localIn(const char* posixTz, time_t t, struct tm& out);
+void   tzApplyLocal();
+void   tzFormatPosix(long offsetEastSec, const char* ianaName, char* out, size_t n);
 void   fmtHM(char* out, int h, int m, bool h24);
 bool   cfgH24();
 extern const char* const WDAY[7];

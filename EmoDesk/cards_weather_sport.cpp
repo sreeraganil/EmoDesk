@@ -30,63 +30,65 @@ static void weather_draw(CardCtx& c) {
   if (!weatherGate(c, w)) return;
   drawHeader(locName(c.p), wmoText(w->code));
 
-  // Left Column: Weather Icon (24px) + Large Temp (F_NUM32)
-  drawWeatherIcon(2 + burnX, 14, 24, w->code, w->isDay);
+  int bx = constrain((int)burnX, -1, 1);
+  // Left Column (x=0..71): Weather Icon + Auto-sized Temp
+  drawWeatherIcon(1 + bx, 16, 22, w->code, w->isDay);
   char b[32];
-  snprintf(b, sizeof(b), "%d", (int)roundf(w->temp));
-  u8g2.setFont(F_NUM32);
+  int tVal = (int)roundf(w->temp);
+  snprintf(b, sizeof(b), "%d", tVal);
+  bool compactNum = (tVal >= 100 || tVal <= -10);
+  u8g2.setFont(compactNum ? F_NUM24 : F_NUM32);
   int tw = u8g2.getStrWidth(b);
-  int tx = 29 + burnX;
-  u8g2.drawStr(tx, 41, b);
-  u8g2.setFont(F_TINY);
-  u8g2.drawCircle(tx + tw + 2, 19, 1);
-  u8g2.drawUTF8(tx + tw + 5, 23, tempUnit());
+  int tx = 25 + bx;
+  u8g2.drawStr(tx, compactNum ? 40 : 44, b);
+  int ux = tx + tw + 2;
+  if (ux <= 64) {
+    u8g2.drawCircle(ux + 1, compactNum ? 19 : 17, 1);
+    u8g2.setFont(F_TINY);
+    u8g2.drawUTF8(ux + 4, compactNum ? 23 : 21, tempUnit());
+  }
 
-  // Right Column (x=72..127): Micro-icons + clean F_SMALL metrics
-  // Humidity
-  drawIconDrop(72, 14);
+  drawDottedVLine(73, 13, 34);
+
+  // Right Column (x=76..126): Humidity, Wind, Feels Like
+  drawIconDrop(76, 14);
   snprintf(b, sizeof(b), "%d%%", (int)w->hum);
   u8g2.setFont(F_SMALL);
   textRight(126, 20, b);
 
-  // Wind Speed
-  drawIconWind(72, 24);
+  drawIconWind(76, 25);
   snprintf(b, sizeof(b), "%d%s", (int)roundf(w->wind), cfg["units"] == "imperial" ? "m" : "k");
   u8g2.setFont(F_SMALL);
-  textRight(126, 30, b);
+  textRight(126, 31, b);
 
-  // Feels Like
-  drawIconTemp(72, 33);
-  snprintf(b, sizeof(b), "%d%s", (int)roundf(w->feels), tempUnit());
+  drawIconTemp(76, 35);
+  snprintf(b, sizeof(b), "%d°", (int)roundf(w->feels));
   u8g2.setFont(F_SMALL);
-  textRight(126, 40, b);
+  textRight(126, 42, b);
 
-  // Bottom Banner (y=47..63): High/Low on left, Condition on right
-  drawDottedHLine(0, 46, 128);
-
-  // High / Low indicators
-  drawIconArrow(1, 52, true);
+  // Bottom Banner (y=48..63): High/Low on left, Condition on right
+  drawDottedHLine(0, 48, 128);
+  drawIconArrow(1, 53, true);
   snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMax[0]));
   u8g2.setFont(F_SMALL);
-  u8g2.drawStr(7, 58, b);
+  u8g2.drawStr(7, 60, b);
   int w1 = u8g2.getUTF8Width(b);
 
-  drawIconArrow(9 + w1, 52, false);
+  drawIconArrow(10 + w1, 53, false);
   snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMin[0]));
-  u8g2.drawStr(15 + w1, 58, b);
+  u8g2.drawStr(16 + w1, 60, b);
   int w2 = u8g2.getUTF8Width(b);
 
-  int divX = 18 + w1 + w2;
-  u8g2.drawVLine(divX, 48, 14);
+  int divX = 20 + w1 + w2;
+  u8g2.drawVLine(divX, 50, 12);
 
-  // Weather Condition description
   const char* cond = wmoText(w->code);
   int leftX = divX + 4;
-  int availW = 127 - leftX;
+  int availW = 126 - leftX;
   u8g2.setFont(F_SMALL);
   int cw = u8g2.getUTF8Width(cond);
-  if (cw <= availW) u8g2.drawUTF8(leftX + (availW - cw) / 2, 58, cond);
-  else marquee(leftX, 58, availW, cond, c.t0, 22);
+  if (cw <= availW) u8g2.drawUTF8(leftX + (availW - cw) / 2, 60, cond);
+  else marquee(leftX, 60, availW, cond, c.t0, 22);
 }
 
 static void weather_speak(CardCtx& c, String& s) {
@@ -103,18 +105,24 @@ static void forecast_draw(CardCtx& c) {
   if (!weatherGate(c, w)) return;
   char b[24];
   if (!strcmp(c.p["mode"] | "daily", "hourly") && w->hn > 1) {
-    drawHeader("Next 12 Hours", locName(c.p));
+    drawHeader("12h Forecast", locName(c.p));
     float mn = w->hTemp[0], mx = w->hTemp[0];
     for (int i = 1; i < w->hn; i++) { mn = min(mn, w->hTemp[i]); mx = max(mx, w->hTemp[i]); }
-    drawSpark(4, 18, 120, 26, w->hTemp, w->hn);
     u8g2.setFont(F_TINY);
-    snprintf(b, sizeof(b), "%d", (int)roundf(mx)); u8g2.drawStr(2, 18, b);
-    snprintf(b, sizeof(b), "%d", (int)roundf(mn)); u8g2.drawStr(2, 46, b);
+    snprintf(b, sizeof(b), "%d:00 - %d:00", w->hHour[0], w->hHour[w->hn - 1]);
+    u8g2.drawStr(2, 18, b);
+    snprintf(b, sizeof(b), "H:%d° L:%d°", (int)roundf(mx), (int)roundf(mn));
+    textRight(126, 18, b);
+
+    drawSpark(3, 21, 122, 28, w->hTemp, w->hn);
+    drawDottedHLine(2, 51, 124);
     for (int i = 0; i < w->hn; i += 3) {
-      int x = 4 + i * 120 / (w->hn - 1);
+      int x = 3 + i * 121 / (w->hn - 1);
+      u8g2.drawVLine(x, 51, 3);
       snprintf(b, sizeof(b), "%d", w->hHour[i]);
-      u8g2.drawStr(x - 3, 62, b);
-      u8g2.drawVLine(x, 50, 3);
+      int hw = u8g2.getStrWidth(b);
+      int lx = constrain(x - hw / 2, 1, 127 - hw);
+      u8g2.drawStr(lx, 62, b);
     }
     return;
   }
@@ -141,10 +149,8 @@ static void forecast_draw(CardCtx& c) {
     u8g2.setFont(F_SMALL);
     snprintf(b, sizeof(b), "%d°", (int)roundf(w->dMin[i]));
     int wMin = u8g2.getUTF8Width(b);
-    u8g2.drawUTF8(colX + (42 - wMin) / 2, 57, b);
-    if (i > 0) {
-      for (int y = 4; y < 60; y += 3) u8g2.drawPixel(colX - 1, y);
-    }
+    u8g2.drawUTF8(colX + (42 - wMin) / 2, 58, b);
+    if (i > 0) drawDottedVLine(colX - 1, 4, 57);
   }
 }
 static void forecast_speak(CardCtx& c, String& s) {
@@ -172,20 +178,30 @@ static bool aqi_fetch(JsonObject p, void* d) {
 }
 static void aqi_draw(CardCtx& c) {
   AirData* a = (AirData*)c.d;
-  if (!isCustomLoc(c.p) && cfg["loc"]["lat"].isNull()) { drawCenteredMsg("Set your location", "Dashboard > Services"); return; }
+  if (!isCustomLoc(c.p) && cfg["loc"]["lat"].isNull()) { drawCenteredMsg("Set your location", "Dashboard > Connect"); return; }
   if (!dataGate(a->ok, "air quality")) return;
-  drawHeader("Air quality", locName(c.p));
+  drawHeader("Air Quality", locName(c.p));
   char b[16];
   snprintf(b, sizeof(b), "%d", a->aqi);
-  u8g2.setFont(F_NUM32);
-  u8g2.drawStr(2 + burnX, 48, b);
-  u8g2.setFont(F_MED);
-  u8g2.drawStr(2, 62, aqiText(a->aqi));
+  u8g2.setFont(a->aqi >= 1000 ? F_NUM24 : F_NUM32);
+  int aw = u8g2.getStrWidth(b);
+  u8g2.drawStr(max(1, 32 - aw / 2) + burnX, 46, b);
+
+  u8g2.setFont(F_TINY);
+  u8g2.drawRBox(2, 51, 59, 11, 2);
+  u8g2.setDrawColor(0);
+  drawTextFitCenter(31, 59, 55, aqiText(a->aqi));
+  u8g2.setDrawColor(1);
+
+  drawDottedVLine(65, 13, 50);
   u8g2.setFont(F_SMALL);
-  snprintf(b, sizeof(b), "PM2.5 %.0f", a->pm25); u8g2.drawStr(72, 22, b);
-  snprintf(b, sizeof(b), "PM10  %.0f", a->pm10); u8g2.drawStr(72, 34, b);
-  snprintf(b, sizeof(b), "UV    %.1f", a->uv); u8g2.drawStr(72, 46, b);
-  drawBar(72, 52, 54, 8, min(1.0f, a->aqi / 300.0f));
+  u8g2.drawStr(69, 21, "PM2.5");
+  snprintf(b, sizeof(b), "%.0f", a->pm25); textRight(126, 21, b);
+  u8g2.drawStr(69, 32, "PM10");
+  snprintf(b, sizeof(b), "%.0f", a->pm10); textRight(126, 32, b);
+  u8g2.drawStr(69, 43, "UV");
+  snprintf(b, sizeof(b), "%.1f", a->uv); textRight(126, 43, b);
+  drawBar(69, 52, 57, 8, min(1.0f, a->aqi / 300.0f));
 }
 static void aqi_speak(CardCtx& c, String& s) {
   AirData* a = (AirData*)c.d;
@@ -345,7 +361,7 @@ static void buildTeamStrings(const CricMatch& m, const char* sc0, const char* sc
   else snprintf(rStr, rSize, "v %s", m.t2);
 }
 
-static void drawOverMatrix(int yTop, int h, const char* recentStr) {
+static void drawOverMatrix(int yTop, int h, const char* recentStr, int availW = 126) {
   if (!recentStr || !*recentStr) return;
   const char* p = strrchr(recentStr, '|');
   if (p) p++; else p = recentStr;
@@ -355,7 +371,7 @@ static void drawOverMatrix(int yTop, int h, const char* recentStr) {
   char balls[10][6];
   int count = 0;
   const char* cur = p;
-  while (*cur && count < 8) {
+  while (*cur && count < 7) {
     while (*cur == ' ') cur++;
     if (!*cur) break;
     const char* start = cur;
@@ -369,11 +385,13 @@ static void drawOverMatrix(int yTop, int h, const char* recentStr) {
   }
   if (!count) return;
 
-  int cellW = (count <= 6) ? 16 : 13;
-  int gap = (count <= 6) ? 3 : 2;
+  int maxBalls = (availW <= 104) ? 6 : 7;
+  if (count > maxBalls) count = maxBalls;
+  int gap = 2;
+  int cellW = min(15, (availW - (count - 1) * gap) / count);
+  if (cellW < 10) cellW = 10;
   int totalW = count * cellW + (count - 1) * gap;
-  int startX = (128 - totalW) / 2;
-  if (startX < 1) startX = 1;
+  int startX = max(1, (availW - totalW) / 2);
 
   for (int i = 0; i < count; i++) {
     int bx = startX + i * (cellW + gap);
@@ -386,21 +404,21 @@ static void drawOverMatrix(int yTop, int h, const char* recentStr) {
     if (isWkt) {
       u8g2.drawRBox(bx, yTop, cellW, h, 2);
       u8g2.setDrawColor(0);
-      u8g2.setFont(F_BOLD);
+      u8g2.setFont(F_SMALL);
       int tw = u8g2.getUTF8Width("W");
       u8g2.drawUTF8(bx + (cellW - tw) / 2, yTop + h - 2, "W");
       u8g2.setDrawColor(1);
     } else if (isSix) {
       u8g2.drawRBox(bx, yTop, cellW, h, 2);
       u8g2.setDrawColor(0);
-      u8g2.setFont(F_BOLD);
+      u8g2.setFont(F_SMALL);
       int tw = u8g2.getUTF8Width("6");
       u8g2.drawUTF8(bx + (cellW - tw) / 2, yTop + h - 2, "6");
       u8g2.setDrawColor(1);
     } else if (isFour) {
       u8g2.drawRFrame(bx, yTop, cellW, h, 2);
       u8g2.drawFrame(bx + 1, yTop + 1, cellW - 2, h - 2);
-      u8g2.setFont(F_BOLD);
+      u8g2.setFont(F_SMALL);
       int tw = u8g2.getUTF8Width("4");
       u8g2.drawUTF8(bx + (cellW - tw) / 2, yTop + h - 2, "4");
     } else if (isDot) {
@@ -408,7 +426,7 @@ static void drawOverMatrix(int yTop, int h, const char* recentStr) {
       u8g2.drawDisc(bx + cellW / 2, yTop + h / 2, 1);
     } else {
       u8g2.drawRFrame(bx, yTop, cellW, h, 2);
-      u8g2.setFont((strlen(b) > 1) ? F_TINY : F_SMALL);
+      u8g2.setFont(F_TINY);
       int tw = u8g2.getUTF8Width(b);
       u8g2.drawUTF8(bx + (cellW - tw) / 2, yTop + h - 2, b);
     }
@@ -603,22 +621,23 @@ static void cricket_draw(CardCtx& c) {
         int gap = (m.bat1[0] && m.bat2[0] && m.bowl[0]) ? 9 : 10;
         if (m.bat1[0]) {
           u8g2.drawTriangle(2, yPos - 5, 5, yPos - 2, 2, yPos + 1);
-          u8g2.drawStr(8, yPos, m.bat1);
+          drawTextFit(8, yPos, 118, m.bat1);
           yPos += gap;
         }
         if (m.bat2[0]) {
-          u8g2.drawStr(8, yPos, m.bat2);
+          drawTextFit(8, yPos, 118, m.bat2);
           yPos += gap;
         }
         if (m.bowl[0]) {
           u8g2.drawDisc(3, yPos - 2, 2);
-          u8g2.drawStr(8, yPos, m.bowl);
+          drawTextFit(8, yPos, 118, m.bowl);
         }
 
         drawDottedHLine(0, 51, 128);
 
+        int botW = (autoCycle && totalPages > 1) ? 102 : 126;
         if (showOverMatrix && m.recent[0]) {
-          drawOverMatrix(53, 10, m.recent);
+          drawOverMatrix(53, 10, m.recent, botW);
         } else {
           u8g2.setFont(F_TINY);
           if (m.target > 0 && m.remRuns > 0) {
@@ -628,11 +647,11 @@ static void cricket_draw(CardCtx& c) {
           } else {
             safeCopy(b, m.status[0] ? m.status : m.name, sizeof(b));
           }
-          marquee(0, 62, autoCycle ? 104 : 126, b, c.t0, 22);
+          marquee(1, 62, botW, b, c.t0, 22);
         }
       } else {
         for (int s = 0; s < 2; s++) {
-          int y = 23 + s * 14;
+          int y = 24 + s * 13;
           bool batting = (s == 0 ? m.t1Batting : m.t2Batting);
           const char* tCode = s ? m.t2 : m.t1;
           u8g2.setFont(F_BOLD);
@@ -646,21 +665,23 @@ static void cricket_draw(CardCtx& c) {
           if (b[0]) {
             int tx = (batting && cricLive(m)) ? 8 : 2;
             int tWidth = tx + u8g2.getUTF8Width(tCode);
+            int maxScW = max(30, 126 - tWidth - 4);
             u8g2.setFont(F_MED);
-            if (u8g2.getUTF8Width(b) > 126 - tWidth - 4) {
+            if (u8g2.getUTF8Width(b) > maxScW) {
               u8g2.setFont(F_SMALL);
-              if (u8g2.getUTF8Width(b) > 126 - tWidth - 4) u8g2.setFont(F_TINY);
+              if (u8g2.getUTF8Width(b) > maxScW) u8g2.setFont(F_TINY);
             }
-            textRight(126, y, b);
+            drawTextRightFit(126, y, maxScW, b);
           }
         }
         drawDottedHLine(0, 49, 128);
+        int botW = (autoCycle && totalPages > 1) ? 102 : 126;
         if (showOverMatrix && m.recent[0]) {
-          drawOverMatrix(51, 11, m.recent);
+          drawOverMatrix(52, 11, m.recent, botW);
         } else {
           u8g2.setFont(F_TINY);
-          if (m.status[0]) marquee(0, 60, autoCycle ? 104 : 126, m.status, c.t0, 26);
-          else textCenter(60, m.name);
+          if (m.status[0]) marquee(1, 61, botW, m.status, c.t0, 26);
+          else drawTextFit(1, 61, botW, m.name);
         }
       }
     }
@@ -683,7 +704,7 @@ static void cricket_draw(CardCtx& c) {
         const CricInn& in = m.inn[i];
         int y = 22 + i * 11;
         u8g2.setFont(F_SMALL);
-        u8g2.drawStr(2, y, in.team);
+        drawTextFit(2, y, 32, in.team);
 
         int wO = (int)in.o;
         int bO = (int)roundf((in.o - wO) * 10.0f);
@@ -694,7 +715,7 @@ static void cricket_draw(CardCtx& c) {
         cricOversStr(in.o, ovStr, sizeof(ovStr));
         snprintf(b, sizeof(b), "%d/%d (%s) R:%.1f", in.r, in.w, ovStr, rr);
         u8g2.setFont(F_TINY);
-        textRight(126, y, b);
+        drawTextRightFit(126, y, 90, b);
       }
     }
 
@@ -785,21 +806,22 @@ static void cricfix_draw(CardCtx& c) {
   sel %= shown;
   for (int k = 0; k < shown; k++) {
     const CricMatch& m = cric.m[idx[k]];
-    int y = 19 + k * 10;
+    int y = 20 + k * 9;
     char b[24];
     snprintf(b, sizeof(b), "%s v %s", m.t1, m.t2);
     u8g2.setFont(F_SMALL);
     if (k == sel) { u8g2.drawBox(0, y - 7, 128, 9); u8g2.setDrawColor(0); }
-    u8g2.drawStr(2, y, b);
+    drawTextFit(2, y, 56, b);
     if (cricLive(m)) strcpy(b, "LIVE");
     else if (m.ended) strcpy(b, "Result");
     else if (m.start) { struct tm t; localtime_r(&m.start, &t); fmtHM(b, t.tm_hour, t.tm_min, cfgH24()); char d[12]; snprintf(d, sizeof(d), "%d %s ", t.tm_mday, MONTH[t.tm_mon]); String s2 = String(d) + b; safeCopy(b, s2.c_str(), sizeof(b)); }
     else strcpy(b, "Soon");
-    textRight(126, y, b);
+    drawTextRightFit(126, y, 66, b);
     u8g2.setDrawColor(1);
   }
+  drawDottedHLine(0, 52, 128);
   u8g2.setFont(F_TINY);
-  marquee(0, 63, 128, cric.m[idx[sel]].status, c.t0 + sel * 3500, 30);
+  marquee(1, 62, 126, cric.m[idx[sel]].status, c.t0 + sel * 3500, 30);
 }
 const CardType CT_cricfix = {"cricfix", 0, 0, 0, nullptr, cricfix_draw, nullptr, nullptr, cricket_speak, nullptr};
 
@@ -882,16 +904,22 @@ static void parseFMatch(JsonObject ev, FMatch& m) {
 
 static bool football_fetch(JsonObject p, void* d) {
   FootData* fd = (FootData*)d;
+  if (!fd) return false;
   String league = p["league"] | DEFAULT_FOOTBALL_LEAGUE;
   String team = p["teams"].is<const char*>() ? (p["teams"] | "") : (p["team"] | "");
   team.trim();
-  if (!team.length() && cfg["football"]["teams"].is<const char*>()) {
-    team = (const char*)cfg["football"]["teams"];
-    team.trim();
+  String serverUrl;
+  {
+    LOCK();
+    if (!team.length() && cfg["football"]["teams"].is<const char*>()) {
+      team = (const char*)cfg["football"]["teams"];
+      team.trim();
+    }
+    serverUrl = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
+    UNLOCK();
   }
   String show = p["show"] | "all";
   bool alerts = p["alerts"] | true;
-  String serverUrl = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
   while (serverUrl.endsWith("/")) serverUrl = serverUrl.substring(0, serverUrl.length() - 1);
   if (serverUrl.endsWith("/api/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 12);
   if (serverUrl.endsWith("/api/emo/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 16);
@@ -1128,16 +1156,17 @@ static const char* leagueLabel(const char* slug) {
 }
 
 static void fmtKick(time_t t, char* out, size_t n) {
-  struct tm lt;
-  localtime_r(&t, &lt);
-  char hm[8];
+  struct tm lt = {};
+  if (!t || !localtime_r(&t, &lt)) { safeCopy(out, "--:--", n); return; }
+  char hm[12];
   fmtHM(hm, lt.tm_hour, lt.tm_min, cfgH24());
-  snprintf(out, n, "%s %s", WDAY[lt.tm_wday], hm);
+  const char* wd = ((unsigned)lt.tm_wday < 7) ? WDAY[lt.tm_wday] : "";
+  snprintf(out, n, "%s %s", wd, hm);
 }
 
 static void football_draw(CardCtx& c) {
   FootData* f = (FootData*)c.d;
-  if (!dataGate(f->ok, "football scores")) return;
+  if (!f || !dataGate(f->ok, "football scores")) return;
   const char* team = c.p["teams"].is<const char*>() ? (c.p["teams"] | "") : (c.p["team"] | "");
   if (!f->n) {
     const char* show = c.p["show"] | "all";
@@ -1183,49 +1212,38 @@ static void football_draw(CardCtx& c) {
   if (page == 0) {
     drawHeader(hdrTitle, rBadge);
 
-    u8g2.setFont(F_BOLD);
-    u8g2.drawStr(2, 26, m.h);
-    int hw = u8g2.getUTF8Width(m.h);
-
-    int aw = u8g2.getUTF8Width(m.a);
-    textRight(126, 26, m.a);
-
     char hPosStr[12] = "";
     char aPosStr[12] = "";
     bool isLive = (m.state == 1);
-
     if (m.hPos > 0) {
-      if (isLive && m.hLivePos > 0 && m.hLivePos != m.hPos) {
-        snprintf(hPosStr, sizeof(hPosStr), "%d>%d", m.hPos, m.hLivePos);
-      } else {
-        snprintf(hPosStr, sizeof(hPosStr), "#%d", isLive && m.hLivePos > 0 ? m.hLivePos : m.hPos);
-      }
+      if (isLive && m.hLivePos > 0 && m.hLivePos != m.hPos)
+        snprintf(hPosStr, sizeof(hPosStr), "#%d>%d", m.hPos, m.hLivePos);
+      else
+        snprintf(hPosStr, sizeof(hPosStr), "#%d", (isLive && m.hLivePos > 0) ? m.hLivePos : m.hPos);
     }
     if (m.aPos > 0) {
-      if (isLive && m.aLivePos > 0 && m.aLivePos != m.aPos) {
-        snprintf(aPosStr, sizeof(aPosStr), "%d>%d", m.aPos, m.aLivePos);
-      } else {
-        snprintf(aPosStr, sizeof(aPosStr), "#%d", isLive && m.aLivePos > 0 ? m.aLivePos : m.aPos);
-      }
+      if (isLive && m.aLivePos > 0 && m.aLivePos != m.aPos)
+        snprintf(aPosStr, sizeof(aPosStr), "#%d>%d", m.aPos, m.aLivePos);
+      else
+        snprintf(aPosStr, sizeof(aPosStr), "#%d", (isLive && m.aLivePos > 0) ? m.aLivePos : m.aPos);
     }
+
+    // Keep Home (0..41) & Away (87..127) safely outside centered F_HELV14 score (43..85)
+    u8g2.setFont(F_BOLD);
+    drawTextFit(2, 23, 39, m.h);
+    drawTextRightFit(126, 23, 39, m.a);
 
     u8g2.setFont(F_TINY);
-    if (hPosStr[0]) {
-      u8g2.drawStr(2 + hw + 2, 26, hPosStr);
-    }
-    if (aPosStr[0]) {
-      int pw = u8g2.getUTF8Width(aPosStr);
-      u8g2.drawStr(124 - aw - pw, 26, aPosStr);
-    }
+    if (hPosStr[0]) drawTextFit(2, 30, 39, hPosStr);
+    if (aPosStr[0]) drawTextRightFit(126, 30, 39, aPosStr);
 
     char scoreStr[20];
+    u8g2.setFont(F_HELV14);
     if (m.state == 0) {
-      u8g2.setFont(F_HELV14);
       textCenter(27, "vs");
     } else {
       snprintf(scoreStr, sizeof(scoreStr), "%d - %d", m.hs, m.as);
-      u8g2.setFont(F_HELV14);
-      textCenter(27, scoreStr);
+      drawTextFitCenter(64, 27, 44, scoreStr);
     }
 
     char vsNames[64];
@@ -1233,9 +1251,8 @@ static void football_draw(CardCtx& c) {
     const char* aName = m.an[0] ? m.an : m.a;
     snprintf(vsNames, sizeof(vsNames), "%s vs %s", hName, aName);
     u8g2.setFont(F_SMALL);
-    int vsW = u8g2.getUTF8Width(vsNames);
-    if (vsW <= 126) textCenter(37, vsNames);
-    else marquee(0, 37, 128, vsNames, c.t0, 25);
+    if (u8g2.getUTF8Width(vsNames) <= 124) textCenter(39, vsNames);
+    else marquee(2, 39, 124, vsNames, c.t0, 25);
 
     bool hasScorers = (m.hScorers[0] || m.aScorers[0]);
     if (hasScorers) {
@@ -1248,12 +1265,11 @@ static void football_draw(CardCtx& c) {
         snprintf(scStr, sizeof(scStr), "%s: %s", m.a, m.aScorers);
       }
       u8g2.setFont(F_TINY);
-      int scW = u8g2.getUTF8Width(scStr);
-      if (scW <= 126) textCenter(47, scStr);
-      else marquee(0, 47, 128, scStr, c.t0, 22);
-      drawDottedHLine(0, 50, 128);
+      if (u8g2.getUTF8Width(scStr) <= 124) textCenter(48, scStr);
+      else marquee(2, 48, 124, scStr, c.t0, 22);
+      drawDottedHLine(0, 51, 128);
     } else {
-      drawDottedHLine(0, 47, 128);
+      drawDottedHLine(0, 49, 128);
     }
 
     char detail[100] = "";
@@ -1293,7 +1309,7 @@ static void football_draw(CardCtx& c) {
     }
 
     u8g2.setFont(F_TINY);
-    marquee(0, 60, autoCycle ? 104 : 126, detail, c.t0, 22);
+    marquee(2, 60, autoCycle ? 102 : 124, detail, c.t0, 22);
     char badgeBuf[8];
     snprintf(badgeBuf, sizeof(badgeBuf), "1/%d", totalPages);
     if (autoCycle) drawBadge(127, 61, badgeBuf);
@@ -1302,8 +1318,8 @@ static void football_draw(CardCtx& c) {
     drawHeader("Match Stats", rBadge);
 
     u8g2.setFont(F_BOLD);
-    u8g2.drawStr(2, 21, m.h);
-    textRight(126, 21, m.a);
+    drawTextFit(2, 21, 38, m.h);
+    drawTextRightFit(126, 21, 38, m.a);
 
     char scoreStr[16];
     snprintf(scoreStr, sizeof(scoreStr), "%d - %d", m.hs, m.as);
@@ -1315,46 +1331,48 @@ static void football_draw(CardCtx& c) {
     snprintf(pL, sizeof(pL), "%d%%", m.hPoss ? m.hPoss : 50);
     snprintf(pR, sizeof(pR), "%d%%", m.aPoss ? m.aPoss : 50);
     u8g2.drawStr(2, 32, "Poss");
-    u8g2.drawStr(25, 32, pL);
-    textRight(102, 32, pR);
+    u8g2.drawStr(24, 32, pL);
+    textRight(126, 32, pR);
     float frac = (float)(m.hPoss ? m.hPoss : 50) / 100.0f;
-    drawBar(44, 28, 38, 5, frac);
+    drawBar(45, 27, 56, 5, frac);
 
     char shotsStr[44];
     snprintf(shotsStr, sizeof(shotsStr), "Shots(OT): %d(%d) - %d(%d)", m.hShots, m.hSot, m.aShots, m.aSot);
     u8g2.setFont(F_SMALL);
-    textCenter(43, shotsStr);
+    drawTextFitCenter(64, 42, 124, shotsStr);
 
     char cfStr[44];
     snprintf(cfStr, sizeof(cfStr), "Corners: %d-%d   Fouls: %d-%d", m.hCorn, m.aCorn, m.hFouls, m.aFouls);
     u8g2.setFont(F_TINY);
-    textCenter(53, cfStr);
+    drawTextFitCenter(64, 51, 124, cfStr);
 
-    drawDottedHLine(0, 56, 128);
+    drawDottedHLine(0, 53, 128);
 
     const char* stDesc = m.statusText[0] ? m.statusText : (m.state == 2 ? "Full Time" : "Live Match Stats");
-    marquee(2, 63, autoCycle ? 104 : 126, stDesc, c.t0, 22);
-    if (autoCycle) drawBadge(127, 63, "2/3");
+    marquee(2, 61, autoCycle ? 102 : 124, stDesc, c.t0, 22);
+    if (autoCycle) drawBadge(127, 61, "2/3");
 
   } else {
     drawHeader("Match Details", rBadge);
 
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(2, 20, "Venue:");
-    marquee(36, 20, 90, m.venue[0] ? m.venue : "Stadium TBD", c.t0, 22);
+    u8g2.drawStr(2, 21, "Venue:");
+    marquee(36, 21, 90, m.venue[0] ? m.venue : "Stadium TBD", c.t0, 22);
 
-    u8g2.drawStr(2, 31, "Form:");
-    char formStr[40];
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(2, 32, "Form:");
+    char formStr[48];
     snprintf(formStr, sizeof(formStr), "%s: %s  |  %s: %s",
              m.h, m.hForm[0] ? m.hForm : "N/A",
              m.a, m.aForm[0] ? m.aForm : "N/A");
     u8g2.setFont(F_SMALL);
-    u8g2.drawStr(36, 31, formStr);
+    if (u8g2.getUTF8Width(formStr) <= 90) u8g2.drawStr(36, 32, formStr);
+    else marquee(36, 32, 90, formStr, c.t0, 22);
 
     if (m.hPos > 0 || m.aPos > 0) {
       u8g2.setFont(F_TINY);
       u8g2.drawStr(2, 43, "Table:");
-      char tabStr[56];
+      char tabStr[64];
       if (m.state == 1 && (m.hLivePos != m.hPos || m.aLivePos != m.aPos)) {
         snprintf(tabStr, sizeof(tabStr), "%s #%d>%d (Live) | %s #%d>%d",
                  m.h, m.hPos, m.hLivePos, m.a, m.aPos, m.aLivePos);
@@ -1363,11 +1381,18 @@ static void football_draw(CardCtx& c) {
                  m.h, m.hPos, m.a, m.aPos);
       }
       u8g2.setFont(F_SMALL);
-      u8g2.drawStr(36, 43, tabStr);
-      drawDottedHLine(0, 48, 128);
+      if (u8g2.getUTF8Width(tabStr) <= 90) u8g2.drawStr(36, 43, tabStr);
+      else marquee(36, 43, 90, tabStr, c.t0, 22);
     } else {
-      drawDottedHLine(0, 46, 128);
+      u8g2.setFont(F_TINY);
+      u8g2.drawStr(2, 43, "Teams:");
+      char teamsBuf[64];
+      snprintf(teamsBuf, sizeof(teamsBuf), "%s vs %s", m.hn[0] ? m.hn : m.h, m.an[0] ? m.an : m.a);
+      u8g2.setFont(F_SMALL);
+      if (u8g2.getUTF8Width(teamsBuf) <= 90) u8g2.drawStr(36, 43, teamsBuf);
+      else marquee(36, 43, 90, teamsBuf, c.t0, 22);
     }
+    drawDottedHLine(0, 49, 128);
 
     u8g2.setFont(F_TINY);
     if (m.state == 0) {
@@ -1375,10 +1400,10 @@ static void football_draw(CardCtx& c) {
       fmtKick(m.t, k2, sizeof(k2));
       char kickStr[32];
       snprintf(kickStr, sizeof(kickStr), "Kickoff: %s", k2);
-      u8g2.drawStr(2, 59, kickStr);
+      drawTextFit(2, 60, autoCycle ? 102 : 124, kickStr);
     } else {
       const char* stDesc = m.statusText[0] ? m.statusText : (m.state == 2 ? "Full Time" : "Live in match");
-      marquee(2, 59, 96, stDesc, c.t0, 24);
+      marquee(2, 60, autoCycle ? 102 : 124, stDesc, c.t0, 22);
     }
     char badgeBuf[8];
     snprintf(badgeBuf, sizeof(badgeBuf), "%d/%d", totalPages, totalPages);
@@ -1402,7 +1427,7 @@ static bool football_input(CardCtx& c, uint8_t g) {
 
 static void football_speak(CardCtx& c, String& s) {
   FootData* f = (FootData*)c.d;
-  if (!f->ok || !f->n) return;
+  if (!f || !f->ok || !f->n) return;
   int totalToShow = f->n;
   int sel = (c.st[0] + (millis() - c.t0) / 6000) % totalToShow;
   FMatch& m = f->m[sel];
@@ -1423,8 +1448,14 @@ struct TRow { char t[6]; uint8_t rank, pl; int8_t gd; uint8_t pts; };
 struct TableData { bool ok; uint8_t n; TRow r[20]; };
 
 static bool ftable_fetch(JsonObject p, void* d) {
+  if (!d) return false;
   String league = p["league"] | "eng.1";
-  String serverUrl = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
+  String serverUrl;
+  {
+    LOCK();
+    serverUrl = cfg["cric"]["url"] | DEFAULT_SPORTS_SERVER;
+    UNLOCK();
+  }
   while (serverUrl.endsWith("/")) serverUrl = serverUrl.substring(0, serverUrl.length() - 1);
   if (serverUrl.endsWith("/api/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 12);
   if (serverUrl.endsWith("/api/emo/cricket")) serverUrl = serverUrl.substring(0, serverUrl.length() - 16);
@@ -1464,14 +1495,23 @@ static bool ftable_fetch(JsonObject p, void* d) {
 }
 static void ftable_draw(CardCtx& c) {
   TableData* t = (TableData*)c.d;
-  if (!dataGate(t->ok, "league table")) return;
+  if (!t || !dataGate(t->ok, "league table")) return;
+  if (!t->n) { drawCenteredMsg("Table empty"); return; }
+  int pages = (t->n + 4) / 5;
+  int pg = (pages > 1) ? (((millis() - c.t0) / 4000) % pages) : 0;
+
   u8g2.setFont(F_TINY);
   u8g2.drawStr(0, 6, "#  Team");
+  if (pages > 1) {
+    char pgBuf[8];
+    snprintf(pgBuf, sizeof(pgBuf), "%d/%d", pg + 1, pages);
+    u8g2.drawStr(46, 6, pgBuf);
+  }
   u8g2.drawStr(70, 6, "P");
   u8g2.drawStr(88, 6, "GD");
   textRight(127, 6, "Pts");
   u8g2.drawHLine(0, 8, 128);
-  int pages = (t->n + 4) / 5, pg = ((millis() - c.t0) / 4000) % pages;
+
   const char* hl = c.p["teams"].is<const char*>() ? (c.p["teams"] | "") : (c.p["team"] | "");
   u8g2.setFont(F_SMALL);
   for (int k = 0; k < 5; k++) {
@@ -1483,7 +1523,7 @@ static void ftable_draw(CardCtx& c) {
     if (mine) { u8g2.drawBox(0, y - 8, 128, 10); u8g2.setDrawColor(0); }
     char b[8];
     snprintf(b, sizeof(b), "%d", r.rank); u8g2.drawStr(0, y, b);
-    u8g2.drawStr(14, y, r.t);
+    drawTextFit(15, y, 49, r.t);
     snprintf(b, sizeof(b), "%d", r.pl); u8g2.drawStr(68, y, b);
     snprintf(b, sizeof(b), "%+d", r.gd); u8g2.drawStr(86, y, b);
     snprintf(b, sizeof(b), "%d", r.pts); textRight(127, y, b);
@@ -1492,7 +1532,7 @@ static void ftable_draw(CardCtx& c) {
 }
 static void ftable_speak(CardCtx& c, String& s) {
   TableData* t = (TableData*)c.d;
-  if (!t->ok) return;
+  if (!t || !t->ok || !t->n) return;
   s = String(t->r[0].t) + " lead with " + String(t->r[0].pts) + " points.";
 }
 const CardType CT_ftable = {"ftable", sizeof(TableData), 3600, 0, nullptr, ftable_draw, nullptr, ftable_fetch, ftable_speak, nullptr};

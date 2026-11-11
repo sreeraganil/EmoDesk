@@ -34,21 +34,37 @@ static void cleanText(char* s) {
   *o = 0;
 }
 
-static void textBlock(CardCtx& c, const char* txt, const char* foot) {
+static void textBlock(CardCtx& c, const char* hdr, const char* txt, const char* foot, const char* rBadge = nullptr) {
+  drawTitle(c, hdr, rBadge);
   u8g2.setFont(F_SMALL);
-  int lines = wrapText(0, 0, 124, 8, txt, 0);
-  int avail = foot ? 6 : 7;
+  int bodyW = 120;
+  int lines = wrapText(0, 0, bodyW, 9, txt, 0);
+  int avail = (foot && *foot) ? 4 : 5;
   int skip = 0;
   if (lines > avail) {
     int steps = lines - avail + 1;
-    skip = ((millis() - c.t0) / 2200) % (steps + 2);
+    skip = ((millis() - c.t0) / 2400) % (steps + 2);
     skip = skip >= steps ? steps - 1 : skip;
     cardHold = true;
-    if ((millis() - c.t0) > (uint32_t)(steps + 3) * 2200) cardHold = false;
+    if ((millis() - c.t0) > (uint32_t)(steps + 3) * 2400) cardHold = false;
   }
-  int y0 = lines < avail ? 8 + (avail - lines) * 4 : 8;
-  wrapText(2, y0, 124, 8, txt, avail, skip);
-  if (foot) { u8g2.setFont(F_TINY); textRight(127, 63, foot); }
+  int yStart = 20;
+  if (lines < avail) yStart += ((avail - lines) * 9) / 2;
+  wrapText(2, yStart, bodyW, 9, txt, avail, skip);
+
+  if (lines > avail) {
+    int sbH = avail * 9;
+    int thumbH = max(4, (sbH * avail) / lines);
+    int maxStep = max(1, lines - avail);
+    int thumbY = 13 + ((sbH - thumbH) * skip) / maxStep;
+    u8g2.drawVLine(126, 13, sbH);
+    u8g2.drawBox(125, thumbY, 3, thumbH);
+  }
+  if (foot && *foot) {
+    drawDottedHLine(0, 53, 128);
+    u8g2.setFont(F_TINY);
+    drawTextRightFit(126, 62, 122, foot);
+  }
 }
 
 static void parseAlerts(const char* alerts, const char* id, float price, uint8_t& fired, const char* cur) {
@@ -80,6 +96,7 @@ struct CryptoData { bool ok; uint8_t n; char cur[6]; Coin c[4]; };
 
 static bool crypto_fetch(JsonObject p, void* d) {
   CryptoData* cd = (CryptoData*)d;
+  if (!cd) return false;
   String ids = p["coins"] | "bitcoin,ethereum";
   String cur = p["cur"] | "usd";
   ids.replace(" ", "");
@@ -120,47 +137,60 @@ static void priceScreen(const char* name, const char* cur, float price, float ch
   char b[32];
   snprintf(b, sizeof(b), "%+.1f%%", chPct);
 
-  // Clean Header using drawHeader (guaranteed zero overlap, auto-truncates if needed)
   String nm(name);
   nm.toUpperCase();
   drawHeader(nm.c_str(), b);
 
-  // Main Price in F_HELV14
-  u8g2.setFont(F_HELV14);
+  // Price row (y=13..29): auto-fit font so large values + currency never clip
   String ps = fmtPrice(price);
-  u8g2.drawStr(1, 27, ps.c_str());
+  String cu(cur && *cur ? cur : "");
+  cu.toUpperCase();
+
+  u8g2.setFont(F_TINY);
+  int cw = cu.length() ? (u8g2.getStrWidth(cu.c_str()) + 4) : 0;
+  int maxPw = 114 - cw;
+
+  u8g2.setFont(F_HELV14);
+  if (u8g2.getStrWidth(ps.c_str()) > maxPw) {
+    u8g2.setFont(F_BOLD);
+    if (u8g2.getStrWidth(ps.c_str()) > maxPw) u8g2.setFont(F_MED);
+  }
+  u8g2.drawStr(2, 28, ps.c_str());
   int pw = u8g2.getStrWidth(ps.c_str());
 
-  // Currency tag beside price
-  if (cur && *cur) {
+  if (cu.length() && pw + 4 + cw <= 116) {
     u8g2.setFont(F_TINY);
-    String cu(cur);
-    cu.toUpperCase();
-    u8g2.drawStr(pw + 4, 26, cu.c_str());
+    u8g2.drawStr(pw + 5, 27, cu.c_str());
   }
+  drawIconArrow(119, 17, chPct >= 0.0f);
 
-  // Sparkline Chart & Baseline
+  // Sparkline & range footer
   if (hn > 1) {
     float mn = hist[0], mx = hist[0];
     for (int i = 1; i < hn; i++) { mn = min(mn, hist[i]); mx = max(mx, hist[i]); }
     float rng = mx - mn;
     if (rng > 0.0001f) {
-      int basePy = 31 + 25 - (int)((hist[0] - mn) / rng * 25);
-      for (int px = 0; px < 128; px += 4) u8g2.drawPixel(px, basePy);
+      int basePy = 31 + 24 - (int)((hist[0] - mn) / rng * 24);
+      drawDottedHLine(2, basePy, 124);
     }
-    drawSpark(0, 31, 128, 26, hist, hn);
-  } else {
+    drawSpark(2, 31, 124, 24, hist, hn);
+    char rBuf[36];
+    snprintf(rBuf, sizeof(rBuf), "L:%s H:%s", fmtPrice(mn).c_str(), fmtPrice(mx).c_str());
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(1, 48, "gathering trend history...");
+    drawTextFit(2, 63, (n > 1) ? 100 : 124, rBuf);
+  } else {
+    drawDottedHLine(2, 43, 124);
+    u8g2.setFont(F_TINY);
+    textCenter(51, "gathering price history...");
   }
 
-  // Page indicator dots
   drawPageDots(126, 61, n, idx);
 }
 
 static void crypto_draw(CardCtx& c) {
   CryptoData* cd = (CryptoData*)c.d;
-  if (!dataGate(cd->ok, "crypto prices")) return;
+  if (!cd || !dataGate(cd->ok, "crypto prices")) return;
+  if (!cd->n) { drawCenteredMsg("No coins configured"); return; }
   int i = (c.st[0] + (millis() - c.t0) / 5000) % cd->n;
   Coin& k = cd->c[i];
   priceScreen(k.id, cd->cur, k.price, k.ch, k.hist, k.hn, i, cd->n);
@@ -168,6 +198,7 @@ static void crypto_draw(CardCtx& c) {
 static bool crypto_input(CardCtx& c, uint8_t g) { if (g == G_LONG) { c.st[0]++; return true; } return false; }
 static void crypto_speak(CardCtx& c, String& s) {
   CryptoData* cd = (CryptoData*)c.d;
+  if (!cd || !cd->ok) return;
   for (int i = 0; i < cd->n; i++)
     s += String(cd->c[i].id) + " " + fmtPrice(cd->c[i].price) + ", " + (cd->c[i].ch >= 0 ? "up " : "down ") +
          String(fabsf(cd->c[i].ch), 1) + " percent. ";
@@ -180,6 +211,7 @@ struct StockData { bool ok; uint8_t n; Stk s[3]; };
 
 static bool stock_fetch(JsonObject p, void* d) {
   StockData* sd = (StockData*)d;
+  if (!sd) return false;
   String syms = p["symbols"] | "AAPL";
   syms.replace(" ", "");
   StockData nd;
@@ -222,7 +254,8 @@ static bool stock_fetch(JsonObject p, void* d) {
 }
 static void stock_draw(CardCtx& c) {
   StockData* sd = (StockData*)c.d;
-  if (!dataGate(sd->ok, "stock prices")) return;
+  if (!sd || !dataGate(sd->ok, "stock prices")) return;
+  if (!sd->n) { drawCenteredMsg("No symbols loaded"); return; }
   int i = (c.st[0] + (millis() - c.t0) / 5000) % sd->n;
   Stk& k = sd->s[i];
   float ch = k.prev ? (k.price - k.prev) / k.prev * 100 : 0;
@@ -230,6 +263,7 @@ static void stock_draw(CardCtx& c) {
 }
 static void stock_speak(CardCtx& c, String& s) {
   StockData* sd = (StockData*)c.d;
+  if (!sd || !sd->ok) return;
   for (int i = 0; i < sd->n; i++) {
     Stk& k = sd->s[i];
     float ch = k.prev ? (k.price - k.prev) / k.prev * 100 : 0;
@@ -241,6 +275,7 @@ const CardType CT_stock = {"stock", sizeof(StockData), 600, 0, nullptr, stock_dr
 // ================================================================== currency
 struct CurData { bool ok; char base[5]; uint8_t n; char to[6][5]; float rate[6]; };
 static bool currency_fetch(JsonObject p, void* d) {
+  if (!d) return false;
   String base = p["base"] | "USD", to = p["to"] | "EUR,GBP,JPY";
   base.toUpperCase();
   to.toUpperCase();
@@ -261,26 +296,37 @@ static bool currency_fetch(JsonObject p, void* d) {
   JsonDocument doc;
   if (!httpJson("https://open.er-api.com/v6/latest/" + base, doc, &filter)) return false;
   for (int i = 0; i < nd.n; i++) nd.rate[i] = doc["rates"][nd.to[i]] | 0.0f;
-  nd.ok = !strcmp(doc["result"] | "", "success");
+  nd.ok = !strcmp(doc["result"] | "", "success") && nd.n > 0;
   *(CurData*)d = nd;
   return nd.ok;
 }
 static void currency_draw(CardCtx& c) {
   CurData* cd = (CurData*)c.d;
-  if (!dataGate(cd->ok, "exchange rates")) return;
+  if (!cd || !dataGate(cd->ok, "exchange rates")) return;
+  if (!cd->n) { drawCenteredMsg("No currency pairs"); return; }
   char b[24];
   snprintf(b, sizeof(b), "1 %s =", cd->base);
   drawTitle(c, "Currency", b);
-  int rows = min((int)cd->n, 5);
-  for (int i = 0; i < rows; i++) {
-    int y = 21 + i * 10;
+  int pages = (cd->n > 5) ? 2 : 1;
+  int pg = (pages > 1) ? (((millis() - c.t0) / 4500) % pages) : 0;
+  int first = pg * 4;
+  int perPage = (pages > 1) ? 4 : 5;
+  int rows = min((int)cd->n - first, perPage);
+  for (int r = 0; r < rows; r++) {
+    int i = first + r;
+    int y = 21 + r * 10;
+    u8g2.drawRFrame(2, y - 8, 28, 10, 2);
+    u8g2.setFont(F_SMALL);
+    drawTextFitCenter(16, y - 1, 24, cd->to[i]);
     u8g2.setFont(F_MED);
-    u8g2.drawStr(4, y, cd->to[i]);
-    textRight(124, y, fmtPrice(cd->rate[i]).c_str());
+    drawTextRightFit(126, y, 90, fmtPrice(cd->rate[i]).c_str());
+    if (r < rows - 1) drawDottedHLine(34, y + 2, 92);
   }
+  drawPageDots(126, 61, pages, pg);
 }
 static void currency_speak(CardCtx& c, String& s) {
   CurData* cd = (CurData*)c.d;
+  if (!cd || !cd->ok) return;
   for (int i = 0; i < cd->n; i++) s += "One " + String(cd->base) + " is " + fmtPrice(cd->rate[i]) + " " + cd->to[i] + ". ";
 }
 const CardType CT_currency = {"currency", sizeof(CurData), 3600, 0, nullptr, currency_draw, nullptr, currency_fetch, currency_speak, nullptr};
@@ -337,20 +383,39 @@ static bool news_fetch(JsonObject p, void* d) {
   nd->ok = nd->n > 0;
   return nd->ok;
 }
-static int newsIdx(CardCtx& c, NewsData* n) { return (c.st[0] + (millis() - c.t0) / 9000) % n->n; }
+static int newsIdx(CardCtx& c, NewsData* n) {
+  if (!n || !n->n) return 0;
+  return (c.st[0] + (millis() - c.t0) / 9000) % n->n;
+}
 static void news_draw(CardCtx& c) {
   NewsData* n = (NewsData*)c.d;
-  if (!dataGate(n->ok, "headlines")) return;
+  if (!n || !dataGate(n->ok, "headlines")) return;
+  if (!n->n) { drawCenteredMsg("No headlines"); return; }
   int i = newsIdx(c, n);
   char b[12];
   snprintf(b, sizeof(b), "%d/%d", i + 1, n->n);
   drawTitle(c, "News", b);
+
   u8g2.setFont(F_MED);
-  wrapText(0, 21, 127, 11, n->t[i], 4);
+  int linesM = wrapText(0, 0, 124, 11, n->t[i], 0);
+  if (linesM <= 3) {
+    int y0 = 21 + ((3 - linesM) * 11) / 2;
+    wrapText(2, y0, 124, 11, n->t[i], 3);
+  } else {
+    u8g2.setFont(F_SMALL);
+    int linesS = wrapText(0, 0, 124, 9, n->t[i], 0);
+    int skip = (linesS > 4) ? (((millis() - c.t0) / 2500) % max(1, linesS - 3)) : 0;
+    wrapText(2, 20, 124, 9, n->t[i], 4, skip);
+  }
+
+  drawDottedHLine(0, 55, 128);
+  u8g2.setFont(F_TINY);
+  u8g2.drawStr(2, 63, "Hold: next story");
+  drawPageDots(126, 61, n->n, i);
 }
 static void news_speak(CardCtx& c, String& s) {
   NewsData* n = (NewsData*)c.d;
-  if (n->ok) s = n->t[newsIdx(c, n)];
+  if (n && n->ok && n->n) s = n->t[newsIdx(c, n)];
 }
 const CardType CT_news = {"news", sizeof(NewsData), 1800, 0, nullptr, news_draw, crypto_input, news_fetch, news_speak, nullptr};
 
@@ -367,6 +432,7 @@ static const char* const LOCAL_QUOTES[][2] = {
 };
 
 static bool quote_fetch(JsonObject p, void* d) {
+  if (!d) return false;
   bool rnd = !strcmp(p["mode"] | "today", "random");
   JsonDocument doc;
   if (!httpJson(rnd ? "https://zenquotes.io/api/random" : "https://zenquotes.io/api/today", doc)) return false;
@@ -380,16 +446,16 @@ static bool quote_fetch(JsonObject p, void* d) {
 }
 static void quote_draw(CardCtx& c) {
   TextData* t = (TextData*)c.d;
-  const char *q = t->t, *a = t->a;
-  if (!t->ok) {
+  const char *q = (t && t->ok) ? t->t : nullptr, *a = (t && t->ok) ? t->a : nullptr;
+  if (!q) {
     struct tm tm;
     int i = (nowTm(tm) ? tm.tm_yday : 0) % (sizeof(LOCAL_QUOTES) / sizeof(LOCAL_QUOTES[0]));
     q = LOCAL_QUOTES[i][0];
     a = LOCAL_QUOTES[i][1];
   }
   char foot[44];
-  snprintf(foot, sizeof(foot), "- %s", a);
-  textBlock(c, q, foot);
+  snprintf(foot, sizeof(foot), "- %s", a ? a : "");
+  textBlock(c, "Quote", q, foot);
 }
 static bool refresh_input(CardCtx& c, uint8_t g) {
   if (g == G_DOUBLE) { cardRefreshNow(c.idx); audioSfx("pop", EV_UI); return true; }
@@ -397,11 +463,12 @@ static bool refresh_input(CardCtx& c, uint8_t g) {
 }
 static void quote_speak(CardCtx& c, String& s) {
   TextData* t = (TextData*)c.d;
-  if (t->ok) s = String(t->t) + " By " + t->a + ".";
+  if (t && t->ok) s = String(t->t) + " By " + t->a + ".";
 }
 const CardType CT_quote = {"quote", sizeof(TextData), 3600, 0, nullptr, quote_draw, refresh_input, quote_fetch, quote_speak, nullptr};
 
 static bool joke_fetch(JsonObject p, void* d) {
+  if (!d) return false;
   JsonDocument doc;
   if (!httpJson("https://v2.jokeapi.dev/joke/Programming,Misc,Pun,Spooky?safe-mode&type=single", doc)) return false;
   TextData* t = (TextData*)d;
@@ -412,20 +479,21 @@ static bool joke_fetch(JsonObject p, void* d) {
 }
 static void joke_draw(CardCtx& c) {
   TextData* t = (TextData*)c.d;
-  if (!dataGate(t->ok, "a joke")) return;
-  textBlock(c, t->t, "2x tap: new");
+  if (!t || !dataGate(t->ok, "a joke")) return;
+  textBlock(c, "Joke", t->t, nullptr, "2x: new");
 }
 static void text_speak(CardCtx& c, String& s) {
   TextData* t = (TextData*)c.d;
-  if (t->ok) s = t->t;
+  if (t && t->ok) s = t->t;
 }
 static void joke_enter(CardCtx& c) {
   TextData* t = (TextData*)c.d;
-  if (t->ok && (c.p["speak"] | false)) { audioSay(t->t, EV_UI); emoSet(E_HAPPY, 3000); }
+  if (t && t->ok && (c.p["speak"] | false)) { audioSay(t->t, EV_UI); emoSet(E_HAPPY, 3000); }
 }
 const CardType CT_joke = {"joke", sizeof(TextData), 3600, 0, joke_enter, joke_draw, refresh_input, joke_fetch, text_speak, nullptr};
 
 static bool fact_fetch(JsonObject p, void* d) {
+  if (!d) return false;
   JsonDocument doc;
   if (!httpJson("https://uselessfacts.jsph.pl/api/v2/facts/random?language=en", doc)) return false;
   TextData* t = (TextData*)d;
@@ -436,8 +504,8 @@ static bool fact_fetch(JsonObject p, void* d) {
 }
 static void fact_draw(CardCtx& c) {
   TextData* t = (TextData*)c.d;
-  if (!dataGate(t->ok, "a fun fact")) return;
-  textBlock(c, t->t, "Fun fact");
+  if (!t || !dataGate(t->ok, "a fun fact")) return;
+  textBlock(c, "Fun Fact", t->t, nullptr, "2x: new");
 }
 const CardType CT_fact = {"fact", sizeof(TextData), 3600, 0, joke_enter, fact_draw, refresh_input, fact_fetch, text_speak, nullptr};
 
@@ -482,11 +550,24 @@ static int wordIdx(CardCtx& c) {
 }
 static void word_draw(CardCtx& c) {
   int i = wordIdx(c);
-  drawTitle(c, "Word of the day", WORDS[i][1]);
+  drawTitle(c, "Word", WORDS[i][1]);
+
   u8g2.setFont(F_HELV14);
-  textCenter(31, WORDS[i][0]);
+  if (u8g2.getStrWidth(WORDS[i][0]) > 124) {
+    u8g2.setFont(F_BOLD);
+    if (u8g2.getStrWidth(WORDS[i][0]) > 124) u8g2.setFont(F_MED);
+  }
+  textCenter(29, WORDS[i][0]);
+  drawDottedHLine(16, 33, 96);
+
   u8g2.setFont(F_SMALL);
-  wrapText(2, 44, 124, 9, WORDS[i][2], 3);
+  wrapText(4, 44, 120, 9, WORDS[i][2], 2);
+
+  char idxBuf[12];
+  snprintf(idxBuf, sizeof(idxBuf), "%d/%d", i + 1, (int)NWORDS);
+  u8g2.setFont(F_TINY);
+  u8g2.drawStr(2, 63, "Hold: next");
+  textRight(126, 63, idxBuf);
 }
 static bool word_input(CardCtx& c, uint8_t g) { if (g == G_LONG) { c.st[0]++; return true; } return false; }
 static void word_speak(CardCtx& c, String& s) { int i = wordIdx(c); s = String(WORDS[i][0]) + ". " + WORDS[i][2] + "."; }
@@ -496,6 +577,7 @@ const CardType CT_word = {"word", 0, 0, 0, nullptr, word_draw, word_input, nullp
 struct IssData { bool ok; float lat, lon; int people; uint8_t calls; };
 static bool iss_fetch(JsonObject p, void* d) {
   IssData* s = (IssData*)d;
+  if (!s) return false;
   JsonDocument doc;
   if (!httpJson("http://api.open-notify.org/iss-now.json", doc)) return false;
   s->lat = atof(doc["iss_position"]["latitude"] | "0");
@@ -509,28 +591,45 @@ static bool iss_fetch(JsonObject p, void* d) {
 }
 static void iss_draw(CardCtx& c) {
   IssData* s = (IssData*)c.d;
-  if (!dataGate(s->ok, "space station")) return;
-  int mx = 0, my = 12, mw = 76, mh = 40;
+  if (!s || !dataGate(s->ok, "space station")) return;
+  char crw[16];
+  snprintf(crw, sizeof(crw), "%d crew", s->people);
+  drawTitle(c, "ISS Live", s->people > 0 ? crw : nullptr);
+
+  int mx = 0, my = 12, mw = 78, mh = 41;
   u8g2.drawFrame(mx, my, mw, mh);
-  for (int x = mx; x < mx + mw; x += 3) u8g2.drawPixel(x, my + mh / 2);
-  for (int y = my; y < my + mh; y += 3) u8g2.drawPixel(mx + mw / 2, y);
-  for (int k = 1; k < 4; k++) for (int y = my; y < my + mh; y += 6) u8g2.drawPixel(mx + k * mw / 4, y);
-  int px = mx + (int)((s->lon + 180) / 360 * (mw - 1)), py = my + (int)((90 - s->lat) / 180 * (mh - 1));
+  for (int x = mx + 2; x < mx + mw - 1; x += 3) u8g2.drawPixel(x, my + mh / 2);
+  for (int y = my + 2; y < my + mh - 1; y += 3) u8g2.drawPixel(mx + mw / 2, y);
+  for (int k = 1; k < 4; k++) for (int y = my + 2; y < my + mh - 1; y += 6) u8g2.drawPixel(mx + k * mw / 4, y);
+  int px = constrain(mx + 2 + (int)((s->lon + 180.0f) / 360.0f * (mw - 5)), mx + 3, mx + mw - 4);
+  int py = constrain(my + 2 + (int)((90.0f - s->lat) / 180.0f * (mh - 5)), my + 3, my + mh - 4);
   u8g2.drawCircle(px, py, 2 + (millis() / 300) % 3);
   u8g2.drawDisc(px, py, 1);
-  drawTitle(c, "ISS tracker");
-  char b[20];
-  u8g2.setFont(F_SMALL);
-  snprintf(b, sizeof(b), "Lat %.1f", s->lat); u8g2.drawStr(80, 22, b);
-  snprintf(b, sizeof(b), "Lon %.1f", s->lon); u8g2.drawStr(80, 32, b);
-  snprintf(b, sizeof(b), "Crew %d", s->people); u8g2.drawStr(80, 46, b);
+
+  char b[16];
   u8g2.setFont(F_TINY);
-  u8g2.drawStr(0, 62, "people in space right now");
+  u8g2.drawStr(82, 19, "LATITUDE");
+  u8g2.setFont(F_MED);
+  snprintf(b, sizeof(b), "%+.1f", s->lat);
+  drawTextRightFit(127, 29, 45, b);
+
+  u8g2.setFont(F_TINY);
+  u8g2.drawStr(82, 38, "LONGITUDE");
+  u8g2.setFont(F_MED);
+  snprintf(b, sizeof(b), "%+.1f", s->lon);
+  drawTextRightFit(127, 48, 45, b);
+
+  drawDottedHLine(0, 55, 128);
+  u8g2.setFont(F_TINY);
+  char orb[40];
+  if (s->people > 0) snprintf(orb, sizeof(orb), "%d people in orbit · 408km", s->people);
+  else snprintf(orb, sizeof(orb), "Orbit 408km · 27,600 km/h");
+  textCenter(63, orb);
 }
 static void iss_speak(CardCtx& c, String& s) {
   IssData* d = (IssData*)c.d;
-  if (d->ok) s = "The space station is at latitude " + String((int)d->lat) + ", longitude " + String((int)d->lon) +
-                 ". There are " + String(d->people) + " people in space.";
+  if (d && d->ok) s = "The space station is at latitude " + String((int)d->lat) + ", longitude " + String((int)d->lon) +
+                      ". There are " + String(d->people) + " people in space.";
 }
 const CardType CT_iss = {"iss", sizeof(IssData), 30, 0, nullptr, iss_draw, nullptr, iss_fetch, iss_speak, nullptr};
 
@@ -591,6 +690,8 @@ struct TempUpload {
 };
 
 static bool youtube_fetch(JsonObject p, void* d) {
+  YtData* y = (YtData*)d;
+  if (!y) return false;
   String ch = p["channel"] | "", key = p["key"] | "";
   if (!key.length()) { LOCK(); key = cfg["keys"]["youtube"] | ""; UNLOCK(); }
   ch.trim();
@@ -614,7 +715,6 @@ static bool youtube_fetch(JsonObject p, void* d) {
   JsonObject sn = item["snippet"];
   if (st.isNull()) return false;
 
-  YtData* y = (YtData*)d;
   double old = y->subs;
 
   if (!sn.isNull()) {
@@ -781,27 +881,28 @@ static void drawMediaPage(CardCtx& c, const char* chName, const char* rBadge, co
   drawHeader(chName, rBadge);
 
   u8g2.setFont(F_TINY);
-  u8g2.drawStr(2, 21, m.isShort ? "Latest Short:" : "Latest Video:");
-
-  if (m.isNew) {
-    drawBadge(126, 21, "NEW");
-  } else {
-    drawBadge(126, 21, m.isShort ? "SHORT" : "VIDEO");
-  }
+  u8g2.drawStr(2, 20, m.isShort ? "Latest Short" : "Latest Video");
+  drawBadge(126, 21, m.isNew ? "NEW" : (m.isShort ? "SHORT" : "VIDEO"));
 
   u8g2.setFont(F_SMALL);
-  marquee(2, 33, 124, m.title, c.t0, 24);
+  int lines = wrapText(0, 0, 124, 9, m.title, 0);
+  if (lines <= 2) {
+    int y0 = (lines == 1) ? 37 : 32;
+    wrapText(2, y0, 124, 9, m.title, 2);
+  } else {
+    marquee(2, 37, 124, m.title, c.t0, 24);
+  }
 
-  drawDottedHLine(0, 46, 128);
-
+  drawDottedHLine(0, 49, 128);
   u8g2.setFont(F_SMALL);
   char vRow[48];
   snprintf(vRow, sizeof(vRow), "%s views  |  %s", fmtNum(m.views).c_str(), m.age[0] ? m.age : "Recent");
-  textCenter(58, vRow);
+  drawTextFitCenter(64, 60, 124, vRow);
 }
 
 static void youtube_draw(CardCtx& c) {
   YtData* y = (YtData*)c.d;
+  if (!y) return;
   if (!(c.p["channel"] | "")[0]) { drawCenteredMsg("Set channel ID or handle", "in card settings"); return; }
   if (!dataGate(y->ok, "YouTube stats")) return;
 
@@ -818,34 +919,35 @@ static void youtube_draw(CardCtx& c) {
   if (page == 0) {
     drawHeader(chName, rBadge);
 
-    // YouTube Red Play Button icon
-    u8g2.drawRBox(2, 16, 22, 16, 4);
+    u8g2.drawRBox(2, 15, 22, 16, 4);
     u8g2.setDrawColor(0);
-    u8g2.drawTriangle(10, 20, 10, 28, 17, 24);
+    u8g2.drawTriangle(10, 19, 10, 27, 17, 23);
     u8g2.setDrawColor(1);
 
-    u8g2.setFont(F_HELV14);
     String s = y->subs < 100000 ? String((long)y->subs) : fmtNum(y->subs);
-    u8g2.drawStr(29, 31, s.c_str());
+    u8g2.setFont(F_HELV14);
+    drawTextFit(29, 28, 97, s.c_str());
 
-    u8g2.setFont(F_SMALL);
-    u8g2.drawStr(29, 41, "subscribers");
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(29, 36, "subscribers");
 
-    drawDottedHLine(0, 47, 128);
+    if (y->nextMilestone > 0) {
+      drawBar(2, 41, 86, 5, y->milestonePct / 100.0f);
+      char mBuf[20];
+      snprintf(mBuf, sizeof(mBuf), "Goal %s", fmtNum(y->nextMilestone).c_str());
+      u8g2.setFont(F_TINY);
+      drawTextRightFit(126, 46, 36, mBuf);
+    }
 
+    drawDottedHLine(0, 51, 128);
     u8g2.setFont(F_SMALL);
     char b[48];
     snprintf(b, sizeof(b), "%s views  |  %lu vids", fmtNum(y->views).c_str(), (unsigned long)y->videos);
-    textCenter(58, b);
+    drawTextFitCenter(64, 61, 124, b);
 
   } else {
-    // Media subpages (Latest Video and/or Latest Short)
     if (y->latestVideo.ok && y->latestShort.ok) {
-      if (page == 1) {
-        drawMediaPage(c, chName, rBadge, y->latestVideo);
-      } else {
-        drawMediaPage(c, chName, rBadge, y->latestShort);
-      }
+      drawMediaPage(c, chName, rBadge, page == 1 ? y->latestVideo : y->latestShort);
     } else if (y->latestVideo.ok) {
       drawMediaPage(c, chName, rBadge, y->latestVideo);
     } else if (y->latestShort.ok) {
@@ -872,13 +974,14 @@ const CardType CT_youtube = {"youtube", sizeof(YtData), 1800, 0, nullptr, youtub
 // ================================================================== GitHub
 struct GhData { bool ok; uint32_t followers, repos, stars; };
 static bool github_fetch(JsonObject p, void* d) {
+  GhData* g = (GhData*)d;
+  if (!g) return false;
   String u = p["user"] | "";
   if (!u.length()) return false;
   String tok = p["token"] | "";
   String auth = "Bearer " + tok;
   JsonDocument doc;
   if (!httpJson("https://api.github.com/users/" + u, doc, nullptr, tok.length() ? "Authorization" : nullptr, auth.c_str())) return false;
-  GhData* g = (GhData*)d;
   g->followers = doc["followers"] | 0;
   g->repos = doc["public_repos"] | 0;
   JsonDocument filter;
@@ -895,23 +998,27 @@ static bool github_fetch(JsonObject p, void* d) {
 static void github_draw(CardCtx& c) {
   GhData* g = (GhData*)c.d;
   if (!(c.p["user"] | "")[0]) { drawCenteredMsg("Set a GitHub user", "in the card settings"); return; }
-  if (!dataGate(g->ok, "GitHub stats")) return;
+  if (!g || !dataGate(g->ok, "GitHub stats")) return;
   drawTitle(c, "GitHub", c.p["user"] | "");
   const char* L[] = {"Stars", "Followers", "Repos"};
   uint32_t V[] = {g->stars, g->followers, g->repos};
   for (int i = 0; i < 3; i++) {
     int x = i * 43;
-    char b[12];
-    snprintf(b, sizeof(b), "%lu", (unsigned long)V[i]);
+    int cx = x + 21;
+    u8g2.drawRFrame(x, 14, 41, 46, 3);
+    if (i == 0) drawIconStar(cx - 4, 17);
+    else if (i == 1) drawIconHeart(cx - 4, 17);
+    else u8g2.drawFrame(cx - 4, 18, 8, 6);
+    String numS = (V[i] >= 1000) ? fmtNum((double)V[i]) : String((unsigned long)V[i]);
     u8g2.setFont(F_HELV14);
-    u8g2.drawStr(x + (42 - u8g2.getStrWidth(b)) / 2, 38, b);
-    u8g2.setFont(F_SMALL);
-    u8g2.drawStr(x + (42 - u8g2.getStrWidth(L[i])) / 2, 52, L[i]);
+    drawTextFitCenter(cx, 41, 37, numS.c_str());
+    u8g2.setFont(F_TINY);
+    drawTextFitCenter(cx, 54, 37, L[i]);
   }
 }
 static void github_speak(CardCtx& c, String& s) {
   GhData* g = (GhData*)c.d;
-  if (g->ok) s = numWords(g->stars) + " stars and " + numWords(g->followers) + " followers.";
+  if (g && g->ok) s = numWords(g->stars) + " stars and " + numWords(g->followers) + " followers.";
 }
 const CardType CT_github = {"github", sizeof(GhData), 3600, 0, nullptr, github_draw, nullptr, github_fetch, github_speak, nullptr};
 
@@ -988,13 +1095,14 @@ static void cClapper(int x, int y) {
 }
 
 static void cRating(int x, int y, uint8_t r, int barW) {
+  if (r > 100) r = 100;
   u8g2.drawXBMP(x, y, 5, 5, XBM_STAR5);
   char buf[8];
   snprintf(buf, sizeof(buf), "%d.%d", r / 10, r % 10);
   u8g2.setFont(F_SMALL);
   u8g2.drawStr(x + 7, y + 6, buf);
   if (barW > 0) {
-    int bx = x + 25;
+    int bx = x + 27;
     u8g2.drawFrame(bx, y, barW, 5);
     int fillW = ((barW - 2) * r) / 100;
     if (fillW > 0) u8g2.drawBox(bx + 1, y + 1, fillW, 3);
@@ -1059,6 +1167,7 @@ static int16_t daysFromDate(const char* s) {
   target.tm_mon  = mo - 1;
   target.tm_mday = dy;
   target.tm_hour = 12;
+  target.tm_isdst = -1;
   time_t targetTime = mktime(&target);
 
   time_t now = time(nullptr);
@@ -1091,13 +1200,21 @@ static bool cinema_fetch(JsonObject p, void* d) {
   String feed = p["feed"] | "wishlist";
   String token = p["token"].is<const char*>() ? (p["token"] | "") : "";
   token.trim();
-  if (!token.length()) {
-    if (cfg["cinema"].is<JsonObject>() && cfg["cinema"]["token"].is<const char*>()) {
-      token = cfg["cinema"]["token"] | "";
-    } else if (cfg["cinema_token"].is<const char*>()) {
-      token = cfg["cinema_token"] | "";
+  String srv = p["server"].is<const char*>() ? (p["server"] | "") : "";
+  {
+    LOCK();
+    if (!token.length()) {
+      if (cfg["cinema"].is<JsonObject>() && cfg["cinema"]["token"].is<const char*>()) {
+        token = cfg["cinema"]["token"] | "";
+      } else if (cfg["cinema_token"].is<const char*>()) {
+        token = cfg["cinema_token"] | "";
+      }
+      token.trim();
     }
-    token.trim();
+    if (!srv.length()) {
+      srv = cfg["cinema"]["url"].is<const char*>() ? (cfg["cinema"]["url"] | "") : DEFAULT_CINEMA_SERVER;
+    }
+    UNLOCK();
   }
 #ifdef DEFAULT_CINEMA_TOKEN
   if (!token.length()) {
@@ -1105,19 +1222,29 @@ static bool cinema_fetch(JsonObject p, void* d) {
     token.trim();
   }
 #endif
-
-  String srv = p["server"].is<const char*>() ? (p["server"] | "") : "";
-  if (!srv.length()) {
-    srv = cfg["cinema"]["url"].is<const char*>() ? (cfg["cinema"]["url"] | "") : DEFAULT_CINEMA_SERVER;
-  }
   srv.trim();
   while (srv.endsWith("/")) srv = srv.substring(0, srv.length() - 1);
   if (!srv.length()) return false;
 
-  // Filter for fallback standard endpoints (Wishlist & TMDB)
-  JsonDocument filter;
-  filter["total"] = true;
-  JsonObject itemF = filter["data"][0];
+  JsonDocument emoFilter;
+  emoFilter["ok"] = true;
+  emoFilter["linked"] = true;
+  emoFilter["stats"]["w"] = true;
+  emoFilter["stats"]["l"] = true;
+  emoFilter["pick"]["t"] = true;
+  emoFilter["pick"]["g"] = true;
+  emoFilter["pick"]["r"] = true;
+  JsonObject ef = emoFilter["items"].add<JsonObject>();
+  ef["id"] = true; ef["_id"] = true;
+  ef["t"] = true; ef["title"] = true;
+  ef["y"] = true; ef["release_date"] = true; ef["year"] = true;
+  ef["k"] = true; ef["g"] = true; ef["genre"] = true;
+  ef["d"] = true; ef["r"] = true; ef["rating"] = true; ef["vote_average"] = true;
+
+  // Separate object filter (/api/wishlist) and array filter (/api/tmdb/*) for ArduinoJson v7
+  JsonDocument wishFilter;
+  wishFilter["total"] = true;
+  JsonObject itemF = wishFilter["data"].add<JsonObject>();
   itemF["_id"] = true;
   itemF["id"] = true;
   itemF["tmdbId"] = true;
@@ -1126,18 +1253,26 @@ static bool cinema_fetch(JsonObject p, void* d) {
   itemF["release_date"] = true;
   itemF["first_air_date"] = true;
   itemF["year"] = true;
+  itemF["days"] = true;
   itemF["rating"] = true;
   itemF["vote_average"] = true;
   itemF["type"] = true;
   itemF["media_type"] = true;
   itemF["genre"] = true;
-  JsonObject arrF = filter[0];
+
+  JsonDocument arrFilter;
+  JsonObject arrF = arrFilter.add<JsonObject>();
+  arrF["id"] = true;
   arrF["title"] = true;
   arrF["name"] = true;
   arrF["release_date"] = true;
   arrF["first_air_date"] = true;
+  arrF["days"] = true;
   arrF["vote_average"] = true;
+  arrF["rating"] = true;
   arrF["media_type"] = true;
+  arrF["type"] = true;
+  arrF["genre"] = true;
 
   String authHeader;
   const char* hName = nullptr;
@@ -1153,7 +1288,8 @@ static bool cinema_fetch(JsonObject p, void* d) {
   if (token.length()) emoUrl += "&token=" + token;
 
   JsonDocument doc;
-  bool ok = httpJson(emoUrl, doc, nullptr, hName, hVal);
+  bool ok = httpJson(emoUrl, doc, &emoFilter, hName, hVal);
+  emoFilter.clear();
 
   if (ok && doc["items"].is<JsonArray>()) {
     cd->ok = doc["ok"] | true;
@@ -1192,7 +1328,7 @@ static bool cinema_fetch(JsonObject p, void* d) {
 
     if (cd->n > 0) {
       if (!cd->listSize) cd->listSize = cd->n;
-      latestCinema = *cd;
+      { LOCK(); latestCinema = *cd; UNLOCK(); }
       return true;
     }
   }
@@ -1210,10 +1346,11 @@ static bool cinema_fetch(JsonObject p, void* d) {
 
   String url = srv + endpoint;
   doc.clear();
-  if (!httpJson(url, doc, &filter, hName, hVal)) {
+  JsonDocument* fbFilter = endpoint.startsWith("/api/wishlist") ? &wishFilter : &arrFilter;
+  if (!httpJson(url, doc, fbFilter, hName, hVal)) {
     if (endpoint.startsWith("/api/wishlist")) {
       url = srv + "/api/tmdb/trending";
-      if (!httpJson(url, doc, &filter)) {
+      if (!httpJson(url, doc, &arrFilter)) {
         cd->ok = false;
         strlcpy(cd->err, "HTTP fail", sizeof(cd->err));
         return false;
@@ -1287,7 +1424,7 @@ static bool cinema_fetch(JsonObject p, void* d) {
 
   cd->watchedMonth = cd->n;
   cd->ok = (cd->n > 0);
-  if (cd->ok) latestCinema = *cd;
+  if (cd->ok) { LOCK(); latestCinema = *cd; UNLOCK(); }
   return cd->ok;
 }
 
@@ -1304,31 +1441,33 @@ static void viewSoon(CardCtx& c, CinemaData* cd, int subIdx) {
   drawTitle(c, "Coming Soon", hr);
 
   u8g2.setFont(F_MED);
-  marquee(2, 20, 124, m.title, c.st[2], 28);
+  marquee(2, 21, 124, m.title, c.st[2], 28);
+  drawDottedHLine(0, 24, 128);
 
   if (m.days <= 0) {
-    u8g2.setFont(F_BOLD);
-    u8g2.drawStr(2, 45, "RELEASING");
+    u8g2.setFont(F_SMALL);
+    u8g2.drawStr(2, 37, "RELEASING");
     u8g2.setFont(F_HELV14);
-    u8g2.drawStr(2, 60, "TODAY!");
-    u8g2.drawXBMP(92, 48, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
-    cFit(102, 55, 24, m.genre);
+    u8g2.drawStr(2, 54, "TODAY!");
+    u8g2.drawXBMP(78, 46, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
+    u8g2.setFont(F_SMALL);
+    cFit(88, 53, 38, m.genre);
   } else {
     char num[8]; snprintf(num, sizeof(num), "%u", (unsigned)m.days);
     u8g2.setFont(F_NUM24);
-    u8g2.drawStr(2, 52, num);
-    int rx = 2 + u8g2.getStrWidth(num) + 6;
+    u8g2.drawStr(2, 54, num);
+    int rx = 2 + u8g2.getStrWidth(num) + 7;
 
     u8g2.setFont(F_MED);
-    u8g2.drawStr(rx, 36, m.days == 1 ? "DAY" : "DAYS");
+    u8g2.drawStr(rx, 37, m.days == 1 ? "DAY LEFT" : "DAYS LEFT");
 
     u8g2.setFont(F_SMALL);
     char dtBuf[16]; cDateFmt(dtBuf, sizeof(dtBuf), m.date, m.days);
     u8g2.drawStr(rx, 46, dtBuf);
-    u8g2.drawXBMP(rx, 50, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
-    cFit(rx + 10, 57, 116 - rx, m.genre);
+    u8g2.drawXBMP(rx, 49, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
+    cFit(rx + 10, 56, 126 - (rx + 10), m.genre);
   }
-  cDots(i, n);
+  cDots(i, n, 61);
 }
 
 static void viewOut(CardCtx& c, CinemaData* cd, int subIdx) {
@@ -1345,13 +1484,15 @@ static void viewOut(CardCtx& c, CinemaData* cd, int subIdx) {
   drawTitle(c, "Out Now", hr);
 
   u8g2.setFont(F_MED);
-  marquee(2, 20, 124, m.title, c.st[2], 28);
+  marquee(2, 21, 124, m.title, c.st[2], 28);
+  drawDottedHLine(0, 24, 128);
 
   u8g2.setFont(F_SMALL);
-  u8g2.drawXBMP(2, 25, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
-  cFit(12, 31, 80, m.genre);
+  u8g2.drawXBMP(2, 28, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
+  cFit(12, 34, (a <= 7) ? 88 : 114, m.genre);
+  if (a <= 7) drawBadge(126, 34, "NEW");
 
-  char b[24];
+  char b[28];
   if (a == 0)       strlcpy(b, "Out today", sizeof(b));
   else if (a == 1)  strlcpy(b, "Out yesterday", sizeof(b));
   else if (a < 7)   snprintf(b, sizeof(b), "Out %d days ago", a);
@@ -1361,15 +1502,11 @@ static void viewOut(CardCtx& c, CinemaData* cd, int subIdx) {
     if (m.date[0]) snprintf(b, sizeof(b), "Released %.4s", m.date);
     else snprintf(b, sizeof(b), "Out %d yr ago", a / 365);
   }
-  u8g2.drawStr(2, 42, b);
+  u8g2.drawStr(2, 44, b);
 
-  if (a <= 7) {
-    u8g2.drawBox(104, 24, 22, 9);
-    u8g2.setDrawColor(0); u8g2.drawStr(107, 31, "NEW"); u8g2.setDrawColor(1);
-  }
-  if (m.rating > 0.05f) cRating(2, 48, (uint8_t)(m.rating * 10), 60);
+  if (m.rating > 0.05f) cRating(2, 49, (uint8_t)min(100, (int)lroundf(m.rating * 10.0f)), 58);
   else                  u8g2.drawStr(2, 55, "Not rated");
-  cDots(i, n);
+  cDots(i, n, 61);
 }
 
 static void viewList(CardCtx& c, CinemaData* cd, int sel) {
@@ -1384,23 +1521,24 @@ static void viewList(CardCtx& c, CinemaData* cd, int sel) {
   int first = constrain(cur - 2, 0, max(0, cd->n - 5));
   for (int r = 0; r < 5 && first + r < cd->n; r++) {
     const CineItem& m = cd->items[first + r];
-    int y = 11 + r * 10;
+    int y = 12 + r * 10;
     char tag[8];
     if (m.days > 0)       snprintf(tag, sizeof(tag), "%dd", m.days);
     else if (m.days == 0) strlcpy(tag, "NOW", sizeof(tag));
     else                  strlcpy(tag, "OUT", sizeof(tag));
 
     if (first + r == cur) {
-      u8g2.drawBox(0, y, 125, 10);
+      u8g2.drawBox(0, y, 124, 10);
       u8g2.setDrawColor(0);
     }
-    cFit(3, y + 8, 96, m.title);
-    u8g2.drawStr(122 - u8g2.getStrWidth(tag), y + 8, tag);
+    int tw = u8g2.getStrWidth(tag);
+    cFit(3, y + 8, 115 - tw, m.title);
+    u8g2.drawStr(121 - tw, y + 8, tag);
     u8g2.setDrawColor(1);
   }
   if (cd->n > 5) {
-    int h = 50 * 5 / cd->n;
-    int sy = 11 + (50 - h) * first / (cd->n - 5);
+    int h = max(6, 50 * 5 / cd->n);
+    int sy = 12 + (50 - h) * first / (cd->n - 5);
     u8g2.drawBox(126, sy, 2, h);
   }
 }
@@ -1411,14 +1549,15 @@ static void viewPick(CardCtx& c, CinemaData* cd) {
     drawCenteredMsg("No picks yet", "Rate in CineWish");
     return;
   }
-  cClapper(4, 20);
+  cClapper(4, 17);
   u8g2.setFont(F_MED);
-  wrapText(30, 24, 96, 11, cd->pickTitle, 2);
-  if (cd->pickRating > 0.05f) cRating(30, 43, (uint8_t)(cd->pickRating * 10), 0);
+  wrapText(30, 23, 96, 10, cd->pickTitle, 2);
+  if (cd->pickRating > 0.05f) cRating(30, 41, (uint8_t)min(100, (int)lroundf(cd->pickRating * 10.0f)), 0);
   u8g2.setFont(F_SMALL);
-  cFit(60, 49, 66, cd->pickGenre);
-  u8g2.drawHLine(0, 53, 128);
-  u8g2.drawStr(2, 62, "picked for you");
+  cFit(62, 47, 64, cd->pickGenre);
+  drawDottedHLine(0, 52, 128);
+  u8g2.setFont(F_TINY);
+  textCenter(61, "picked for you");
 }
 
 static void viewStats(CardCtx& c, CinemaData* cd) {
@@ -1426,19 +1565,19 @@ static void viewStats(CardCtx& c, CinemaData* cd) {
   char b[8];
   u8g2.setFont(F_NUM24);
   snprintf(b, sizeof(b), "%u", cd->watchedMonth);
-  int w1 = u8g2.getStrWidth(b);
-  u8g2.drawStr(32 - w1 / 2, 40, b);
+  drawTextFitCenter(32, 39, 58, b);
 
   snprintf(b, sizeof(b), "%u", cd->listSize);
-  int w2 = u8g2.getStrWidth(b);
-  u8g2.drawStr(96 - w2 / 2, 40, b);
+  drawTextFitCenter(96, 39, 58, b);
 
-  u8g2.drawVLine(64, 14, 34);
+  drawDottedVLine(64, 15, 45);
+  u8g2.setFont(F_TINY);
+  textCenter(49, "");
   u8g2.setFont(F_SMALL);
-  u8g2.drawStr(14, 50, "watched");
-  u8g2.drawStr(7, 58, "this month");
-  u8g2.drawStr(79, 50, "on your");
-  u8g2.drawStr(74, 58, "wishlist");
+  drawTextFitCenter(32, 50, 58, "watched");
+  drawTextFitCenter(32, 59, 58, "this month");
+  drawTextFitCenter(96, 50, 58, "on your");
+  drawTextFitCenter(96, 59, 58, "wishlist");
 }
 
 static void cinema_enter(CardCtx& c) {

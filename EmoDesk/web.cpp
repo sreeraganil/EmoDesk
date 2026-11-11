@@ -234,6 +234,7 @@ static void hConfigPost() {
   emoApply();
   bleApply();
   if (oldTz != newTz) timeApply();
+  else tzApplyLocal();
   feedsRefresh();
   mqttCardsChanged();
   server.send(200, "application/json", oldHost != newHost ? "{\"ok\":true,\"reboot\":true}" : "{\"ok\":true}");
@@ -479,10 +480,13 @@ static void hOta() {
     audioStop();
     saveNow();
     u8g2.clearBuffer();
+    drawHeader("Firmware OTA", "BUSY");
     u8g2.setFont(F_BOLD);
-    textCenter(28, "Updating...");
+    textCenter(31, "Updating...");
     u8g2.setFont(F_SMALL);
-    textCenter(44, "don't unplug me");
+    textCenter(45, "Keep power connected");
+    u8g2.drawRFrame(16, 52, 96, 6, 2);
+    u8g2.drawRBox(18, 54, 48, 2, 1);
     displaySend();
     logf("OTA start: %s", u.filename.c_str());
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
@@ -738,20 +742,38 @@ static String computeWsAccept(const String& key) {
   return base64::encode(hash, 20);
 }
 
+static void wsDrop(int slot) {
+  if (slot < 0 || slot >= MAX_WS_CLIENTS) return;
+  if (wsClients[slot].active) {
+    wsClients[slot].client.stop();
+    wsClients[slot].active = false;
+    wsClients[slot].subscribedLogs = false;
+  }
+}
+
+static bool wsWriteRaw(int slot, const uint8_t* data, size_t len) {
+  if (slot < 0 || slot >= MAX_WS_CLIENTS) return false;
+  if (!wsClients[slot].active || !wsClients[slot].client.connected()) { wsDrop(slot); return false; }
+  size_t w = wsClients[slot].client.write(data, len);
+  if (w != len) { wsDrop(slot); return false; }
+  return true;
+}
+
 static void sendWsText(int slot, const String& text) {
   if (slot < 0 || slot >= MAX_WS_CLIENTS) return;
-  if (!wsClients[slot].active || !wsClients[slot].client.connected()) return;
+  if (!wsClients[slot].active || !wsClients[slot].client.connected()) { wsDrop(slot); return; }
   size_t len = text.length();
+  uint8_t hdr[4];
+  size_t hlen = 0;
   if (len < 126) {
-    uint8_t hdr[2] = { 0x81, (uint8_t)len };
-    wsClients[slot].client.write(hdr, 2);
+    hdr[0] = 0x81; hdr[1] = (uint8_t)len; hlen = 2;
   } else if (len < 65536) {
-    uint8_t hdr[4] = { 0x81, 126, (uint8_t)((len >> 8) & 0xFF), (uint8_t)(len & 0xFF) };
-    wsClients[slot].client.write(hdr, 4);
+    hdr[0] = 0x81; hdr[1] = 126; hdr[2] = (uint8_t)((len >> 8) & 0xFF); hdr[3] = (uint8_t)(len & 0xFF); hlen = 4;
   } else {
     return;
   }
-  wsClients[slot].client.write((const uint8_t*)text.c_str(), len);
+  if (!wsWriteRaw(slot, hdr, hlen)) return;
+  wsWriteRaw(slot, (const uint8_t*)text.c_str(), len);
 }
 
 static void sendWsTextAll(const String& text) {
@@ -761,7 +783,7 @@ static void sendWsTextAll(const String& text) {
 }
 
 static void handleNewWsClient(WiFiClient c) {
-  c.setTimeout(150);
+  c.setTimeout(25);
   String key = "";
   uint32_t start = millis();
   while (c.connected() && millis() - start < 1000) {
@@ -945,27 +967,29 @@ static void pollWsClients() {
     }
   }
 
-  // 2. Push screen frame if changed (max ~12 fps)
+  // 2. Push screen frame if changed (max ~12 fps) - copy under lock, write outside lock
   uint32_t now = millis();
   if (activeCount > 0 && now - lastWsPush >= 80) {
     lastWsPush = now;
+    bool changed = false;
     LOCK();
     const uint8_t* ptr = (const uint8_t*)u8g2.getBufferPtr();
     if (ptr) {
-      bool changed = !hasLastFrame || (memcmp(ptr, lastWsFrameBuf, 1024) != 0);
+      changed = !hasLastFrame || (memcmp(ptr, lastWsFrameBuf, 1024) != 0);
       if (changed) {
         memcpy(lastWsFrameBuf, ptr, 1024);
         hasLastFrame = true;
-        uint8_t hdr[4] = { 0x82, 0x7E, 0x04, 0x00 };
-        for (int i = 0; i < MAX_WS_CLIENTS; i++) {
-          if (wsClients[i].active && wsClients[i].client.connected()) {
-            wsClients[i].client.write(hdr, 4);
-            wsClients[i].client.write(ptr, 1024);
-          }
-        }
       }
     }
     UNLOCK();
+    if (changed) {
+      uint8_t hdr[4] = { 0x82, 0x7E, 0x04, 0x00 };
+      for (int i = 0; i < MAX_WS_CLIENTS; i++) {
+        if (wsClients[i].active && wsClients[i].client.connected()) {
+          if (wsWriteRaw(i, hdr, 4)) wsWriteRaw(i, lastWsFrameBuf, 1024);
+        }
+      }
+    }
   }
 
   // 3. Push live status JSON every 1500ms over WebSocket
@@ -1030,19 +1054,20 @@ void webBegin() {
   server.on("/api/cinema/items", HTTP_GET, [] {
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
+    LOCK();
     for (int i = 0; i < latestCinema.n; i++) {
       JsonObject o = arr.add<JsonObject>();
       o["title"] = latestCinema.items[i].title;
       o["release_date"] = latestCinema.items[i].date;
       o["vote_average"] = latestCinema.items[i].rating;
     }
-    String out;
-    serializeJson(doc, out);
-    server.send(200, "application/json", out);
+    UNLOCK();
+    sendJson(doc);
   });
   server.on("/api/sports/matches", HTTP_GET, [] {
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
+    LOCK();
     for (int i = 0; i < cric.n; i++) {
       const CricMatch& m = cric.m[i];
       JsonObject o = arr.add<JsonObject>();
@@ -1070,9 +1095,8 @@ void webBegin() {
       o["partner"] = m.partner;
       o["winProb"] = m.winProb;
     }
-    String out;
-    serializeJson(doc, out);
-    server.send(200, "application/json", out);
+    UNLOCK();
+    sendJson(doc);
   });
   server.on("/api/refresh", HTTP_POST, [] { cardRefreshNow(server.arg("i").toInt()); feedsRefresh(); ok(); });
   server.on("/api/reboot", HTTP_POST, [] { saveNow(); ok(); restartAt = millis() + 800; });

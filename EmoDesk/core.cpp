@@ -153,25 +153,35 @@ void coreBegin() {
     saveJson("/cards.json", cardsDoc);
   }
   if (!loadJson("/state.json", stateDoc)) stateDoc.clear();
+  tzApplyLocal();
   memset(&pcStats, 0, sizeof(pcStats));
   memset(&lastMsg, 0, sizeof(lastMsg));
   if (isCrash(resetWhy)) logf("Last reset: %s (%u in a row)", resetReasonStr(), (unsigned)rtcCrashes);
   if (gSafeMode) logf("SAFE MODE: Bluetooth, MQTT and the speaker stay off this boot");
 }
 
-void markDirty(uint8_t what) { dirty |= what; dirtyAt = millis(); }
+void markDirty(uint8_t what) {
+  LOCK();
+  dirty |= what;
+  dirtyAt = millis();
+  UNLOCK();
+}
 
 void saveNow() {
   LOCK();
-  if (dirty & DIRTY_CFG) saveJson("/config.json", cfg);
-  if (dirty & DIRTY_CARDS) saveJson("/cards.json", cardsDoc);
-  if (dirty & DIRTY_STATE) saveJson("/state.json", stateDoc);
+  uint8_t d = dirty;
   dirty = 0;
+  if (d & DIRTY_CFG) saveJson("/config.json", cfg);
+  if (d & DIRTY_CARDS) saveJson("/cards.json", cardsDoc);
+  if (d & DIRTY_STATE) saveJson("/state.json", stateDoc);
   UNLOCK();
 }
 
 void coreLoop() {
-  if (dirty && millis() - dirtyAt > 1000) saveNow();
+  LOCK();
+  bool needSave = dirty && (millis() - dirtyAt > 1000);
+  UNLOCK();
+  if (needSave) saveNow();
   // 90 s without a crash: the firmware is stable, forget earlier crashes
   if (rtcCrashes && millis() > 90000) rtcCrashes = 0;
 }
@@ -277,33 +287,225 @@ time_t makeUTC(int y, int mo, int d, int h, int mi, int s) {
 
 time_t parseISO(const char* s) {
   if (!s) return 0;
+  size_t len = strlen(s);
   int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
   int n = sscanf(s, "%d-%d-%d%*c%d:%d:%d", &y, &mo, &d, &h, &mi, &sec);
   if (n < 3) return 0;
   time_t t = makeUTC(y, mo, d, h, mi, sec);
+  if (len <= 10) return t;
   const char* p = s + 10;
   while (*p && *p != 'Z' && *p != '+' && !(*p == '-' && p > s + 12)) p++;
   if (*p == '+' || *p == '-') {
     int oh = 0, om = 0;
-    sscanf(p + 1, "%d:%d", &oh, &om);
+    if (strchr(p + 1, ':')) sscanf(p + 1, "%d:%d", &oh, &om);
+    else {
+      int v = atoi(p + 1);
+      if (v >= 100) { oh = v / 100; om = v % 100; }
+      else oh = v;
+    }
     long off = oh * 3600L + om * 60L;
     t += (*p == '+') ? -off : off;
   }
   return t;
 }
 
+static const char* parseTzName(const char* p, char* out, size_t n) {
+  size_t k = 0;
+  if (*p == '<') {
+    p++;
+    while (*p && *p != '>') { if (k + 1 < n) out[k++] = *p; p++; }
+    if (*p == '>') p++;
+  } else {
+    while (*p && isalpha((unsigned char)*p)) { if (k + 1 < n) out[k++] = *p; p++; }
+  }
+  out[k] = 0;
+  return p;
+}
+
+static const char* parseTzOff(const char* p, long& eastSec) {
+  int sign = 1;
+  if (*p == '-') { sign = -1; p++; }
+  else if (*p == '+') { sign = 1; p++; }
+  int h = 0, m = 0, s = 0;
+  while (isdigit((unsigned char)*p)) h = h * 10 + (*p++ - '0');
+  if (*p == ':') {
+    p++;
+    while (isdigit((unsigned char)*p)) m = m * 10 + (*p++ - '0');
+    if (*p == ':') {
+      p++;
+      while (isdigit((unsigned char)*p)) s = s * 10 + (*p++ - '0');
+    }
+  }
+  eastSec = -(long)sign * (h * 3600L + m * 60L + s);
+  return p;
+}
+
+static bool parseDstRule(const char*& p, int y, time_t& utcRef, long refOffset) {
+  if (*p == ',') p++;
+  if (!*p) return false;
+  int tod = 2 * 3600;
+  if (*p == 'M' || *p == 'm') {
+    p++;
+    int m = atoi(p); while (isdigit((unsigned char)*p)) p++;
+    if (*p == '.') p++;
+    int w = atoi(p); while (isdigit((unsigned char)*p)) p++;
+    if (*p == '.') p++;
+    int d = atoi(p); while (isdigit((unsigned char)*p)) p++;
+    if (*p == '/') {
+      p++;
+      int sign = 1;
+      if (*p == '-') { sign = -1; p++; } else if (*p == '+') p++;
+      int hh = 0, mm = 0, ss = 0;
+      while (isdigit((unsigned char)*p)) hh = hh * 10 + (*p++ - '0');
+      if (*p == ':') { p++; while (isdigit((unsigned char)*p)) mm = mm * 10 + (*p++ - '0'); }
+      if (*p == ':') { p++; while (isdigit((unsigned char)*p)) ss = ss * 10 + (*p++ - '0'); }
+      tod = sign * (hh * 3600 + mm * 60 + ss);
+    }
+    if (m < 1 || m > 12 || w < 1 || w > 5 || d < 0 || d > 6) return false;
+    static const uint8_t DM[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    int dim = (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) ? 29 : DM[m - 1];
+    time_t m1 = makeUTC(y, m, 1, 0, 0, 0);
+    int wd1 = (int)(((m1 / 86400L) + 4) % 7 + 7) % 7;
+    int dom = 1 + (d - wd1 + 7) % 7 + (w - 1) * 7;
+    while (dom > dim) dom -= 7;
+    utcRef = makeUTC(y, m, dom, 0, 0, 0) + tod - refOffset;
+    return true;
+  }
+  bool oneBased = (*p == 'J' || *p == 'j');
+  if (oneBased) p++;
+  int doy = atoi(p); while (isdigit((unsigned char)*p)) p++;
+  if (*p == '/') {
+    p++;
+    int hh = 0, mm = 0, ss = 0;
+    while (isdigit((unsigned char)*p)) hh = hh * 10 + (*p++ - '0');
+    if (*p == ':') { p++; while (isdigit((unsigned char)*p)) mm = mm * 10 + (*p++ - '0'); }
+    if (*p == ':') { p++; while (isdigit((unsigned char)*p)) ss = ss * 10 + (*p++ - '0'); }
+    tod = hh * 3600 + mm * 60 + ss;
+  }
+  bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+  int day0 = oneBased ? (doy - 1 - (leap && doy > 59 ? 1 : 0)) : doy;
+  utcRef = makeUTC(y, 1, 1, 0, 0, 0) + (long)day0 * 86400L + tod - refOffset;
+  return true;
+}
+
 void localIn(const char* posixTz, time_t t, struct tm& out) {
-  String cur = cfg["time"]["tz"] | "UTC0";
-  setenv("TZ", posixTz, 1);
+  if (!posixTz || !*posixTz) { gmtime_r(&t, &out); return; }
+  char name[16];
+  const char* p = parseTzName(posixTz, name, sizeof(name));
+  long stdEast = 0;
+  if (*p) p = parseTzOff(p, stdEast);
+  long off = stdEast;
+  if (*p && *p != ',') {
+    char dname[16];
+    p = parseTzName(p, dname, sizeof(dname));
+    long dstEast = stdEast + 3600;
+    if (*p && *p != ',') p = parseTzOff(p, dstEast);
+    if (*p == ',') {
+      struct tm refTm;
+      time_t stdT = t + stdEast;
+      gmtime_r(&stdT, &refTm);
+      int y = refTm.tm_year + 1900;
+      time_t tStart = 0, tEnd = 0;
+      if (parseDstRule(p, y, tStart, stdEast) && parseDstRule(p, y, tEnd, dstEast)) {
+        bool inDst = (tStart < tEnd) ? (t >= tStart && t < tEnd) : (t >= tStart || t < tEnd);
+        if (inDst) off = dstEast;
+      }
+    }
+  }
+  time_t lt = t + off;
+  gmtime_r(&lt, &out);
+}
+
+void tzApplyLocal() {
+  LOCK();
+  String tz = cfg["time"]["tz"] | "";
+  UNLOCK();
+  tz.trim();
+  if (!tz.length()) tz = "UTC0";
+  setenv("TZ", tz.c_str(), 1);
   tzset();
-  localtime_r(&t, &out);
-  setenv("TZ", cur.c_str(), 1);
-  tzset();
+}
+
+void tzFormatPosix(long offsetEastSec, const char* ianaName, char* out, size_t n) {
+  if (!n) return;
+  if (ianaName && *ianaName) {
+    static const char* const MAP[][2] = {
+      {"Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"},
+      {"Europe/Dublin", "GMT0BST,M3.5.0/1,M10.5.0"},
+      {"Europe/Lisbon", "WET0WEST,M3.5.0/1,M10.5.0"},
+      {"Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"},
+      {"Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"},
+      {"Europe/Rome", "CET-1CEST,M3.5.0,M10.5.0/3"},
+      {"Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"},
+      {"Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3"},
+      {"Europe/Zurich", "CET-1CEST,M3.5.0,M10.5.0/3"},
+      {"Europe/Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+      {"Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+      {"Europe/Bucharest", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+      {"Europe/Istanbul", "<+03>-3"},
+      {"Europe/Moscow", "MSK-3"},
+      {"Africa/Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24"},
+      {"Africa/Johannesburg", "SAST-2"},
+      {"Asia/Dubai", "<+04>-4"},
+      {"Asia/Riyadh", "<+03>-3"},
+      {"Asia/Tehran", "<+0330>-3:30"},
+      {"Asia/Karachi", "PKT-5"},
+      {"Asia/Kolkata", "IST-5:30"},
+      {"Asia/Calcutta", "IST-5:30"},
+      {"Asia/Colombo", "<+0530>-5:30"},
+      {"Asia/Kathmandu", "<+0545>-5:45"},
+      {"Asia/Dhaka", "<+06>-6"},
+      {"Asia/Bangkok", "<+07>-7"},
+      {"Asia/Jakarta", "WIB-7"},
+      {"Asia/Singapore", "<+08>-8"},
+      {"Asia/Kuala_Lumpur", "<+08>-8"},
+      {"Asia/Shanghai", "CST-8"},
+      {"Asia/Hong_Kong", "HKT-8"},
+      {"Asia/Taipei", "CST-8"},
+      {"Asia/Manila", "PST-8"},
+      {"Asia/Tokyo", "JST-9"},
+      {"Asia/Seoul", "KST-9"},
+      {"Australia/Perth", "AWST-8"},
+      {"Australia/Adelaide", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"},
+      {"Australia/Brisbane", "AEST-10"},
+      {"Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+      {"Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+      {"Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"},
+      {"Pacific/Honolulu", "HST10"},
+      {"America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"},
+      {"America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"},
+      {"America/Vancouver", "PST8PDT,M3.2.0,M11.1.0"},
+      {"America/Phoenix", "MST7"},
+      {"America/Denver", "MST7MDT,M3.2.0,M11.1.0"},
+      {"America/Chicago", "CST6CDT,M3.2.0,M11.1.0"},
+      {"America/Mexico_City", "CST6"},
+      {"America/New_York", "EST5EDT,M3.2.0,M11.1.0"},
+      {"America/Toronto", "EST5EDT,M3.2.0,M11.1.0"},
+      {"America/Bogota", "<-05>5"},
+      {"America/Santiago", "<-04>4<-03>,M9.1.6/24,M4.1.6/24"},
+      {"America/Sao_Paulo", "<-03>3"},
+    };
+    for (auto& e : MAP) {
+      if (!strcasecmp(ianaName, e[0])) { safeCopy(out, e[1], n); return; }
+    }
+  }
+  if (offsetEastSec == 0) { safeCopy(out, "UTC0", n); return; }
+  if (offsetEastSec == 19800) { safeCopy(out, "IST-5:30", n); return; }
+  long absS = offsetEastSec < 0 ? -offsetEastSec : offsetEastSec;
+  int h = (int)(absS / 3600L);
+  int m = (int)((absS % 3600L) / 60L);
+  bool east = offsetEastSec > 0;
+  char tagSign = east ? '+' : '-';
+  char posSign = east ? '-' : '+';
+  if (m > 0) snprintf(out, n, "<%c%02d%02d>%c%d:%02d", tagSign, h, m, posSign, h, m);
+  else       snprintf(out, n, "<%c%02d>%c%d", tagSign, h, posSign, h);
 }
 
 bool cfgH24() { return cfg["time"]["h24"] | false; }
 
 void fmtHM(char* out, int h, int m, bool h24) {
+  h = constrain(h, 0, 23);
+  m = constrain(m, 0, 59);
   if (h24) sprintf(out, "%02d:%02d", h, m);
   else sprintf(out, "%d:%02d", (h % 12) ? h % 12 : 12, m);
 }

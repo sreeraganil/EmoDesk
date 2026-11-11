@@ -74,9 +74,25 @@ bool fetchWeather(float lat, float lon, bool imp, WeatherData& out) {
   t.uv = d["uv_index_max"][0] | 0.0f;
   t.ok = true;
   t.ts = time(nullptr);
+  long wOff = doc["utc_offset_seconds"] | 0L;
+  const char* wTz = doc["timezone"] | "";
+  bool tzUpdated = false;
   LOCK();
   out = t;
+  bool tzManual = cfg["time"]["manual"] | false;
+  const char* curTz = cfg["time"]["tz"] | "";
+  bool tzUnset = !*curTz || (!strcmp(curTz, "UTC0") && !tzManual && cfg["time"]["tzName"].isNull());
+  if (tzUnset && (wOff != 0 || *wTz)) {
+    char posix[48];
+    tzFormatPosix(wOff, wTz, posix, sizeof(posix));
+    if (strcmp(curTz, posix) != 0) {
+      cfg["time"]["tz"] = posix;
+      if (*wTz) cfg["time"]["tzName"] = wTz;
+      tzUpdated = true;
+    }
+  }
   UNLOCK();
+  if (tzUpdated) { markDirty(DIRTY_CFG); timeApply(); }
   return true;
 }
 
@@ -782,22 +798,29 @@ static void tgLoop(uint32_t now) {
     else if (lc.startsWith("/rotate")) {
       String a = arg(7);
       bool r;
+      LOCK();
       if (a == "on" || a == "1" || a == "true") r = true;
       else if (a == "off" || a == "0" || a == "false") r = false;
       else r = !(cfg["rotate"]["auto"] | true);
       cfg["rotate"]["auto"] = r;
+      UNLOCK();
       markDirty(DIRTY_CFG);
       tgSendTo(tok, chat, r ? "Auto-rotation turned ON 🔄" : "Auto-rotation turned OFF ⏸️");
     }
     else if (lc.startsWith("/profile")) {
       String a = arg(8);
       if (a.length()) {
+        LOCK();
         cfg["profile"] = a;
+        UNLOCK();
         markDirty(DIRTY_CFG);
         tgSendTo(tok, chat, (String("Profile set to: ") + a).c_str());
       } else {
+        LOCK();
         doAction("profile");
-        tgSendTo(tok, chat, (String("Active profile: ") + (const char*)(cfg["profile"] | "Default")).c_str());
+        String p = cfg["profile"] | "Default";
+        UNLOCK();
+        tgSendTo(tok, chat, (String("Active profile: ") + p).c_str());
       }
     }
     // --- Pet & Mood ---
@@ -912,7 +935,9 @@ static void tgLoop(uint32_t now) {
     else if (lc.startsWith("/bright ")) {
       int b = constrain(arg(8).toInt(), 0, 255);
       displaySetContrast(b);
-      cfg["display"]["contrast"] = b;
+      LOCK();
+      cfg["display"]["bright"] = b;
+      UNLOCK();
       markDirty(DIRTY_CFG);
       tgSendTo(tok, chat, (String("Brightness set to: ") + String(b)).c_str());
     }
@@ -1077,9 +1102,44 @@ const char* mqttGet(const char*) { return ""; }
 static void mqttLoop(uint32_t) {}
 #endif
 
+// ------------------------------------------------------------------ auto timezone
+static uint32_t nextTzCheck = 0;
+static bool tzAutoDone = false;
+
+static void tzAutoLoop(uint32_t now) {
+  if (tzAutoDone || (int32_t)(now - nextTzCheck) < 0) return;
+  LOCK();
+  bool tzManual = cfg["time"]["manual"] | false;
+  const char* curTz = cfg["time"]["tz"] | "";
+  bool tzUnset = !*curTz || (!strcmp(curTz, "UTC0") && !tzManual && cfg["time"]["tzName"].isNull());
+  UNLOCK();
+  if (!tzUnset) { tzAutoDone = true; return; }
+
+  nextTzCheck = now + 120000UL;
+  JsonDocument doc;
+  if (httpJson("http://ip-api.com/json/?fields=status,offset,timezone", doc)) {
+    if (!strcmp(doc["status"] | "", "success")) {
+      long off = doc["offset"] | 0L;
+      const char* tzName = doc["timezone"] | "";
+      char posix[48];
+      tzFormatPosix(off, tzName, posix, sizeof(posix));
+      LOCK();
+      cfg["time"]["tz"] = posix;
+      if (*tzName) cfg["time"]["tzName"] = tzName;
+      UNLOCK();
+      markDirty(DIRTY_CFG);
+      timeApply();
+      tzAutoDone = true;
+      logf("[TIME] Auto-detected TZ: %s (%s)", posix, *tzName ? tzName : "IP");
+      return;
+    }
+  }
+}
+
 // ------------------------------------------------------------------ loop
 void feedsLoop() {
   uint32_t now = millis();
+  tzAutoLoop(now);
   const char* curType = cardsCurrentType();
   bool isCurWeather = !strcmp(curType, "weather") || !strcmp(curType, "forecast") || !strcmp(curType, "sunmoon");
   if ((int32_t)(now - nextHomeW) >= 0) {

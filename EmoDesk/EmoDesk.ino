@@ -59,38 +59,41 @@ static void render() {
   if (!displayIsOn()) return;
   u8g2.clearBuffer();
   u8g2.setDrawColor(1);
+
+  int bat = batteryPercent();
+  bool showBat = (bat >= 0 && cardsCurrentShowBat() && !(netPortal() && !netHasCreds()) && !notifActive());
+  char batBuf[12] = "";
+  int batW = 0, batTw = 0;
+  if (showBat) {
+    if (powerSaver()) snprintf(batBuf, sizeof(batBuf), "e%d%%", bat);
+    else snprintf(batBuf, sizeof(batBuf), "%d%%", bat);
+    u8g2.setFont(F_TINY);
+    batTw = u8g2.getStrWidth(batBuf);
+    batW = batTw + 18; // text + 2px gap + 11px battery + 1px tip + 4px padding
+    displaySetBatReserve(batW + 2);
+  } else {
+    displaySetBatReserve(0);
+  }
+
   LOCK();
   if (netPortal() && !netHasCreds()) netDrawPortal();
   else if (notifActive()) notifDraw();
   else cardsDraw();
   UNLOCK();
-  
-  int bat = batteryPercent();
-  if (bat >= 0 && cardsCurrentShowBat()) {
-    char buf[12];
-    if (powerSaver()) snprintf(buf, sizeof(buf), "e %d%%", bat);
-    else snprintf(buf, sizeof(buf), "%d%%", bat);
+
+  if (showBat) {
     u8g2.setFont(F_TINY);
-    int w = u8g2.getStrWidth(buf);
-    int bw = 11;
-    int bh = 6;
-    int gap = 3;
-    int tw = w + gap + bw + 2;
-    int x = 126 - tw;
-
+    int bx0 = 127 - batW;
     u8g2.setDrawColor(0);
-    u8g2.drawRBox(x - 3, 0, tw + 4, 10, 2);
+    u8g2.drawRBox(bx0, 0, batW + 1, 10, 2);
     u8g2.setDrawColor(1);
-    u8g2.drawRFrame(x - 3, 0, tw + 4, 10, 2);
-
-    u8g2.drawStr(x, 7, buf);
-
-    int bx = x + w + gap;
-    int by = 2;
-    u8g2.drawFrame(bx, by, bw, bh);
-    u8g2.drawBox(bx + bw, by + 1, 1, bh - 2); // battery positive tip
-    int fill = max(0, (bw - 3) * bat / 100);
-    if (fill > 0) u8g2.drawBox(bx + 1, by + 1, fill, bh - 2);
+    u8g2.drawRFrame(bx0, 0, batW + 1, 10, 2);
+    u8g2.drawStr(bx0 + 3, 7, batBuf);
+    int ibx = bx0 + 3 + batTw + 2;
+    u8g2.drawFrame(ibx, 2, 10, 6);
+    u8g2.drawBox(ibx + 10, 3, 1, 4);
+    int fill = max(0, 8 * bat / 100);
+    if (fill > 0) u8g2.drawBox(ibx + 1, 3, fill, 4);
   }
 
   toastDraw();
@@ -114,9 +117,10 @@ void setup() {
 
   // little hello while everything starts
   u8g2.clearBuffer();
-  emoRender(64, 26, 0.8f);
+  drawHeader("EmoDesk", "v" FW_VERSION);
+  emoRender(64, 29, 0.72f);
   u8g2.setFont(F_SMALL);
-  textCenter(60, "waking up...");
+  textCenter(59, "Waking up...");
   displaySend();
   emoSet(lastBootCrashed() ? E_DIZZY : E_HAPPY, 3000);
   audioSfx("startup", EV_UI);

@@ -607,7 +607,7 @@ function findLeagueSlug(slug, name) {
 
 const C=(n,c,d,p,dur)=>({n,c,d,p:[...(p||[]),P('bat','bool','Show battery percent on screen',false)],dur:dur||0});
 
-const GAME=d=>C(d[0],'Games',d[1]+' Hold the pad for a second to leave.');
+const GAME=d=>C(d[0],'Games',d[1]+' Double-tap to start playing. Tap skips card, hold exits active game.');
 
 const T={
 
@@ -624,7 +624,7 @@ emo:C('Emo face','Emo','Big expressive eyes. Tap to poke, hold to pet, double-ta
 
 pet:C('Pet care','Emo','Joy, energy and food. Double-tap to play, hold to feed.'),
 
-clock:C('Clock','Time','Animated modern smartwatch & NWatch watch faces.',[P('style','sel','Watch Face Style','modular',{o:[['modular','1. Modern Modular (Apple Watch)'],['activity','2. Activity Rings (Fitness Rings)'],['horizon','3. Horizon Wave (Pixel Watch)'],['pulse','4. Health ECG Pulse (Smartwatch Health)'],['orbit','5. Planetary Orbit (Galaxy Watch)'],['chrono','6. Chronograph Pro (Luxury Smartwatch)'],['stacked','7. Nike Typography (Orbiting Second)'],['cube','8. 3D Wireframe Cube (NWatch)'],['matrix','9. Matrix Rain (Cyberpunk Code)'],['scan','10. Sci-Fi Scan (Radar Sweep)'],['data','11. Cyberpunk Data (Tech HUD)'],['normal','12. Classic Ticker (Zak Kemble)'],['big','13. Modern Big Time']],hint:'Hold (long press) or triple-tap on the device to switch faces on the fly (persists across restarts)'}),P('anim','sel','Number change animation','slide',{o:[['slide','Slide / Roll up'],['slide_down','Slide down'],['flip','Flip clock'],['fade','Dissolve / Morph'],['bounce','Drop & bounce'],['none','None (instant)']],hint:'Animates the changing number when the minute updates'})]),
+clock:C('Clock','Time','Animated modern smartwatch & NWatch watch faces.',[P('style','sel','Watch Face Style','modular',{o:[['modular','1. Modern Modular (Apple Watch)'],['activity','2. Activity Rings (Fitness Rings)'],['horizon','3. Horizon Wave (Pixel Watch)'],['pulse','4. Health ECG Pulse (Smartwatch Health)'],['orbit','5. Planetary Orbit (Galaxy Watch)'],['chrono','6. Chronograph Pro (Luxury Smartwatch)'],['stacked','7. Nike Typography (Orbiting Second)'],['cube','8. 3D Wireframe Cube (NWatch)'],['matrix','9. Matrix Rain (Cyberpunk Code)'],['scan','10. Sci-Fi Scan (Radar Sweep)'],['data','11. Cyberpunk Data (Tech HUD)'],['normal','12. Classic Ticker (Zak Kemble)'],['big','13. Modern Big Time']],hint:'Hold (long press) on the device to switch faces on the fly (triple-tap returns Home; persists across restarts)'}),P('anim','sel','Number change animation','slide',{o:[['slide','Slide / Roll up'],['slide_down','Slide down'],['flip','Flip clock'],['fade','Dissolve / Morph'],['bounce','Drop & bounce'],['none','None (instant)']],hint:'Animates the changing number when the minute updates'})]),
 
 analog:C('Analog clock','Time','A watch face with the date beside it.'),
 
@@ -740,9 +740,9 @@ fireworks:C('Fireworks','Screensavers','Bursts of light.'),bounce:C('Bouncing Em
 
 netinfo:C('Network','System','Wi-Fi name, IP address and signal.'),health:C('Device health','System','Memory, storage, temperature and API use.'),battery:C('Battery','System','Charge, voltage and whether the battery saver is on.'),
 
-ble:C('Bluetooth','System','BLE status, RAM bar, and a media remote cheat-sheet. Tap/double-tap/hold to send play, next, vol+ when in Remote mode.'),
+ble:C('Bluetooth','System','BLE status, RAM bar, and a media remote cheat-sheet. Double-tap plays/pauses and hold skips track in Remote mode.'),
 
-whatsapp:C('WhatsApp','Home','Last WhatsApp message from the bridge script. Tap clears, 2× tap reads aloud, hold pauses scroll.')};
+whatsapp:C('WhatsApp','Home','Last WhatsApp message from the bridge script. Hold reads aloud and clears (tap/2x/3x navigate normally).')};
 
 const CATS=['Emo','Time','Weather','Sports','Money','Info','Productivity','Home','Sound','Pictures','Games','Screensavers','System'];
 
@@ -760,7 +760,19 @@ function soundPick(v,set){const o=[['','No sound']];SND.sfx.forEach(s=>o.push(['
 
  if(v&&!o.some(x=>x[0]===v))o.push([v,v]);return sel(o,v,set)}
 
-function tzPick(v,set){const o=TZ.map(t=>[t[1],t[0]]);if(v&&!o.some(x=>x[0]===v))o.push([v,v]);return sel(o,v,set)}
+function detectBrowserTz(){
+ const bt=(Intl.DateTimeFormat().resolvedOptions().timeZone||'').trim();
+ const m=TZ.find(t=>t[2].split(' ').includes(bt));
+ if(m)return{iana:bt,tz:m[1]};
+ if(bt==='UTC'||bt==='Etc/UTC'||bt==='GMT')return{iana:bt,tz:'UTC0'};
+ const offMin=new Date().getTimezoneOffset();
+ if(!offMin)return{iana:bt||'UTC',tz:'UTC0'};
+ const east=-offMin,ts=east>=0?'+':'-',ae=Math.abs(east),th=Math.floor(ae/60),tm=ae%60;
+ const ao=Math.abs(offMin),ps=offMin<0?'-':'',oh=Math.floor(ao/60),om=ao%60;
+ const tz=`<${ts}${String(th).padStart(2,'0')}${tm?String(tm).padStart(2,'0'):''}>${ps}${oh}${om?':'+String(om).padStart(2,'0'):''}`;
+ return{iana:bt,tz};
+}
+function tzPick(v,set){const o=TZ.map(t=>[t[1],t[0]]);if(v&&!o.some(x=>x[0]===v))o.push([v,v]);return sel(o,v,x=>{sp(CFG,'time.manual',true);set(x)})}
 
 function locPick(v,set,home){const box=h('div');const draw=()=>{box.innerHTML='';const cur=h('div',{class:'navrow'},h('span',{class:'lab'},v&&v.name?`${v.name} (${(+v.lat).toFixed(2)}, ${(+v.lon).toFixed(2)})`:(home?'Not set':'Home location')));
 
@@ -1821,19 +1833,21 @@ controls(){const G=[['tap','Tap'],['double','Double-tap'],['triple','Triple-tap'
 
    bEn?G.map(([g,l])=>F('boot.'+g,l,'sel',dB[g],{o:ACTIONS})):h('div',{class:'note',style:'margin-top:8px;'},'BOOT button is disabled. Pressing it on the board will do nothing.')),
 
-  sec('Timing',null,F('input.longMs','Hold length (ms)','range',700,{min:300,max:1500,step:50}),F('input.multiMs','Double-tap window (ms)','range',320,{min:150,max:600,step:10}),
+  sec('Timing',null,F('input.longMs','Hold length (ms)','range',700,{min:300,max:1500,step:50}),F('input.multiMs','Double-tap window (ms)','range',220,{min:150,max:600,step:10}),
 
    F('input.vlongMs','Long hold length (ms)','range',3000,{min:1500,max:6000,step:100}))]},
 
 
 
-connect(){const bt=Intl.DateTimeFormat().resolvedOptions().timeZone,m=TZ.find(t=>t[2].split(' ').includes(bt));
+connect(){const dtz=detectBrowserTz(),bt=dtz.iana,curTz=gp(CFG,'time.tz')||'UTC0';
 
- const tzHint=m&&gp(CFG,'time.tz')!==m[1]?h('div',{class:'note'},`Your browser is set to ${bt}. `,h('button',{class:'btn sm',onclick:()=>{sp(CFG,'time.tz',m[1]);sp(CFG,'time.tzName',bt);cfgChanged();render()}},'Use it')):null;
+ const tzHint=dtz.tz&&curTz!==dtz.tz?h('div',{class:'note'},`Your browser is set to ${bt||'local time'}. `,h('button',{class:'btn sm',onclick:()=>{sp(CFG,'time.tz',dtz.tz);if(bt)sp(CFG,'time.tzName',bt);sp(CFG,'time.manual',true);cfgChanged();render()}},'Use it')):null;
+
+ const devClock=ST.time?h('p',{class:'d'},`Device time: ${ST.time} (${gp(CFG,'time.tzName')||curTz})`):null;
 
  const locSet=(v,x)=>{CFG.loc=v||{};if(x&&x.timezone){const t=TZ.find(z=>z[2].split(' ').includes(x.timezone));if(t){sp(CFG,'time.tz',t[1]);sp(CFG,'time.tzName',x.timezone)}}cfgChanged();setTimeout(render,50)};
 
- return[sec('Location and time','Used for weather, sunrise and the clock.',h('div',{class:'row col'},h('div',{class:'lab'},'Home location'),locPick(CFG.loc&&CFG.loc.lat!=null?CFG.loc:null,locSet,true)),tzHint,
+ return[sec('Location and time','Used for weather, sunrise and the clock.',h('div',{class:'row col'},h('div',{class:'lab'},'Home location'),locPick(CFG.loc&&CFG.loc.lat!=null?CFG.loc:null,locSet,true)),devClock,tzHint,
 
    F('time.tz','Time zone','tz','UTC0'),F('time.h24','24-hour clock','bool',false),F('time.weekMon','Weeks start on Monday','bool',true),F('units','Units','sel','metric',{o:[['metric','°C, km/h'],['imperial','°F, mph']]})),
 
@@ -2565,7 +2579,12 @@ const loadSounds=async()=>{try{SND=await api('/api/sounds')}catch(e){}};
 
 const loadFiles=async()=>{try{FILES=await api('/api/files')}catch(e){}};
 
-(async()=>{tabs();try{[CFG,CARDS]=await Promise.all([api('/api/config'),api('/api/cards')])}catch(e){toast('Could not load settings: '+e.message,1)}
+(async()=>{tabs();try{[CFG,CARDS]=await Promise.all([api('/api/config'),api('/api/cards')]);
+ if(CFG&&(!gp(CFG,'time.tz')||(gp(CFG,'time.tz')==='UTC0'&&!gp(CFG,'time.manual')&&!gp(CFG,'time.tzName')))){
+  const dtz=detectBrowserTz();
+  if(dtz.tz&&dtz.tz!=='UTC0'){sp(CFG,'time.tz',dtz.tz);if(dtz.iana)sp(CFG,'time.tzName',dtz.iana);saveCfg();}
+ }
+}catch(e){toast('Could not load settings: '+e.message,1)}
 
  await Promise.all([loadSounds(),loadFiles(),status()]);render();pollScreen();setInterval(status,4000)})();
 

@@ -140,8 +140,13 @@ String netIP() { return online ? WiFi.localIP().toString() : (portal ? WiFi.soft
 int netRSSI() { return online ? WiFi.RSSI() : 0; }
 
 void timeApply() {
-  const char* tz = cfg["time"]["tz"] | "UTC0";
-  configTzTime(tz, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  LOCK();
+  String tz = cfg["time"]["tz"] | "";
+  UNLOCK();
+  tz.trim();
+  if (!tz.length()) tz = "UTC0";
+  configTzTime(tz.c_str(), "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  logf("[TIME] TZ applied: %s", tz.c_str());
 }
 
 static void beginSta(int profile = 0) {
@@ -202,13 +207,20 @@ static void onConnect() {
 
 static void drawConnecting(const char* ssid, uint32_t t0) {
   u8g2.clearBuffer();
-  emoRender(64, 24, 0.7f);
+  drawHeader("EmoDesk", "WI-FI");
+  emoRender(64, 24, 0.50f);
+  char b[44];
+  snprintf(b, sizeof(b), "Joining %s", ssid ? ssid : "");
   u8g2.setFont(F_SMALL);
-  char b[40];
-  snprintf(b, sizeof(b), "Connecting to %s", ssid);
-  textCenter(52, b);
-  int dots = ((millis() - t0) / 300) % 4;
-  for (int i = 0; i < dots; i++) u8g2.drawBox(56 + i * 6, 58, 3, 3);
+  if (u8g2.getUTF8Width(b) <= 122) textCenter(48, b);
+  else drawTextFit(3, 48, 122, b);
+  int bx = 24, by = 54, bw = 80, bh = 5;
+  u8g2.drawRFrame(bx, by, bw, bh, 2);
+  int pW = 18;
+  int span = bw - 4 - pW;
+  int phase = ((millis() - t0) / 35) % (span * 2);
+  int pos = phase <= span ? phase : (span * 2 - phase);
+  u8g2.drawRBox(bx + 2 + pos, by + 1, pW, bh - 2, 1);
   displaySend();
 }
 
@@ -312,24 +324,20 @@ void netLoop() {
 }
 
 void netDrawPortal() {
-  drawHeader("Wi-Fi Setup", "AP ready");
+  drawHeader("Wi-Fi Setup", "AP");
 
   u8g2.setFont(F_TINY);
-  u8g2.drawStr(4, 21, "1. Connect Wi-Fi:");
-  int w1 = u8g2.getUTF8Width("EmoDesk-Setup") + 10;
-  int x1 = (128 - w1) / 2;
-  u8g2.drawRFrame(x1, 23, w1, 12, 2);
+  textCenter(19, "1. JOIN WI-FI NETWORK");
+  u8g2.drawRFrame(12, 22, 104, 13, 3);
   u8g2.setFont(F_SMALL);
-  textCenter(32, "EmoDesk-Setup");
+  textCenter(31, "EmoDesk-Setup");
 
   u8g2.setFont(F_TINY);
-  u8g2.drawStr(4, 45, "2. Open in browser:");
-  int w2 = u8g2.getUTF8Width("192.168.4.1") + 14;
-  int x2 = (128 - w2) / 2;
-  u8g2.drawRBox(x2, 48, w2, 14, 2);
+  textCenter(44, "2. OPEN IN BROWSER");
+  u8g2.drawRBox(16, 47, 96, 15, 3);
   u8g2.setDrawColor(0);
   u8g2.setFont(F_MED);
-  textCenter(59, "192.168.4.1");
+  textCenter(58, "192.168.4.1");
   u8g2.setDrawColor(1);
 }
 

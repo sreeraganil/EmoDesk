@@ -26,13 +26,15 @@ static uint32_t pomoRem(CardCtx& c) {
 static void pomo_enter(CardCtx& c) { if (!c.st[1] && !c.st[4]) c.st[4] = pomoLen(c, c.st[0]); }
 static void pomo_draw(CardCtx& c) {
   if (!c.st[1] && !c.st[4]) c.st[4] = pomoLen(c, c.st[0]);
-  static const char* const PH[] = {"Focus", "Break", "Long break"};
+  static const char* const PH[] = {"Focus", "Break", "Long Break"};
   char b[24];
-  snprintf(b, sizeof(b), "#%lu", (unsigned long)c.st[3] + (c.st[0] == 0 ? 1 : 0));
-  drawHeader(PH[c.st[0]], c.st[1] ? b : "paused");
+  snprintf(b, sizeof(b), "#%lu%s", (unsigned long)c.st[3] + (c.st[0] == 0 ? 1 : 0), c.st[1] ? "" : " paused");
+  drawTitle(c, PH[c.st[0] % 3], b);
   uint32_t rem = pomoRem(c), len = pomoLen(c, c.st[0]);
-  bigTime(rem, 44);
-  drawBar(6, 52, 116, 8, 1.0f - (float)rem / len);
+  bigTime(rem, 42);
+  drawBar(4, 48, 120, 6, 1.0f - (float)rem / len);
+  u8g2.setFont(F_TINY);
+  textCenter(62, c.st[1] ? "2x: pause   hold: skip" : "2x: start   hold: reset");
   if (c.st[1]) cardHold = c.p["hold"] | true;
 }
 static bool pomo_input(CardCtx& c, uint8_t g) {
@@ -99,11 +101,12 @@ static uint32_t timerRem(CardCtx& c) {
 }
 static void timer_draw(CardCtx& c) {
   if (!c.st[4]) c.st[4] = max(1, (int)(c.p["min"] | 5)) * 60000UL;
-  drawTitle(c, "Timer", c.st[0] == 1 ? "running" : (c.st[0] == 2 ? "paused" : "2x start"));
+  drawTitle(c, "Timer", c.st[0] == 1 ? "running" : (c.st[0] == 2 ? "paused" : "ready"));
   uint32_t rem = timerRem(c);
-  bigTime(rem, 46);
-  if (c.st[0]) drawBar(6, 53, 116, 7, 1.0f - (float)rem / c.st[4]);
-  else { u8g2.setFont(F_TINY); textCenter(62, "hold: change minutes"); }
+  bigTime(rem, 42);
+  drawBar(4, 48, 120, 6, c.st[0] ? (1.0f - (float)rem / c.st[4]) : 0.0f);
+  u8g2.setFont(F_TINY);
+  textCenter(62, c.st[0] ? "2x: pause   hold: reset" : "2x: start   hold: preset");
   if (c.st[0] == 1) cardHold = true;
 }
 static bool timer_input(CardCtx& c, uint8_t g) {
@@ -139,20 +142,28 @@ struct SwData { uint32_t laps[4]; uint8_t n; };
 static uint32_t swNow(CardCtx& c) { return c.st[2] + (c.st[0] ? millis() - c.st[1] : 0); }
 static void stopwatch_draw(CardCtx& c) {
   SwData* d = (SwData*)c.d;
-  drawTitle(c, "Stopwatch", c.st[0] ? "running" : "2x start");
-  bigTime(swNow(c), 38, true);
+  if (!d) return;
+  drawTitle(c, "Stopwatch", c.st[0] ? "running" : (swNow(c) ? "paused" : "ready"));
+  bigTime(swNow(c), 37, true);
+  drawDottedHLine(0, 42, 128);
   u8g2.setFont(F_TINY);
-  for (int i = 0; i < d->n; i++) {
-    char b[24];
-    uint32_t s = d->laps[i] / 1000;
-    snprintf(b, sizeof(b), "L%d %02lu:%02lu.%lu", d->n - i, (unsigned long)(s / 60), (unsigned long)(s % 60),
-             (unsigned long)(d->laps[i] / 100 % 10));
-    u8g2.drawStr((i % 2) * 64, 50 + (i / 2) * 8, b);
+  if (d->n > 0) {
+    drawDottedVLine(64, 44, 18);
+    for (int i = 0; i < d->n; i++) {
+      char b[24];
+      uint32_t s = d->laps[i] / 1000;
+      snprintf(b, sizeof(b), "L%d %02lu:%02lu.%lu", d->n - i, (unsigned long)(s / 60), (unsigned long)(s % 60),
+               (unsigned long)(d->laps[i] / 100 % 10));
+      drawTextFit((i % 2) * 66 + 2, 51 + (i / 2) * 9, 59, b);
+    }
+  } else {
+    textCenter(55, c.st[0] ? "2x: pause   hold: lap" : "2x: start   hold: reset");
   }
   if (c.st[0]) cardHold = true;
 }
 static bool stopwatch_input(CardCtx& c, uint8_t g) {
   SwData* d = (SwData*)c.d;
+  if (!d) return false;
   if (g == G_DOUBLE) {
     if (c.st[0]) { c.st[2] = swNow(c); c.st[0] = 0; }
     else { c.st[1] = millis(); c.st[0] = 1; }
@@ -214,15 +225,26 @@ static void alarms_draw(CardCtx& c) {
   char b[32];
   fmtHM(b, t.tm_hour, t.tm_min, cfgH24());
   u8g2.setFont(F_NUM24);
-  u8g2.drawStr(4, 40, b);
+  u8g2.drawStr(2, 39, b);
+
+  drawDottedVLine(81, 14, 29);
   u8g2.setFont(F_SMALL);
-  u8g2.drawStr(90, 22, WDAY[t.tm_wday]);
-  if (!cfgH24()) u8g2.drawStr(90, 32, t.tm_hour < 12 ? "AM" : "PM");
-  long diff = (long)(when - time(nullptr));
-  snprintf(b, sizeof(b), "in %ldh %02ldm", diff / 3600, diff / 60 % 60);
-  u8g2.drawStr(90, 42, b);
+  drawTextRightFit(126, 22, 43, WDAY[t.tm_wday]);
+  if (!cfgH24()) drawTextRightFit(126, 31, 43, t.tm_hour < 12 ? "AM" : "PM");
+  long diff = max(0L, (long)(when - time(nullptr)));
+  long dh = diff / 3600, dm = (diff / 60) % 60;
+  if (dh >= 24) snprintf(b, sizeof(b), "in %ldd %ldh", dh / 24, dh % 24);
+  else if (dh > 0) snprintf(b, sizeof(b), "in %ldh %02ldm", dh, dm);
+  else snprintf(b, sizeof(b), "in %ld min", max(1L, dm));
+  u8g2.setFont(F_TINY);
+  drawTextRightFit(126, 41, 43, b);
+
+  drawDottedHLine(0, 46, 128);
+  drawIconBell(2, 50);
+  const char* lbl = al["label"] | "Alarm";
   u8g2.setFont(F_MED);
-  u8g2.drawUTF8(4, 58, al["label"] | "Alarm");
+  if (u8g2.getUTF8Width(lbl) <= 112) u8g2.drawUTF8(14, 59, lbl);
+  else marquee(14, 59, 112, lbl, c.t0, 24);
 }
 static bool alarms_input(CardCtx& c, uint8_t g) {
   if (g != G_DOUBLE) return false;
@@ -261,10 +283,15 @@ static int reminderNextMin(JsonObject r, struct tm& now, int& dayOff) {
   return -1;
 }
 static void reminders_draw(CardCtx& c) {
-  drawTitle(c, "Reminders");
   JsonArray a = cfg["reminders"];
   struct tm now;
+  int enabled = 0;
+  if (!a.isNull()) for (JsonObject r : a) if (r["en"] | true) enabled++;
+  char rCnt[8] = "";
+  if (enabled > 0) snprintf(rCnt, sizeof(rCnt), "%d", enabled);
+  drawTitle(c, "Reminders", rCnt[0] ? rCnt : nullptr);
   if (a.isNull() || !a.size()) { drawCenteredMsg("No reminders", "Add them in the dashboard"); return; }
+  if (!enabled) { drawCenteredMsg("Reminders paused", "Enable in the dashboard"); return; }
   if (!nowTm(now)) { drawCenteredMsg("Syncing time..."); return; }
   int y = 20, shown = 0;
   for (JsonObject r : a) {
@@ -272,9 +299,14 @@ static void reminders_draw(CardCtx& c) {
     int d = 0, m = reminderNextMin(r, now, d);
     char b[12] = "--";
     if (m >= 0) fmtHM(b, m / 60, m % 60, cfgH24());
+    char rt[20];
+    if (d) snprintf(rt, sizeof(rt), "Tmr %s", b);
+    else safeCopy(rt, b, sizeof(rt));
+    u8g2.setFont(F_TINY);
+    int rw = u8g2.getStrWidth(rt);
+    textRight(126, y, rt);
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(0, y, r["label"] | "Reminder");
-    textRight(127, y, d ? (String("tmrw ") + b).c_str() : b);
+    drawTextFit(2, y, 121 - rw, r["label"] | "Reminder");
     y += 10;
     shown++;
   }
@@ -285,25 +317,36 @@ const CardType CT_reminders = {"reminders", 0, 0, 0, nullptr, reminders_draw, nu
 static void listRows(CardCtx& c, JsonArray items, int cursor, bool habits) {
   int n = items.size();
   int first = max(0, min(cursor - 2, n - 5));
+  int rowW = (n > 5) ? 124 : 128;
   struct tm t;
   uint32_t today = nowTm(t) ? dayKey(t) : 0;
   for (int k = 0; k < 5 && first + k < n; k++) {
     JsonObject it = items[first + k];
-    int y = 19 + k * 10;
+    int y = 20 + k * 10;
     bool sel = first + k == cursor;
     bool done = habits ? ((it["l"] | 0) == (int)today) : (it["d"] | false);
-    if (sel) { u8g2.drawBox(0, y - 8, 128, 10); u8g2.setDrawColor(0); }
+    if (sel) { u8g2.drawBox(0, y - 8, rowW, 10); u8g2.setDrawColor(0); }
     u8g2.drawFrame(2, y - 7, 7, 7);
     if (done) { u8g2.drawLine(3, y - 4, 5, y - 2); u8g2.drawLine(5, y - 2, 8, y - 7); }
-    u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(12, y, it["t"] | "");
-    if (done && !habits) u8g2.drawHLine(12, y - 3, min(110, (int)u8g2.getUTF8Width(it["t"] | "")));
+    int sw = 0;
     if (habits) {
-      char b[8];
+      char b[10];
       snprintf(b, sizeof(b), "x%d", (int)(it["s"] | 0));
-      textRight(126, y, b);
+      u8g2.setFont(F_TINY);
+      sw = u8g2.getStrWidth(b) + 4;
+      textRight(rowW - 2, y, b);
     }
+    const char* txt = it["t"] | "";
+    int maxLW = rowW - 14 - sw;
+    u8g2.setFont(F_SMALL);
+    drawTextFit(12, y, maxLW, txt);
+    if (done && !habits) u8g2.drawHLine(12, y - 3, min(maxLW, (int)u8g2.getUTF8Width(txt)));
     u8g2.setDrawColor(1);
+  }
+  if (n > 5) {
+    int h = max(6, 50 * 5 / n);
+    int sy = 12 + (50 - h) * first / (n - 5);
+    u8g2.drawBox(126, sy, 2, h);
   }
 }
 static void todo_draw(CardCtx& c) {
@@ -402,8 +445,10 @@ static int waterCount(CardCtx& c) {
 }
 static void water_draw(CardCtx& c) {
   int goal = max(1, (int)(c.p["goal"] | 8)), n = waterCount(c);
-  drawTitle(c, "Water");
-  int x0 = 14, x1 = 46, top = 14, bot = 61;
+  char pct[8];
+  snprintf(pct, sizeof(pct), "%d%%", min(100, (n * 100) / goal));
+  drawTitle(c, "Water", pct);
+  int x0 = 10, x1 = 44, top = 15, bot = 61;
   u8g2.drawLine(x0, top, x0 + 4, bot);
   u8g2.drawLine(x1, top, x1 - 4, bot);
   u8g2.drawLine(x0 + 4, bot, x1 - 4, bot);
@@ -419,14 +464,15 @@ static void water_draw(CardCtx& c) {
     for (int x = x0 + 3; x < x1 - 3; x += 4) u8g2.drawPixel(x + (millis() / 200) % 4, lvl);
     u8g2.setDrawColor(1);
   }
-  char b[12];
+  char b[16];
   snprintf(b, sizeof(b), "%d/%d", n, goal);
   u8g2.setFont(F_NUM24);
-  u8g2.drawStr(60, 42, b);
+  if (u8g2.getStrWidth(b) > 70) u8g2.setFont(F_HELV14);
+  drawTextFitCenter(90, 39, 72, b);
   u8g2.setFont(F_SMALL);
-  u8g2.drawStr(62, 54, n >= goal ? "goal reached!" : "glasses");
+  drawTextFitCenter(90, 51, 72, n >= goal ? "Goal reached!" : "glasses today");
   u8g2.setFont(F_TINY);
-  u8g2.drawStr(62, 63, "2x +1  hold -1");
+  drawTextFitCenter(90, 62, 72, "2x:+1   hold:-1");
 }
 static bool water_input(CardCtx& c, uint8_t g) {
   int n = waterCount(c), goal = c.p["goal"] | 8;
@@ -450,12 +496,21 @@ static void note_draw(CardCtx& c) {
   const char* t = c.p["text"] | "Write a note in the dashboard";
   bool big = c.p["big"] | false;
   u8g2.setFont(big ? F_HELV14 : F_MED);
-  int lh = big ? 17 : 11, maxL = 64 / lh;
-  int lines = wrapText(0, 0, 124, lh, t, 0);
+  int lh = big ? 16 : 11;
+  int maxL = big ? 3 : 5;
+  int bodyW = 120;
+  int lines = wrapText(0, 0, bodyW, lh, t, 0);
   int skip = 0;
-  if (lines > maxL) { skip = ((millis() - c.t0) / 2500) % (lines - maxL + 2); skip = min(skip, lines - maxL); }
-  int y0 = lines < maxL ? (64 - lines * lh) / 2 + lh - 3 : lh - 3;
-  wrapText(2 + burnX, y0, 124, lh, t, maxL, skip);
+  if (lines > maxL) {
+    skip = ((millis() - c.t0) / 2500) % (lines - maxL + 2);
+    skip = min(skip, lines - maxL);
+    int thumbH = max(5, (56 * maxL) / lines);
+    int thumbY = 4 + ((56 - thumbH) * skip) / max(1, lines - maxL);
+    u8g2.drawVLine(126, 4, 56);
+    u8g2.drawBox(125, thumbY, 3, thumbH);
+  }
+  int y0 = lines <= maxL ? (64 - lines * lh) / 2 + lh - 2 : lh;
+  wrapText(2 + (lines <= maxL ? burnX : 0), y0, bodyW, lh, t, maxL, skip);
 }
 static void note_speak(CardCtx& c, String& s) { s = c.p["text"] | ""; }
 const CardType CT_note = {"note", 0, 0, 0, nullptr, note_draw, nullptr, nullptr, note_speak, nullptr};
@@ -493,6 +548,7 @@ static time_t icsTime(const char* line, bool& allDay) {
   return mktime(&t);
 }
 static bool calevents_fetch(JsonObject p, void* d) {
+  if (!d) return false;
   String url = p["url"] | "";
   if (!url.length()) return false;
   if (url.startsWith("webcal://")) url = "https://" + url.substring(9);
@@ -536,31 +592,43 @@ static bool calevents_fetch(JsonObject p, void* d) {
 static void evWhen(const CalEv& e, char* b, size_t n) {
   struct tm t, now;
   localtime_r(&e.t, &t);
-  nowTm(now);
+  const char* day = WDAY[t.tm_wday];
+  if (nowTm(now)) {
+    now.tm_hour = 12; now.tm_min = 0; now.tm_sec = 0; now.tm_isdst = -1;
+    struct tm evDay = t;
+    evDay.tm_hour = 12; evDay.tm_min = 0; evDay.tm_sec = 0; evDay.tm_isdst = -1;
+    long dDays = lround(difftime(mktime(&evDay), mktime(&now)) / 86400.0);
+    if (dDays == 0) day = "Tod";
+    else if (dDays == 1) day = "Tmr";
+  }
   char hm[8] = "";
   if (!e.allDay) fmtHM(hm, t.tm_hour, t.tm_min, cfgH24());
-  const char* day = t.tm_yday == now.tm_yday ? "Today" : (t.tm_yday == (now.tm_yday + 1) % 366 ? "Tmrw" : WDAY[t.tm_wday]);
-  snprintf(b, n, "%s %s", day, e.allDay ? "all day" : hm);
+  snprintf(b, n, "%s %s", day, e.allDay ? "AllDay" : hm);
 }
 static void calevents_draw(CardCtx& c) {
   CalData* cd = (CalData*)c.d;
   if (!(c.p["url"] | "")[0]) { drawCenteredMsg("Paste an iCal (.ics) link", "in the card settings"); return; }
-  if (!dataGate(cd->ok, "calendar")) return;
-  drawTitle(c, "Agenda");
+  if (!cd || !dataGate(cd->ok, "calendar")) return;
+  char cnt[8] = "";
+  if (cd->n > 0) snprintf(cnt, sizeof(cnt), "%d", cd->n);
+  drawTitle(c, "Agenda", cnt[0] ? cnt : nullptr);
   if (!cd->n) { drawCenteredMsg("Nothing coming up"); return; }
-  for (int i = 0; i < min((int)cd->n, 4); i++) {
-    int y = 20 + i * 12;
+  drawDottedVLine(50, 14, 48);
+  int shown = min((int)cd->n, 4);
+  for (int i = 0; i < shown; i++) {
+    int y = 21 + i * 12;
     char b[24];
     evWhen(cd->e[i], b, sizeof(b));
     u8g2.setFont(F_TINY);
-    u8g2.drawStr(0, y - 1, b);
+    drawTextFit(0, y - 1, 48, b);
     u8g2.setFont(F_SMALL);
-    marquee(46, y, 82, cd->e[i].s, c.t0, 25);
+    marquee(53, y, 74, cd->e[i].s, c.t0, 25);
+    if (i < shown - 1) drawDottedHLine(0, y + 3, 128);
   }
 }
 static void calevents_tick(CardCtx& c) {
   CalData* cd = (CalData*)c.d;
-  if (!cd->ok || !cd->n) return;
+  if (!cd || !cd->ok || !cd->n) return;
   int am = c.p["alert"] | 10;
   if (am <= 0) return;
   time_t now = time(nullptr);
@@ -576,7 +644,7 @@ static void calevents_tick(CardCtx& c) {
 }
 static void calevents_speak(CardCtx& c, String& s) {
   CalData* cd = (CalData*)c.d;
-  if (!cd->ok || !cd->n) { s = "Your calendar is clear."; return; }
+  if (!cd || !cd->ok || !cd->n) { s = "Your calendar is clear."; return; }
   struct tm t;
   localtime_r(&cd->e[0].t, &t);
   s = String("Next: ") + cd->e[0].s + (cd->e[0].allDay ? "" : (", at " + sayTime(t.tm_hour, t.tm_min)).c_str()) + ".";
@@ -589,11 +657,28 @@ static void message_draw(CardCtx& c) {
   char b[40] = "";
   long ago = timeOK() && lastMsg.t ? (long)(time(nullptr) - lastMsg.t) / 60 : -1;
   if (ago >= 0) snprintf(b, sizeof(b), ago < 60 ? "%ldm ago" : "%ldh ago", ago < 60 ? ago : ago / 60);
-  drawHeader(lastMsg.from[0] ? lastMsg.from : "Message", b);
+  drawTitle(c, lastMsg.from[0] ? lastMsg.from : "Message", b);
+
   u8g2.setFont(F_MED);
-  int lines = wrapText(0, 0, 124, 11, lastMsg.text, 0);
-  int skip = lines > 4 ? min((int)(((millis() - c.t0) / 2500) % (lines - 2)), lines - 4) : 0;
-  wrapText(2, 21, 124, 11, lastMsg.text, 4, skip);
+  int linesM = wrapText(0, 0, 120, 11, lastMsg.text, 0);
+  if (linesM <= 3) {
+    int y0 = 22 + ((3 - linesM) * 11) / 2;
+    wrapText(2, y0, 124, 11, lastMsg.text, 3);
+  } else {
+    u8g2.setFont(F_SMALL);
+    int linesS = wrapText(0, 0, 120, 9, lastMsg.text, 0);
+    int skip = (linesS > 4) ? min((int)(((millis() - c.t0) / 2400) % max(1, linesS - 2)), linesS - 4) : 0;
+    wrapText(2, 20, 120, 9, lastMsg.text, 4, skip);
+    if (linesS > 4) {
+      int thumbH = max(5, 36 * 4 / linesS);
+      int thumbY = 13 + (36 - thumbH) * skip / max(1, linesS - 4);
+      u8g2.drawVLine(126, 13, 36);
+      u8g2.drawBox(125, thumbY, 3, thumbH);
+    }
+  }
+  drawDottedHLine(0, 54, 128);
+  u8g2.setFont(F_TINY);
+  textCenter(62, "2x: speak   hold: clear");
 }
 static bool message_input(CardCtx& c, uint8_t g) {
   if (g == G_DOUBLE && lastMsg.text[0]) { audioSay(lastMsg.text, EV_UI); return true; }
@@ -607,19 +692,26 @@ const CardType CT_message = {"message", 0, 0, 0, nullptr, message_draw, message_
 static void mqtt_draw(CardCtx& c) {
   JsonArray items = c.p["items"];
   int n = items.isNull() ? 0 : items.size();
-  drawTitle(c, "Home", mqttConnected() ? "" : "offline");
+  drawTitle(c, "Home", mqttConnected() ? "live" : "offline");
   if (!n) { drawCenteredMsg("Add MQTT entities", "in the card settings"); return; }
   if ((int)c.st[0] >= n) c.st[0] = 0;
   int first = max(0, min((int)c.st[0] - 2, n - 5));
+  int rowW = (n > 5) ? 124 : 128;
   for (int k = 0; k < 5 && first + k < n; k++) {
     JsonObject it = items[first + k];
-    int y = 19 + k * 10;
+    int y = 20 + k * 10;
     bool sel = first + k == (int)c.st[0] && (it["c"] | "")[0];
-    if (sel) { u8g2.drawFrame(0, y - 8, 128, 10); }
+    if (sel) { u8g2.drawFrame(0, y - 8, rowW, 10); }
     u8g2.setFont(F_SMALL);
-    u8g2.drawUTF8(2, y, it["l"] | (it["t"] | "?"));
     String v = String(mqttGet(it["t"] | "")) + (it["u"] | "");
-    textRight(125, y, v.c_str());
+    drawTextRightFit(rowW - 3, y, 48, v.c_str());
+    int vw = min(48, (int)u8g2.getUTF8Width(v.c_str()));
+    drawTextFit(3, y, rowW - 10 - vw, it["l"] | (it["t"] | "?"));
+  }
+  if (n > 5) {
+    int h = max(6, 50 * 5 / n);
+    int sy = 12 + (50 - h) * first / (n - 5);
+    u8g2.drawBox(126, sy, 2, h);
   }
 }
 static bool mqtt_input(CardCtx& c, uint8_t g) {
@@ -650,23 +742,25 @@ static bool pcGate() {
 }
 static void pcstats_draw(CardCtx& c) {
   if (!pcGate()) return;
+  drawTitle(c, "PC Stats", "live");
   const char* L[] = {"CPU", "RAM", "GPU"};
   float V[] = {pcStats.cpu, pcStats.ram, pcStats.gpu};
   float T[] = {pcStats.cpuT, 0, pcStats.gpuT};
-  char b[16];
+  char b[24];
   for (int i = 0; i < 3; i++) {
-    int y = 2 + i * 14;
+    int y = 21 + i * 11;
     u8g2.setFont(F_SMALL);
-    u8g2.drawStr(0, y + 8, L[i]);
-    drawBar(20, y, 70, 10, V[i] / 100);
+    u8g2.drawStr(2, y, L[i]);
+    drawBar(24, y - 7, 56, 7, V[i] / 100.0f);
     snprintf(b, sizeof(b), T[i] > 0 ? "%d%% %dC" : "%d%%", (int)V[i], (int)T[i]);
-    textRight(127, y + 8, b);
+    drawTextRightFit(126, y, 42, b);
   }
+  drawDottedHLine(0, 50, 128);
   u8g2.setFont(F_TINY);
-  snprintf(b, sizeof(b), "Up %.1f", pcStats.up);
-  u8g2.drawStr(0, 62, b);
-  snprintf(b, sizeof(b), "Down %.1f MB/s", pcStats.down);
-  textRight(127, 62, b);
+  snprintf(b, sizeof(b), "UP %.1f MB/s", pcStats.up);
+  drawTextFit(2, 61, 60, b);
+  snprintf(b, sizeof(b), "DN %.1f MB/s", pcStats.down);
+  drawTextRightFit(126, 61, 62, b);
 }
 static void pcstats_speak(CardCtx& c, String& s) {
   if (pcStats.ts) s = "C P U at " + String((int)pcStats.cpu) + " percent. Memory at " + String((int)pcStats.ram) + " percent.";
@@ -676,14 +770,18 @@ const CardType CT_pcstats = {"pcstats", 0, 0, 0, nullptr, pcstats_draw, nullptr,
 static void nowplaying_draw(CardCtx& c) {
   if (!pcGate()) return;
   if (!pcStats.song[0]) { drawCenteredMsg("Nothing playing"); return; }
-  for (int i = 0; i < 12; i++) {
-    int h = pcStats.playing ? 3 + (int)((sinf(millis() / 140.0f + i * 1.7f) + 1) * 6 + (esp_random() % 3)) : 2;
-    u8g2.drawBox(4 + i * 10, 26 - h, 7, h);
+  drawTitle(c, pcStats.playing ? "Playing" : "Paused", "PC");
+  for (int i = 0; i < 16; i++) {
+    int h = pcStats.playing ? 3 + (int)((sinf(millis() / 130.0f + i * 1.5f) + 1) * 5 + (esp_random() % 3)) : 2;
+    u8g2.drawBox(4 + i * 7, 29 - h, 5, h);
   }
+  drawDottedHLine(0, 32, 128);
   u8g2.setFont(F_BOLD);
-  marquee(0, 44, 128, pcStats.song, c.t0, 30);
+  if (u8g2.getUTF8Width(pcStats.song) <= 124) textCenter(46, pcStats.song);
+  else marquee(2, 46, 124, pcStats.song, c.t0, 30);
   u8g2.setFont(F_SMALL);
-  marquee(0, 58, 128, pcStats.artist, c.t0, 25);
+  if (u8g2.getUTF8Width(pcStats.artist) <= 124) textCenter(59, pcStats.artist);
+  else marquee(2, 59, 124, pcStats.artist, c.t0, 25);
 }
 static void nowplaying_speak(CardCtx& c, String& s) {
   if (pcStats.song[0]) s = String("Now playing ") + pcStats.song + " by " + pcStats.artist + ".";

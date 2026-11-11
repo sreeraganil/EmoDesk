@@ -89,15 +89,16 @@ void powerSleepNow(uint32_t wakeAfterMin, const char* why) {
   emoSleepNow();
   displayPower(true);
   u8g2.clearBuffer();
-  emoRender(64, 22, 0.6f);
+  drawHeader("EmoDesk", "SLEEP");
+  emoRender(64, 24, 0.56f);
   u8g2.setFont(F_MED);
-  textCenter(50, why);
+  textCenter(49, why);
   u8g2.setFont(F_TINY);
   if (wakeAfterMin) {
-    char b[32];
-    snprintf(b, sizeof(b), "touch to wake (auto in %lum)", (unsigned long)wakeAfterMin);
-    textCenter(62, b);
-  } else textCenter(62, "touch me to wake up");
+    char b[36];
+    snprintf(b, sizeof(b), "Touch pad to wake (%lum)", (unsigned long)wakeAfterMin);
+    textCenter(61, b);
+  } else textCenter(61, "Touch pad to wake up");
   displaySend();
   // wait for the finger to leave the pad, otherwise we wake straight away
   uint32_t t0 = millis();

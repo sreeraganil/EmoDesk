@@ -22,13 +22,19 @@ void displaySend();
 void displayPower(bool on);
 bool displayIsOn();
 void displaySetContrast(uint8_t c);
+void displaySetBatReserve(int w);  // reserve top-right pixels for battery badge
+int  displayBatReserve();
 
 void textCenter(int y, const char* s);
 void textRight(int xr, int y, const char* s);
+void drawTextFit(int x, int y, int maxW, const char* s);
+void drawTextFitCenter(int cx, int y, int maxW, const char* s);
+void drawTextRightFit(int xr, int y, int maxW, const char* s);
 int  wrapText(int x, int y, int w, int lineH, const char* s, int maxLines, int skip = 0);
 void marquee(int x, int y, int w, const char* s, uint32_t t0, int pxPerSec = 30);
 void drawBar(int x, int y, int w, int h, float frac);
 void drawDottedHLine(int x, int y, int w);
+void drawDottedVLine(int x, int y, int h);
 void drawBadge(int xr, int y, const char* text);
 void drawPill(int x, int y, int w, int h, const char* text, bool filled = false);
 void drawSignalBars(int x, int y, int rssi);
@@ -47,6 +53,9 @@ void drawIconTemp(int x, int y);
 void drawIconArrow(int x, int y, bool up);
 void drawIconCalendar(int x, int y);
 void drawIconClock(int x, int y);
+void drawIconHeart(int x, int y);
+void drawIconStar(int x, int y);
+void drawIconMusic(int x, int y);
 void drawPageDots(int xr, int y, int n, int cur);
 
 const char* wmoText(int code);

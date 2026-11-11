@@ -88,21 +88,24 @@ static uint8_t oldBuf[1024];
 static uint32_t transStart = 0;
 static int transDir = 1;
 static bool inTrans = false;
+static bool frameDrawn = false;
 static int lastDir = 1;
 
 static void enterCard(int i) {
   if (i < 0 || i >= cn) return;
-  if (cn > 1 && i != cur && (cfg["rotate"]["trans"] | true)) {
+  cardHold = false;
+  if (cn > 1 && i != cur && frameDrawn && (cfg["rotate"]["trans"] | true)) {
     memcpy(oldBuf, u8g2.getBufferPtr(), 1024);
     transStart = millis();
     transDir = (lastDir != 0) ? lastDir : 1;
     inTrans = true;
   }
+  frameDrawn = false;
   cur = i;
   shownAt = millis();
   logf("[CARD] Active: #%d [%s] (\"%s\")", i, ci[i].t->id, cardName(i, ci[i].t->id).c_str());
 
-  // Persist active card across reboots / WiFi reconnects
+  // Persist active card across reboots / WiFi reconnects in RTC RAM (no LittleFS flash wear per card switch)
   const char* cid = cardObj(i)["id"] | "";
   if (*cid) {
     rtcCardMagic = RTC_CARD_MAGIC;
@@ -110,21 +113,22 @@ static void enterCard(int i) {
     safeCopy(rtcActiveCardType, ci[i].t->id, sizeof(rtcActiveCardType));
     stateDoc["activeCard"] = cid;
     stateDoc["activeCardType"] = ci[i].t->id;
-    markDirty(DIRTY_STATE);
   }
 
   inputSetRaw(ci[i].t->flags & CF_RAW);
-  if (ci[i].t->enter) { CardCtx c = cardCtx(i); ci[i].t->enter(c); }
+  if (ci[i].t->enter && (!ci[i].t->dsize || ci[i].d)) { CardCtx c = cardCtx(i); ci[i].t->enter(c); }
+  // Dwell debounce (450ms): rapid continuous card switching won't trigger wasted intermediate TLS requests
+  uint32_t now = millis();
   if (ci[i].t->fetch) {
     bool hasData = ci[i].d && ((bool*)ci[i].d)[0];
-    if (!hasData || (int32_t)(millis() - ci[i].nextFetch) >= 0) {
-      ci[i].nextFetch = millis();
+    if (!hasData || (int32_t)(now - ci[i].nextFetch) >= 0) {
+      ci[i].nextFetch = now + 450;
     }
   }
   if (!strcmp(ci[i].t->id, "cricket") || !strcmp(ci[i].t->id, "cricfix")) {
-    cricRefresh();
+    if (!cric.ok || (timeOK() && time(nullptr) - cric.ts > 60)) cricRefresh();
   } else if (!strcmp(ci[i].t->id, "weather") || !strcmp(ci[i].t->id, "forecast") || !strcmp(ci[i].t->id, "sunmoon")) {
-    if (!homeW.ok) feedsRefresh();
+    if (!homeW.ok || (timeOK() && time(nullptr) - homeW.ts > 300)) feedsRefresh();
   }
 }
 
@@ -228,19 +232,29 @@ void cardsBegin() {
 }
 
 void cardsNext(int dir) {
-  if (!cn) return;
-  for (int k = 1; k <= cn; k++) {
-    int j = ((cur + dir * k) % cn + cn) % cn;
-    if (cardVisible(j)) { lastDir = dir; enterCard(j); return; }
+  LOCK();
+  if (cn) {
+    for (int k = 1; k <= cn; k++) {
+      int j = ((cur + dir * k) % cn + cn) % cn;
+      if (cardVisible(j)) { lastDir = dir; enterCard(j); break; }
+    }
   }
+  UNLOCK();
 }
 
-void cardsGoto(int i) { if (i >= 0 && i < cn) { lastDir = (i >= cur) ? 1 : -1; enterCard(i); } }
+void cardsGoto(int i) {
+  LOCK();
+  if (i >= 0 && i < cn) { lastDir = (i >= cur) ? 1 : -1; enterCard(i); }
+  UNLOCK();
+}
 
 void cardsHome() {
+  LOCK();
   lastDir = -1;
-  for (int i = 0; i < cn; i++) if (!strcmp(ci[i].t->id, "emo") && cardVisible(i)) { enterCard(i); return; }
-  for (int i = 0; i < cn; i++) if (cardVisible(i)) { enterCard(i); return; }
+  bool done = false;
+  for (int i = 0; i < cn; i++) if (!strcmp(ci[i].t->id, "emo") && cardVisible(i)) { enterCard(i); done = true; break; }
+  if (!done) for (int i = 0; i < cn; i++) if (cardVisible(i)) { enterCard(i); break; }
+  UNLOCK();
 }
 
 void cardsLoop() {
@@ -248,7 +262,7 @@ void cardsLoop() {
   uint32_t now = millis();
   LOCK();
   for (int i = 0; i < cn; i++) {
-    if (ci[i].t->tick) { CardCtx c = cardCtx(i); ci[i].t->tick(c); }
+    if (ci[i].t->tick && (!ci[i].t->dsize || ci[i].d)) { CardCtx c = cardCtx(i); ci[i].t->tick(c); }
   }
   static uint32_t lastVis = 0;
   if (now - lastVis > 1000) {
@@ -281,6 +295,10 @@ void cardsLoop() {
 void cardsDraw() {
   if (!cn || cur < 0 || cur >= cn || !cardVisible(cur) || !ci[cur].t || !ci[cur].t->draw) {
     drawCenteredMsg("No cards to show", "Add cards in the dashboard");
+    return;
+  }
+  if (ci[cur].t->dsize > 0 && !ci[cur].d) {
+    drawCenteredMsg("Low memory", ci[cur].t->id);
     return;
   }
   cardHold = false;
@@ -318,6 +336,7 @@ void cardsDraw() {
         }
         memcpy(dPage, tmpLine, 128);
       }
+      frameDrawn = true;
       return;
     } else {
       inTrans = false;
@@ -325,13 +344,14 @@ void cardsDraw() {
   }
 
   ci[cur].t->draw(c);
+  frameDrawn = true;
 }
 
 bool cardsInput(uint8_t g) {
   if (!cn) return false;
   LOCK();
   bool r = false;
-  if (ci[cur].t->input) { CardCtx c = cardCtx(cur); r = ci[cur].t->input(c, g); }
+  if (ci[cur].t->input && (!ci[cur].t->dsize || ci[cur].d)) { CardCtx c = cardCtx(cur); r = ci[cur].t->input(c, g); }
   UNLOCK();
   return r;
 }
@@ -347,7 +367,7 @@ String cardsCurrentText() {
   if (!cn) return "";
   String s;
   LOCK();
-  if (ci[cur].t->speak) { CardCtx c = cardCtx(cur); ci[cur].t->speak(c, s); }
+  if (ci[cur].t->speak && (!ci[cur].t->dsize || ci[cur].d)) { CardCtx c = cardCtx(cur); ci[cur].t->speak(c, s); }
   UNLOCK();
   return s;
 }
@@ -375,7 +395,13 @@ void cardsFetchLoop() {
   pd.set(cardObj(pick)["p"]);
   int refreshMin = cardObj(pick)["p"]["refresh"] | 0;
   void* tmp = t->dsize ? malloc(t->dsize) : nullptr;
-  if (tmp) memcpy(tmp, ci[pick].d, t->dsize);
+  if (t->dsize && !tmp) {
+    ci[pick].nextFetch = now + 30000;
+    UNLOCK();
+    return;
+  }
+  if (tmp && ci[pick].d) memcpy(tmp, ci[pick].d, t->dsize);
+  else if (tmp) memset(tmp, 0, t->dsize);
   ci[pick].nextFetch = now + 60000;   // provisional, avoids re-picking while fetching
   UNLOCK();
 
@@ -389,7 +415,7 @@ void cardsFetchLoop() {
 
   LOCK();
   if (g == gen) {
-    if (tmp && ok) memcpy(ci[pick].d, tmp, t->dsize);
+    if (tmp && ok && ci[pick].d) memcpy(ci[pick].d, tmp, t->dsize);
     ci[pick].nextFetch = millis() + next * 1000UL;
   }
   UNLOCK();
@@ -399,18 +425,19 @@ void cardsFetchLoop() {
 // ------------------------------------------------------------------ helpers
 bool dataGate(bool ok, const char* what) {
   if (ok) return true;
-  if (netPortal() && !netOnline()) drawCenteredMsg("No Wi-Fi", "Setup: 192.168.4.1");
+  if (netPortal() && !netOnline()) drawCenteredMsg("No Wi-Fi", "Join EmoDesk-Setup");
   else if (!netOnline()) drawCenteredMsg("Offline", what);
   else {
+    u8g2.drawRFrame(10, 12, 108, 42, 4);
     u8g2.setFont(F_MED);
-    textCenter(24, "Loading");
-    u8g2.setFont(F_SMALL);
-    textCenter(37, what);
-    int bx = 40, by = 46, bw = 48, bh = 6;
+    textCenter(27, "Loading...");
+    u8g2.setFont(F_TINY);
+    drawTextFitCenter(64, 37, 96, what ? what : "");
+    int bx = 26, by = 43, bw = 76, bh = 5;
     u8g2.drawRFrame(bx, by, bw, bh, 2);
-    int pW = 12;
+    int pW = 16;
     int span = bw - 4 - pW;
-    int phase = (millis() / 25) % (span * 2);
+    int phase = (millis() / 22) % (span * 2);
     int xPos = phase <= span ? phase : (span * 2 - phase);
     u8g2.drawRBox(bx + 2 + xPos, by + 1, pW, bh - 2, 1);
   }
