@@ -847,7 +847,8 @@ struct FMatch {
   int8_t hPos, aPos;
   int8_t hLivePos, aLivePos;
 };
-struct FootData { bool ok; uint8_t n; FMatch m[6]; };
+#define MAX_FMATCHES 3
+struct FootData { bool ok; uint8_t n; FMatch m[MAX_FMATCHES]; };
 
 static int scoreOf(JsonVariant v) { return v.is<const char*>() ? atoi(v.as<const char*>()) : v.as<int>(); }
 
@@ -997,7 +998,7 @@ static bool football_fetch(JsonObject p, void* d) {
               teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
           continue;
       }
-      if (fd->n < 6) {
+      if (fd->n < MAX_FMATCHES) {
         parseFMatch(ev, fd->m[fd->n++]);
       }
     }
@@ -1013,7 +1014,7 @@ static bool football_fetch(JsonObject p, void* d) {
               teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
           continue;
       }
-      if (fd->n < 6) {
+      if (fd->n < MAX_FMATCHES) {
         anyLive = true;
         parseFMatch(ev, fd->m[fd->n++]);
       }
@@ -1030,7 +1031,7 @@ static bool football_fetch(JsonObject p, void* d) {
               teamMatch(hs, team.c_str()) || teamMatch(as, team.c_str())))
           continue;
       }
-      if (fd->n < 6) {
+      if (fd->n < MAX_FMATCHES) {
         parseFMatch(ev, fd->m[fd->n++]);
       }
     }
@@ -1068,21 +1069,21 @@ static bool football_fetch(JsonObject p, void* d) {
         }
       }
       fd->n = 0;
-      if (hasLive && fd->n < 6) fd->m[fd->n++] = liveM;
-      if (hasNext && fd->n < 6) fd->m[fd->n++] = nextM;
-      if (hasLast && fd->n < 6) fd->m[fd->n++] = lastM;
+      if (hasLive && fd->n < MAX_FMATCHES) fd->m[fd->n++] = liveM;
+      if (hasNext && fd->n < MAX_FMATCHES) fd->m[fd->n++] = nextM;
+      if (hasLast && fd->n < MAX_FMATCHES) fd->m[fd->n++] = lastM;
     } else {
       fd->n = 0;
       for (JsonObject ev : arr) {
         const char* st = ev["status"] | "scheduled";
-        if (!strcmp(st, "live") && fd->n < 6) {
+        if (!strcmp(st, "live") && fd->n < MAX_FMATCHES) {
           anyLive = true;
           parseFMatch(ev, fd->m[fd->n++]);
         }
       }
       for (JsonObject ev : arr) {
         const char* st = ev["status"] | "scheduled";
-        if (strcmp(st, "live") != 0 && fd->n < 6) {
+        if (strcmp(st, "live") != 0 && fd->n < MAX_FMATCHES) {
           parseFMatch(ev, fd->m[fd->n++]);
         }
       }

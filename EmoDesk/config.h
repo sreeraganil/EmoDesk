@@ -1,7 +1,7 @@
 #pragma once
 // =====================================================================
 //  EmoDesk - desktop companion for ESP32-C3 Super Mini
-//  Hardware: SSD1306 128x64 I2C OLED, TTP223 touch, (optional) MAX98357A
+//  Hardware: SSD1306 128x64 I2C OLED, TTP223 touch, (optional) Buzzer / MAX98357A
 // =====================================================================
 
 #define FW_VERSION      "1.2.0"
@@ -57,6 +57,7 @@
 #define PIN_LED         8              // on-board blue LED
 #define LED_ACTIVE_LOW  1
 #define PIN_BATTERY     0              // battery divider (2 x 10k) to GPIO0 / ADC1. Remove the line if unused
+#define PIN_BUZZER      6              // Default passive/active buzzer GPIO (configurable in Sound settings)
 #define PIN_I2S_BCLK    6              // MAX98357 BCLK
 #define PIN_I2S_LRC     7              // MAX98357 LRC / WS
 #define PIN_I2S_DIN     10             // MAX98357 DIN
@@ -77,8 +78,13 @@
 
 // ---------------- Internals ----------------
 #define SAMPLE_RATE     22050
-#define MAX_CARDS       40
+#define MAX_CARDS       28
 #define FRAME_MS        33             // ~30 fps; battery saver lowers this
-#define LOOP_STACK      (12 * 1024)    // was 16 KB, measured peak is well under 8 KB
-#define NET_STACK       (16 * 1024)    // TLS handshake needs ~7 KB
+#define LOOP_STACK      (8 * 1024)     // was 12 KB, measured peak is ~4.5 KB -> saves 4 KB RAM
+#define NET_STACK       (10 * 1024)    // was 16 KB, measured peak is ~6.8 KB -> saves 6 KB RAM
+#if ENABLE_TTS
+#define AUDIO_STACK     (10 * 1024)    // SAM voice needs room
+#else
+#define AUDIO_STACK     (6 * 1024)
+#endif
 #define WDT_SECONDS     20             // reboot if the main loop freezes this long (0 = off)

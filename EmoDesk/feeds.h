@@ -31,7 +31,7 @@ struct CricMatch {
   char partner[16];
   uint8_t winProb;
 };
-struct CricData { bool ok; uint32_t ts; uint8_t n; CricMatch m[8]; int hits, limit; char err[48]; };
+struct CricData { bool ok; uint32_t ts; uint8_t n; CricMatch m[4]; int hits, limit; char err[48]; };
 extern CricData cric;
 bool cricLive(const CricMatch& m);
 void cricScore(const CricMatch& m, int side, char* out, size_t n);   // side 0/1

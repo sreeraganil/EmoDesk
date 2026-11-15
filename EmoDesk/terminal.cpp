@@ -73,13 +73,13 @@ String terminalExecute(const String& cmdLine, bool ansi) {
     out += "  say <text>             - Speak text aloud (or show alert)\r\n";
     out += "  msg <text>             - Display notification overlay\r\n";
     out += "  play <spec>            - Play audio (sfx:bell, mel:2, /snd/file.wav)\r\n";
-    out += "  sound [vol <0-100>|mute|unmute] - Audio volume controls\r\n";
+    out += "  sound [vol <0-100>|mute|unmute|mode <off|buzzer|active|speaker>|pin <gpio>] - Audio controls\r\n";
     out += "  screen [on|off|toggle|bright <0-255>] - OLED display controls\r\n";
     out += "  saver [on|off]         - Toggle battery saver mode\r\n";
     out += "  wifi                   - Show Wi-Fi details\r\n";
     out += "  wifi <ssid> <pass>     - Change Wi-Fi (use quotes if spaces: wifi \"My Net\" pass)\r\n";
     out += "  scan                   - Scan for nearby Wi-Fi access points\r\n";
-    out += "  action <action>        - Run internal action (pet, feed, brief, refresh...)\r\n";
+    out += "  action <action>        - Run internal action (pet, feed, brief, refresh...)\r\n";
     out += "  media <play|next|prev|volup|voldown|mute> - Send PC media controls (USB/BLE)\r\n";
     out += "  log                    - Dump recent in-memory log buffer\r\n";
     out += "  clear                  - Clear terminal screen\r\n";
@@ -111,7 +111,8 @@ String terminalExecute(const String& cmdLine, bool ansi) {
            " | Saver: " + String(powerSaver() ? "ACTIVE" : "OFF") + "\r\n";
     out += "  Display:     " + String(screenIsOn() ? "ON" : "OFF") + "\r\n";
     out += "  Audio:       Volume " + String(audioVolume()) + "% | Muted: " + String(audioMuted() ? "YES" : "NO") +
-           " | Speaker: " + String(audioInstalled() ? "Installed" : "Disabled") + "\r\n";
+           " | Mode: " + String(audioModeName()) +
+           ((audioMode() == AUDIO_BUZZER || audioMode() == AUDIO_ACTIVE) ? (" (GPIO" + String(audioBuzzerPin()) + ")") : "") + "\r\n";
     out += "  Active Card: #" + String(cardsCurrent()) + " [" + String(cardsCurrentType()) + "] (" +
            cardName(cardsCurrent(), cardsCurrentType()) + ")\r\n";
     out += "  Pet Stats:   Happy " + String((int)pet.happy) + " | Energy " + String((int)pet.energy) +
@@ -218,12 +219,25 @@ String terminalExecute(const String& cmdLine, bool ansi) {
   if (cmd == "sound") {
     if (arg == "mute") { audioSetMuted(true); return String(C_OK) + "[OK] Sound muted" + C_RST + "\r\n"; }
     if (arg == "unmute") { audioSetMuted(false); return String(C_OK) + "[OK] Sound unmuted" + C_RST + "\r\n"; }
+    if (arg.startsWith("mode ")) {
+      String m = arg.substring(5);
+      m.trim();
+      audioSetMode(m.c_str());
+      return String(C_OK) + "[OK] Audio output set to " + String(audioModeName()) + C_RST + "\r\n";
+    }
+    if (arg.startsWith("pin ")) {
+      int p = arg.substring(4).toInt();
+      audioSetBuzzerPin(p);
+      return String(C_OK) + "[OK] Buzzer GPIO set to GPIO" + String(audioBuzzerPin()) + C_RST + "\r\n";
+    }
     if (arg.startsWith("vol ")) {
       int v = arg.substring(4).toInt();
       audioSetVolume(v);
       return String(C_OK) + "[OK] Volume set to " + String(audioVolume()) + "%" + C_RST + "\r\n";
     }
-    return String(C_CYAN) + "Sound: Volume " + String(audioVolume()) + "%, Muted: " + String(audioMuted() ? "YES" : "NO") + C_RST + "\r\n";
+    return String(C_CYAN) + "Sound: Mode " + String(audioModeName()) +
+           ((audioMode() == AUDIO_BUZZER || audioMode() == AUDIO_ACTIVE) ? (" (GPIO" + String(audioBuzzerPin()) + ")") : "") +
+           ", Volume " + String(audioVolume()) + "%, Muted: " + String(audioMuted() ? "YES" : "NO") + C_RST + "\r\n";
   }
 
   if (cmd == "screen") {

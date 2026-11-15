@@ -105,7 +105,7 @@ void powerSleepNow(uint32_t wakeAfterMin, const char* why) {
   while (digitalRead(PIN_TOUCH) && millis() - t0 < 4000) { wdtFeed(); delay(20); }
   delay(1500);
   displayPower(false);
-  digitalWrite(PIN_AMP_SD, LOW);
+  audioSleep();
   ledcWrite(PIN_LED, LED_ACTIVE_LOW ? 255 : 0);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);

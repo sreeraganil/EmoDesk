@@ -367,7 +367,7 @@ static void cricLoop(uint32_t now) {
 
   for (int pass = 0; pass < 5; pass++) {
     for (JsonObject m : arr) {
-      if (nd->n >= 8) break;
+      if (nd->n >= (int)(sizeof(nd->m) / sizeof(nd->m[0]))) break;
       const char* mid = m["id"] | "";
       const char* mtitle = m["title"] | "";
       bool isTarget = false;

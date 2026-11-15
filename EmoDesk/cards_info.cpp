@@ -1073,11 +1073,12 @@ const CardType CT_battery = {"battery", 0, 0, 0, nullptr, battery_draw, nullptr,
 
 
 // ================================================================== cinema (CineWish & TMDB)
-enum CineView : uint8_t { CV_SOON = 0, CV_OUT, CV_LIST, CV_PICK, CV_STATS, CV_COUNT };
+enum CineView : uint8_t { CV_HERO = 0, CV_LIST, CV_PICK, CV_COUNT };
 
 CinemaData latestCinema = {false, false, 0, {}, "", "", 0.0f, 0, 0, ""};
 
 static const uint8_t XBM_STAR5[] = {0x04, 0x0E, 0x1F, 0x0E, 0x0A};
+static const uint8_t XBM_STAR7[] = {0x10, 0x10, 0x38, 0x7C, 0xFE, 0x7C, 0x28};
 static const uint8_t XBM_FILM7[] = {0x7F, 0x55, 0x7F, 0x41, 0x7F, 0x55, 0x7F};
 static const uint8_t XBM_TV7[]   = {0x14, 0x08, 0x7F, 0x41, 0x41, 0x7F, 0x22};
 
@@ -1304,7 +1305,7 @@ static bool cinema_fetch(JsonObject p, void* d) {
     cd->pickRating = doc["pick"]["r"] | 0.0f;
 
     for (JsonObject obj : doc["items"].as<JsonArray>()) {
-      if (cd->n >= 8) break;
+      if (cd->n >= 5) break;
       const char* t = obj["t"].is<const char*>() ? (const char*)obj["t"] : (const char*)obj["title"];
       if (!t || !*t) continue;
 
@@ -1378,7 +1379,7 @@ static bool cinema_fetch(JsonObject p, void* d) {
 
   float bestR = -1.0f;
   for (JsonObject obj : arr) {
-    if (cd->n >= 8) break;
+    if (cd->n >= 5) break;
     const char* t = obj["title"].is<const char*>() ? (const char*)obj["title"] : (const char*)obj["name"];
     if (!t || !*t) continue;
 
@@ -1428,164 +1429,185 @@ static bool cinema_fetch(JsonObject p, void* d) {
   return cd->ok;
 }
 
-static void viewSoon(CardCtx& c, CinemaData* cd, int subIdx) {
-  int ix[8], n = cFilter(cd, true, ix);
-  if (!n) {
-    drawTitle(c, "Coming Soon", nullptr);
-    drawCenteredMsg("No upcoming films", "In your wishlist");
-    return;
-  }
-  int i = (unsigned)subIdx % n;
-  const CineItem& m = cd->items[ix[i]];
-  char hr[10]; snprintf(hr, sizeof(hr), "%d/%d", i + 1, n);
-  drawTitle(c, "Coming Soon", hr);
+// ------------------------------------------------------------------ Redesigned Cinema Screens
+static void drawCineHero(CardCtx& c, CinemaData* cd, int curIdx) {
+  if (!cd || !cd->n) return;
+  int i = (unsigned)curIdx % cd->n;
+  const CineItem& m = cd->items[i];
 
+  char hrBuf[12];
+  snprintf(hrBuf, sizeof(hrBuf), "%d/%d", i + 1, cd->n);
+  drawHeader("CINEWISH", hrBuf);
+
+  // 1. Movie Title (clean, no jittery marquee, max space utilized)
   u8g2.setFont(F_MED);
-  marquee(2, 21, 124, m.title, c.st[2], 28);
-  drawDottedHLine(0, 24, 128);
-
-  if (m.days <= 0) {
-    u8g2.setFont(F_SMALL);
-    u8g2.drawStr(2, 37, "RELEASING");
-    u8g2.setFont(F_HELV14);
-    u8g2.drawStr(2, 54, "TODAY!");
-    u8g2.drawXBMP(78, 46, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
-    u8g2.setFont(F_SMALL);
-    cFit(88, 53, 38, m.genre);
+  int tw = u8g2.getStrWidth(m.title);
+  if (tw <= 124) {
+    u8g2.drawStr(2, 22, m.title);
   } else {
-    char num[8]; snprintf(num, sizeof(num), "%u", (unsigned)m.days);
-    u8g2.setFont(F_NUM24);
-    u8g2.drawStr(2, 54, num);
-    int rx = 2 + u8g2.getStrWidth(num) + 7;
-
-    u8g2.setFont(F_MED);
-    u8g2.drawStr(rx, 37, m.days == 1 ? "DAY LEFT" : "DAYS LEFT");
-
     u8g2.setFont(F_SMALL);
-    char dtBuf[16]; cDateFmt(dtBuf, sizeof(dtBuf), m.date, m.days);
-    u8g2.drawStr(rx, 46, dtBuf);
-    u8g2.drawXBMP(rx, 49, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
-    cFit(rx + 10, 56, 126 - (rx + 10), m.genre);
+    drawTextFit(2, 21, 124, m.title);
   }
-  cDots(i, n, 61);
-}
+  u8g2.drawHLine(0, 24, 128);
 
-static void viewOut(CardCtx& c, CinemaData* cd, int subIdx) {
-  int ix[8], n = cFilter(cd, false, ix);
-  if (!n) {
-    drawTitle(c, "Out Now", nullptr);
-    drawCenteredMsg("All caught up", "Nothing waiting");
-    return;
+  // 2. Left Status Badge (Countdown or TMDB Rating)
+  if (m.days >= 0) {
+    // Upcoming / Premiere countdown
+    u8g2.drawRFrame(2, 27, 44, 24, 3);
+    if (m.days == 0) {
+      u8g2.drawRBox(2, 27, 44, 24, 3);
+      u8g2.setDrawColor(0);
+      u8g2.setFont(F_SMALL);
+      u8g2.drawStr(12, 38, "OUT");
+      u8g2.drawStr(6, 47, "TODAY!");
+      u8g2.setDrawColor(1);
+    } else if (m.days == 1) {
+      u8g2.setFont(F_TINY);
+      u8g2.drawStr(4, 36, "RELEASING");
+      u8g2.setFont(F_SMALL);
+      u8g2.drawStr(4, 46, "TOMORROW");
+    } else {
+      char numBuf[8];
+      snprintf(numBuf, sizeof(numBuf), "%d", m.days);
+      u8g2.setFont(F_HELV14);
+      int nw = u8g2.getStrWidth(numBuf);
+      u8g2.drawStr(6, 46, numBuf);
+      u8g2.setFont(F_TINY);
+      u8g2.drawStr(8 + nw, 36, "DAYS");
+      u8g2.drawStr(8 + nw, 46, "LEFT");
+    }
+  } else {
+    // Out Now: TMDB Rating badge
+    u8g2.drawRFrame(2, 27, 44, 24, 3);
+    u8g2.drawXBMP(6, 31, 7, 7, XBM_STAR7);
+    char rBuf[8];
+    snprintf(rBuf, sizeof(rBuf), "%.1f", m.rating > 0.05f ? m.rating : 7.5f);
+    u8g2.setFont(F_MED);
+    u8g2.drawStr(17, 39, rBuf);
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(5, 47, "TMDB SCORE");
   }
-  int i = (unsigned)subIdx % n;
-  const CineItem& m = cd->items[ix[i]];
-  int a = m.days < 0 ? -m.days : 0;
-  char hr[10]; snprintf(hr, sizeof(hr), "%d/%d", i + 1, n);
-  drawTitle(c, "Out Now", hr);
 
-  u8g2.setFont(F_MED);
-  marquee(2, 21, 124, m.title, c.st[2], 28);
-  drawDottedHLine(0, 24, 128);
+  // 3. Right Info Block (Media Format, Genre, Date)
+  // Format pill [MOVIE] / [SERIES]
+  u8g2.setFont(F_TINY);
+  u8g2.drawRFrame(50, 27, 26, 10, 2);
+  u8g2.drawStr(53, 34, m.isTV ? "SERIES" : "MOVIE");
 
+  // Genre
+  cFit(80, 34, 46, m.genre);
+
+  // Release Date
+  char dtBuf[20];
+  cDateFmt(dtBuf, sizeof(dtBuf), m.date, m.days);
   u8g2.setFont(F_SMALL);
-  u8g2.drawXBMP(2, 28, 7, 7, m.isTV ? XBM_TV7 : XBM_FILM7);
-  cFit(12, 34, (a <= 7) ? 88 : 114, m.genre);
-  if (a <= 7) drawBadge(126, 34, "NEW");
+  drawTextFit(50, 46, 76, dtBuf);
 
-  char b[28];
-  if (a == 0)       strlcpy(b, "Out today", sizeof(b));
-  else if (a == 1)  strlcpy(b, "Out yesterday", sizeof(b));
-  else if (a < 7)   snprintf(b, sizeof(b), "Out %d days ago", a);
-  else if (a < 60)  snprintf(b, sizeof(b), "Out %d wk ago", a / 7);
-  else if (a < 365) snprintf(b, sizeof(b), "Out %d mo ago", a / 30);
-  else {
-    if (m.date[0]) snprintf(b, sizeof(b), "Released %.4s", m.date);
-    else snprintf(b, sizeof(b), "Out %d yr ago", a / 365);
+  // 4. Bottom Footer & Navigation Dots
+  u8g2.drawHLine(0, 53, 128);
+  u8g2.setFont(F_TINY);
+  if (m.days >= 0) {
+    u8g2.drawStr(2, 61, "PREMIERE COUNTDOWN");
+  } else if (m.rating >= 8.0f) {
+    u8g2.drawStr(2, 61, "TOP RATED");
+  } else {
+    u8g2.drawStr(2, 61, "IN THEATERS / OTT");
   }
-  u8g2.drawStr(2, 44, b);
 
-  if (m.rating > 0.05f) cRating(2, 49, (uint8_t)min(100, (int)lroundf(m.rating * 10.0f)), 58);
-  else                  u8g2.drawStr(2, 55, "Not rated");
-  cDots(i, n, 61);
+  cDots(i, cd->n, 59);
 }
 
-static void viewList(CardCtx& c, CinemaData* cd, int sel) {
-  char hr[8]; snprintf(hr, sizeof(hr), "%d", cd->n);
-  drawTitle(c, "Wishlist", hr);
-  if (!cd->n) {
+static void drawCineList(CardCtx& c, CinemaData* cd, int sel) {
+  char hrBuf[12];
+  snprintf(hrBuf, sizeof(hrBuf), "%d Titles", cd->n);
+  drawHeader("WISHLIST", hrBuf);
+
+  if (!cd || !cd->n) {
     drawCenteredMsg("List is empty", "Add in CineWish");
     return;
   }
-  u8g2.setFont(F_SMALL);
-  int cur = (unsigned)sel % cd->n;
-  int first = constrain(cur - 2, 0, max(0, cd->n - 5));
-  for (int r = 0; r < 5 && first + r < cd->n; r++) {
-    const CineItem& m = cd->items[first + r];
-    int y = 12 + r * 10;
-    char tag[8];
-    if (m.days > 0)       snprintf(tag, sizeof(tag), "%dd", m.days);
-    else if (m.days == 0) strlcpy(tag, "NOW", sizeof(tag));
-    else                  strlcpy(tag, "OUT", sizeof(tag));
 
-    if (first + r == cur) {
-      u8g2.drawBox(0, y, 124, 10);
+  int cur = (unsigned)sel % cd->n;
+  int first = constrain(cur - 1, 0, max(0, cd->n - 3));
+
+  // 3 perfectly spaced 14px rows (zero overlap)
+  for (int r = 0; r < 3 && first + r < cd->n; r++) {
+    const CineItem& m = cd->items[first + r];
+    int y = 13 + r * 16;
+    bool isSel = (first + r == cur);
+
+    if (isSel) {
+      u8g2.drawRBox(0, y, 128, 14, 2);
       u8g2.setDrawColor(0);
     }
-    int tw = u8g2.getStrWidth(tag);
-    cFit(3, y + 8, 115 - tw, m.title);
-    u8g2.drawStr(121 - tw, y + 8, tag);
+
+    // Left score or countdown
+    char tagLeft[10];
+    if (m.days >= 0) snprintf(tagLeft, sizeof(tagLeft), "%dd", m.days);
+    else snprintf(tagLeft, sizeof(tagLeft), "%.1f", m.rating > 0.05f ? m.rating : 7.0f);
+
+    u8g2.setFont(F_TINY);
+    u8g2.drawStr(3, y + 10, tagLeft);
+
+    // Title
+    u8g2.setFont(F_SMALL);
+    cFit(26, y + 10, 76, m.title);
+
+    // Right status badge
+    const char* tagRight = (m.days > 0) ? "SOON" : ((m.days == 0) ? "NOW" : "OUT");
+    u8g2.setFont(F_TINY);
+    int rw = u8g2.getStrWidth(tagRight);
+    u8g2.drawStr(125 - rw, y + 10, tagRight);
+
     u8g2.setDrawColor(1);
   }
-  if (cd->n > 5) {
-    int h = max(6, 50 * 5 / cd->n);
-    int sy = 12 + (50 - h) * first / (cd->n - 5);
-    u8g2.drawBox(126, sy, 2, h);
-  }
+
+  u8g2.drawHLine(0, 61, 128);
 }
 
-static void viewPick(CardCtx& c, CinemaData* cd) {
-  drawTitle(c, "Tonight's Pick", nullptr);
+static void drawCinePick(CardCtx& c, CinemaData* cd) {
+  drawHeader("RECOMMENDED", "CineWish");
   if (!cd->pickTitle[0]) {
-    drawCenteredMsg("No picks yet", "Rate in CineWish");
+    drawCenteredMsg("No picks yet", "Add to Wishlist");
     return;
   }
-  cClapper(4, 17);
+
+  // Clapper & Popcorn Graphic
+  cClapper(3, 16);
+
+  // Title
   u8g2.setFont(F_MED);
-  wrapText(30, 23, 96, 10, cd->pickTitle, 2);
-  if (cd->pickRating > 0.05f) cRating(30, 41, (uint8_t)min(100, (int)lroundf(cd->pickRating * 10.0f)), 0);
-  u8g2.setFont(F_SMALL);
-  cFit(62, 47, 64, cd->pickGenre);
-  drawDottedHLine(0, 52, 128);
+  drawTextFit(30, 24, 96, cd->pickTitle);
+
+  // Rating Pill
   u8g2.setFont(F_TINY);
-  textCenter(61, "picked for you");
-}
+  u8g2.drawRFrame(30, 28, 40, 10, 2);
+  u8g2.drawXBMP(33, 30, 7, 7, XBM_STAR7);
+  char rBuf[8];
+  snprintf(rBuf, sizeof(rBuf), "%.1f", cd->pickRating > 0.05f ? cd->pickRating : 8.5f);
+  u8g2.drawStr(43, 36, rBuf);
 
-static void viewStats(CardCtx& c, CinemaData* cd) {
-  drawTitle(c, "CineWish", nullptr);
-  char b[8];
-  u8g2.setFont(F_NUM24);
-  snprintf(b, sizeof(b), "%u", cd->watchedMonth);
-  drawTextFitCenter(32, 39, 58, b);
+  // Genre
+  cFit(74, 36, 52, cd->pickGenre[0] ? cd->pickGenre : "Featured");
 
-  snprintf(b, sizeof(b), "%u", cd->listSize);
-  drawTextFitCenter(96, 39, 58, b);
-
-  drawDottedVLine(64, 15, 45);
-  u8g2.setFont(F_TINY);
-  textCenter(49, "");
+  // Footer banner
+  u8g2.drawHLine(0, 48, 128);
   u8g2.setFont(F_SMALL);
-  drawTextFitCenter(32, 50, 58, "watched");
-  drawTextFitCenter(32, 59, 58, "this month");
-  drawTextFitCenter(96, 50, 58, "on your");
-  drawTextFitCenter(96, 59, 58, "wishlist");
+  textCenter(59, "Tonight's Must-Watch");
 }
 
 static void cinema_enter(CardCtx& c) {
   uint32_t now = millis();
-  c.st[0] = CV_SOON;
+  c.st[0] = CV_HERO;
   c.st[1] = 0;
   c.st[2] = now;
   c.st[3] = now;
+
+  // If memory instance is empty, immediately restore cached latestCinema
+  CinemaData* cd = (CinemaData*)c.d;
+  if (cd && !cd->n && latestCinema.n > 0) {
+    *cd = latestCinema;
+  }
 }
 
 static void cinema_draw(CardCtx& c) {
@@ -1602,54 +1624,49 @@ static void cinema_draw(CardCtx& c) {
   if (!tLast) tLast = now;
   if (!tView) tView = now;
 
-  // Check if view mode is forced in card params, e.g. "view": "soon", "out", "watchlist", "pick", "stats"
   const char* forcedView = c.p["view"] | "auto";
   bool isAuto = !strcmp(forcedView, "auto");
   if (!isAuto) {
-    if (!strcmp(forcedView, "soon")) view = CV_SOON;
-    else if (!strcmp(forcedView, "out")) view = CV_OUT;
-    else if (!strcmp(forcedView, "watchlist") || !strcmp(forcedView, "list")) view = CV_LIST;
+    if (!strcmp(forcedView, "watchlist") || !strcmp(forcedView, "list")) view = CV_LIST;
     else if (!strcmp(forcedView, "pick")) view = CV_PICK;
-    else if (!strcmp(forcedView, "stats")) view = CV_STATS;
+    else view = CV_HERO;
   } else {
-    // Auto mode: switch screens every 7 seconds
-    if (now - tView > 7000) {
-      tView = now;
+    // Smooth readable dwell: change movie every 6 seconds
+    if (now - tLast > 6000) {
       tLast = now;
-      view = (view + 1) % CV_COUNT;
-      idx = 0;
+      idx = (idx + 1) % (cd->n ? cd->n : 1);
     }
   }
 
-  // Advance items inside current view every 3.5 seconds
-  if (now - tLast > 3500) {
-    tLast = now;
-    idx++;
-  }
-
-  // Skip views that have no data so screen never gets stuck on an empty placeholder
-  int ixSoon[8], nSoon = cFilter(cd, true, ixSoon);
-  int ixOut[8],  nOut  = cFilter(cd, false, ixOut);
-
-  if (isAuto) {
-    if (view == CV_SOON && !nSoon) view = (nOut ? CV_OUT : CV_LIST);
-    if (view == CV_OUT && !nOut)   view = CV_LIST;
-    if (view == CV_PICK && !cd->pickTitle[0]) view = CV_STATS;
-  }
-
   switch (view % CV_COUNT) {
-    case CV_SOON:  viewSoon(c, cd, idx);  break;
-    case CV_OUT:   viewOut(c, cd, idx);   break;
-    case CV_LIST:  viewList(c, cd, idx);  break;
-    case CV_PICK:  viewPick(c, cd);       break;
-    case CV_STATS: viewStats(c, cd);      break;
-    default:       viewSoon(c, cd, idx);  break;
+    case CV_HERO: drawCineHero(c, cd, idx); break;
+    case CV_LIST: drawCineList(c, cd, idx); break;
+    case CV_PICK: drawCinePick(c, cd);      break;
+    default:      drawCineHero(c, cd, idx); break;
   }
 }
 
-// Return false so all EmoDesk global touch gestures work unimpeded:
-// Tap -> Next Card, Double-tap -> Prev Card, Triple-tap -> Home, Long-press -> Speak Card!
+// Interactive touch gestures:
+// Tap: instantly jumps to next movie!
+// Double Tap: switches view mode (Hero card -> List -> Tonight's pick)
+// Long Press: speaks movie details aloud
 static bool cinema_input(CardCtx& c, uint8_t g) {
+  CinemaData* cd = (CinemaData*)c.d;
+  if (!cd || !cd->n) return false;
+
+  uint32_t& view = c.st[0];
+  uint32_t& idx  = c.st[1];
+  uint32_t& tLast = c.st[2];
+
+  if (g == G_TAP) {
+    idx = (idx + 1) % cd->n;
+    tLast = millis();
+    return true;
+  } else if (g == G_DOUBLE) {
+    view = (view + 1) % CV_COUNT;
+    tLast = millis();
+    return true;
+  }
   return false;
 }
 
@@ -1659,36 +1676,308 @@ static void cinema_speak(CardCtx& c, String& s) {
     s = "No cinema information available.";
     return;
   }
-  uint32_t view = c.st[0];
-  uint32_t idx  = c.st[1];
+  uint32_t idx = c.st[1] % cd->n;
+  const CineItem& m = cd->items[idx];
 
-  if (view == CV_SOON) {
-    int ix[8], n = cFilter(cd, true, ix);
-    if (n) {
-      const CineItem& m = cd->items[ix[idx % n]];
-      s = String(m.title) + " releases in " + String(m.days) + " days.";
-      return;
+  s = String(m.title) + ", ";
+  if (m.genre[0]) s += String(m.genre) + ". ";
+  if (m.days > 1) {
+    s += "Releasing in " + String(m.days) + " days.";
+  } else if (m.days == 1) {
+    s += "Releasing tomorrow!";
+  } else if (m.days == 0) {
+    s += "Releasing today in theaters!";
+  } else {
+    s += "Out now.";
+    if (m.rating > 0.05f) {
+      char rBuf[24];
+      snprintf(rBuf, sizeof(rBuf), " Rated %.1f on TMDB.", m.rating);
+      s += rBuf;
     }
-  } else if (view == CV_OUT) {
-    int ix[8], n = cFilter(cd, false, ix);
-    if (n) {
-      const CineItem& m = cd->items[ix[idx % n]];
-      s = String(m.title) + " is out now.";
-      if (m.rating > 0.05f) {
-        char rBuf[24]; snprintf(rBuf, sizeof(rBuf), " Rated %.1f.", m.rating);
-        s += rBuf;
-      }
-      return;
-    }
-  } else if (view == CV_PICK && cd->pickTitle[0]) {
-    s = "Tonight's pick is " + String(cd->pickTitle) + ".";
-    return;
-  } else if (view == CV_STATS) {
-    s = "You have watched " + String(cd->watchedMonth) + " movies, with " + String(cd->listSize) + " on your wishlist.";
-    return;
   }
-  const CineItem& m = cd->items[idx % cd->n];
-  s = "Featured: " + String(m.title);
 }
 
 const CardType CT_cinema = {"cinema", sizeof(CinemaData), 1800, 0, cinema_enter, cinema_draw, cinema_input, cinema_fetch, cinema_speak, nullptr};
+
+// ------------------------------------------------------------------ Package & Delivery Tracker (delivery)
+DeliveryData latestDelivery = {false, 0, {}};
+
+void deliverySyncFromState() {
+  LOCK();
+  latestDelivery.count = 0;
+  if (stateDoc["deliveries"].is<JsonArray>()) {
+    JsonArray arr = stateDoc["deliveries"].as<JsonArray>();
+    for (JsonObject o : arr) {
+      if (latestDelivery.count >= 4) break;
+      DeliveryItem& it = latestDelivery.items[latestDelivery.count];
+      memset(&it, 0, sizeof(it));
+      safeCopy(it.id, o["id"] | "", sizeof(it.id));
+      safeCopy(it.title, o["item"] | (o["title"] | "Package"), sizeof(it.title));
+      safeCopy(it.courier, o["courier"] | "Courier", sizeof(it.courier));
+      safeCopy(it.status, o["status"] | "In transit", sizeof(it.status));
+      safeCopy(it.eta, o["eta"] | "Soon", sizeof(it.eta));
+      safeCopy(it.awb, o["awb"] | "", sizeof(it.awb));
+      if (!o["stage"].isNull()) {
+        it.stage = (uint8_t)constrain((int)(o["stage"] | 2), 0, 4);
+      } else {
+        String st = String(it.status);
+        st.toLowerCase();
+        if (st.indexOf("delivered") >= 0) it.stage = 4;
+        else if (st.indexOf("out") >= 0 || (st.indexOf("deliver") >= 0 && st.indexOf("today") >= 0)) it.stage = 3;
+        else if (st.indexOf("transit") >= 0 || st.indexOf("reach") >= 0 || st.indexOf("hub") >= 0) it.stage = 2;
+        else if (st.indexOf("ship") >= 0 || st.indexOf("dispatch") >= 0) it.stage = 1;
+        else if (st.indexOf("order") >= 0 || st.indexOf("place") >= 0) it.stage = 0;
+        else it.stage = 2;
+      }
+      latestDelivery.count++;
+    }
+  }
+  latestDelivery.ok = (latestDelivery.count > 0);
+  UNLOCK();
+}
+
+bool deliveryAddOrUpdate(const JsonObject& d) {
+  LOCK();
+  if (!stateDoc["deliveries"].is<JsonArray>()) {
+    stateDoc["deliveries"].to<JsonArray>();
+  }
+  JsonArray arr = stateDoc["deliveries"].as<JsonArray>();
+
+  const char* inId = d["id"] | "";
+  const char* inItem = d["item"] | (d["title"] | "");
+  const char* inCourier = d["courier"] | "";
+
+  JsonObject target;
+  for (JsonObject o : arr) {
+    if (inId && *inId && !strcmp(o["id"] | "", inId)) {
+      target = o;
+      break;
+    }
+    if (inItem && *inItem && !strcasecmp(o["item"] | (o["title"] | ""), inItem)) {
+      target = o;
+      break;
+    }
+  }
+
+  bool isNew = target.isNull();
+  if (isNew) {
+    if (arr.size() >= 4) {
+      arr.remove(0);
+    }
+    target = arr.add<JsonObject>();
+    char genId[16];
+    snprintf(genId, sizeof(genId), "d%06lx", (unsigned long)(esp_random() & 0xFFFFFF));
+    target["id"] = (inId && *inId) ? inId : genId;
+  }
+
+  if (inItem && *inItem) target["item"] = inItem;
+  if (inCourier && *inCourier) target["courier"] = inCourier;
+  if (!d["status"].isNull()) target["status"] = d["status"].as<const char*>();
+  if (!d["eta"].isNull()) target["eta"] = d["eta"].as<const char*>();
+  if (!d["awb"].isNull()) target["awb"] = d["awb"].as<const char*>();
+  if (!d["stage"].isNull()) target["stage"] = d["stage"].as<int>();
+  target["updated"] = (uint32_t)time(nullptr);
+
+  markDirty(DIRTY_STATE);
+  UNLOCK();
+
+  deliverySyncFromState();
+
+  String st = String(d["status"] | "");
+  st.toLowerCase();
+  int stg = d["stage"] | -1;
+  if (stg == 3 || st.indexOf("out") >= 0) {
+    notify("Delivery Alert", inItem && *inItem ? inItem : "Package", E_HAPPY, "sfx:chime", EV_NOTIFY, true, 8);
+  } else if (isNew) {
+    toastShow("Package added");
+  }
+
+  return true;
+}
+
+bool deliveryDelete(const char* id) {
+  LOCK();
+  if (!stateDoc["deliveries"].is<JsonArray>()) { UNLOCK(); return false; }
+  JsonArray arr = stateDoc["deliveries"].as<JsonArray>();
+  if (!id || !*id || !strcmp(id, "all")) {
+    arr.clear();
+  } else if (!strcmp(id, "delivered")) {
+    for (int i = (int)arr.size() - 1; i >= 0; i--) {
+      int s = arr[i]["stage"] | 0;
+      const char* st = arr[i]["status"] | "";
+      if (s == 4 || icontains(st, "delivered")) {
+        arr.remove(i);
+      }
+    }
+  } else {
+    for (int i = 0; i < (int)arr.size(); i++) {
+      if (!strcmp(arr[i]["id"] | "", id)) {
+        arr.remove(i);
+        break;
+      }
+    }
+  }
+  markDirty(DIRTY_STATE);
+  UNLOCK();
+  deliverySyncFromState();
+  return true;
+}
+
+static void delivery_enter(CardCtx& c) {
+  deliverySyncFromState();
+}
+
+static void delivery_draw(CardCtx& c) {
+  if (latestDelivery.count == 0) {
+    drawHeader("DELIVERY", "No Orders");
+    int bx = 56, by = 16;
+    u8g2.drawRFrame(bx, by, 16, 14, 2);
+    u8g2.drawLine(bx, by + 4, bx + 16, by + 4);
+    u8g2.drawLine(bx + 8, by + 4, bx + 8, by + 14);
+    u8g2.setFont(F_SMALL);
+    textCenter(44, "All Caught Up");
+    u8g2.setFont(F_TINY);
+    textCenter(56, "Add in Web Dashboard");
+    return;
+  }
+
+  int idx = c.st[0] % latestDelivery.count;
+  const DeliveryItem& it = latestDelivery.items[idx];
+
+  char cntBuf[16];
+  snprintf(cntBuf, sizeof(cntBuf), "%d/%d", idx + 1, latestDelivery.count);
+  drawHeader("DELIVERY", cntBuf);
+
+  // 1. Courier Tag (Pill)
+  char tag[10];
+  const char* cour = it.courier;
+  if (icontains(cour, "amazon")) safeCopy(tag, "AMZN", sizeof(tag));
+  else if (icontains(cour, "flipkart")) safeCopy(tag, "FLPK", sizeof(tag));
+  else if (icontains(cour, "ekart")) safeCopy(tag, "EKART", sizeof(tag));
+  else if (icontains(cour, "delhivery")) safeCopy(tag, "DLHV", sizeof(tag));
+  else if (icontains(cour, "post")) safeCopy(tag, "POST", sizeof(tag));
+  else if (icontains(cour, "blue")) safeCopy(tag, "BLUEDT", sizeof(tag));
+  else {
+    safeCopy(tag, cour, sizeof(tag));
+    for (int i = 0; tag[i]; i++) tag[i] = toupper((unsigned char)tag[i]);
+  }
+
+  u8g2.setFont(F_TINY);
+  int tagW = u8g2.getStrWidth(tag) + 6;
+  if (tagW > 40) tagW = 40;
+  u8g2.drawRFrame(0, 12, tagW, 10, 2);
+  u8g2.drawStr(3, 19, tag);
+
+  // 2. Item Title
+  u8g2.setFont(F_SMALL);
+  drawTextFit(tagW + 4, 20, 128 - (tagW + 4), it.title);
+
+  // 3. 4-Stage Visual Timeline
+  const int dotX[4] = {16, 48, 80, 112};
+  const int trackY = 32;
+  u8g2.drawLine(dotX[0], trackY, dotX[3], trackY);
+
+  int stg = constrain((int)it.stage, 0, 4);
+  int activeDot = (stg >= 4) ? 3 : (stg < 0 ? 0 : stg);
+  if (activeDot > 0) {
+    u8g2.drawLine(dotX[0], trackY - 1, dotX[activeDot], trackY - 1);
+    u8g2.drawLine(dotX[0], trackY + 1, dotX[activeDot], trackY + 1);
+  }
+
+  for (int s = 0; s < 4; s++) {
+    int x = dotX[s];
+    if (s < activeDot) {
+      u8g2.drawDisc(x, trackY, 3);
+    } else if (s == activeDot) {
+      u8g2.setDrawColor(0);
+      u8g2.drawDisc(x, trackY, 5);
+      u8g2.setDrawColor(1);
+      u8g2.drawCircle(x, trackY, 4);
+      u8g2.drawDisc(x, trackY, 2);
+    } else {
+      u8g2.setDrawColor(0);
+      u8g2.drawDisc(x, trackY, 3);
+      u8g2.setDrawColor(1);
+      u8g2.drawCircle(x, trackY, 3);
+    }
+  }
+
+  // 4. Status & ETA Banner
+  if (stg == 3) {
+    // Out for delivery: inverted banner
+    u8g2.drawRBox(0, 45, 128, 18, 3);
+    u8g2.setDrawColor(0);
+    u8g2.setFont(F_SMALL);
+    textCenter(54, "Out for Delivery!");
+    u8g2.setFont(F_TINY);
+    if (it.eta[0]) textCenter(61, it.eta);
+    u8g2.setDrawColor(1);
+  } else if (stg == 4) {
+    u8g2.drawRFrame(0, 45, 128, 18, 3);
+    u8g2.setFont(F_SMALL);
+    textCenter(54, "Delivered");
+    u8g2.setFont(F_TINY);
+    if (it.eta[0]) textCenter(61, it.eta);
+  } else {
+    u8g2.drawRFrame(0, 45, 128, 18, 3);
+    u8g2.setFont(F_SMALL);
+    char stBuf[32];
+    safeCopy(stBuf, it.status[0] ? it.status : (stg == 1 ? "Shipped" : "In Transit"), sizeof(stBuf));
+    drawTextFit(4, 54, 66, stBuf);
+    u8g2.setFont(F_TINY);
+    if (it.eta[0]) {
+      char etaBuf[32];
+      snprintf(etaBuf, sizeof(etaBuf), "ETA: %s", it.eta);
+      int ew = u8g2.getStrWidth(etaBuf);
+      u8g2.drawStr(124 - ew, 55, etaBuf);
+    }
+  }
+}
+
+static bool delivery_input(CardCtx& c, uint8_t g) {
+  if (latestDelivery.count > 1 && g == G_TAP) {
+    c.st[0] = (c.st[0] + 1) % latestDelivery.count;
+    return true;
+  }
+  return false;
+}
+
+static bool delivery_fetch(JsonObject p, void* d) {
+  deliverySyncFromState();
+  String url = p["url"].is<const char*>() ? (p["url"] | "") : "";
+  if (!url.length()) {
+    LOCK();
+    if (cfg["delivery"].is<JsonObject>() && cfg["delivery"]["url"].is<const char*>()) {
+      url = cfg["delivery"]["url"] | "";
+    } else if (cfg["delivery_url"].is<const char*>()) {
+      url = cfg["delivery_url"] | "";
+    }
+    UNLOCK();
+  }
+  url.trim();
+  if (url.length()) {
+    JsonDocument doc;
+    if (httpJson(url, doc)) {
+      if (doc.is<JsonObject>()) {
+        deliveryAddOrUpdate(doc.as<JsonObject>());
+      } else if (doc.is<JsonArray>()) {
+        for (JsonObject o : doc.as<JsonArray>()) {
+          deliveryAddOrUpdate(o);
+        }
+      }
+    }
+  }
+  return true;
+}
+
+static void delivery_speak(CardCtx& c, String& s) {
+  if (latestDelivery.count == 0) {
+    s = "You have no active deliveries.";
+    return;
+  }
+  int idx = c.st[0] % latestDelivery.count;
+  const DeliveryItem& it = latestDelivery.items[idx];
+  s = String("Your ") + it.courier + " order, " + it.title + ", is " + it.status + ". Expected " + it.eta + ".";
+}
+
+const CardType CT_delivery = {"delivery", sizeof(DeliveryData), 300, 0, delivery_enter, delivery_draw, delivery_input, delivery_fetch, delivery_speak, nullptr};

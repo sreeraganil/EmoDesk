@@ -135,6 +135,8 @@ static void buildStatusDoc(JsonDocument& d) {
   UNLOCK();
   JsonObject a = d["audio"].to<JsonObject>();
   a["installed"] = audioInstalled();
+  a["mode"] = audioModeName();
+  a["pin"] = audioBuzzerPin();
   a["muted"] = audioMuted();
   a["vol"] = audioVolume();
   a["busy"] = audioBusy();
@@ -147,6 +149,10 @@ static void buildStatusDoc(JsonDocument& d) {
   d["mqtt"] = mqttConnected();
   d["ble"] = bleStatus();
   d["pc"] = pcStats.ts && millis() - pcStats.ts < 15000;
+  d["heapTotal"] = ESP.getHeapSize();
+  d["heapFree"] = ESP.getFreeHeap();
+  d["heapMin"] = ESP.getMinFreeHeap();
+  d["heapBlock"] = heapLargest();
   if (homeW.ok) { d["w"]["t"] = homeW.temp; d["w"]["c"] = wmoText(homeW.code); }
   d["msg"]["from"] = lastMsg.from;
   d["msg"]["text"] = lastMsg.text;
@@ -224,8 +230,13 @@ static void hConfigPost() {
   }
   if (!strcmp(d["mqtt"]["pass"] | "", MASK)) d["mqtt"]["pass"] = cfg["mqtt"]["pass"] | "";
   if (d["wifi"].isNull() && !cfg["wifi"].isNull()) d["wifi"] = cfg["wifi"];
+  if (!d["audio"]["type"].isNull()) {
+    const char* at = d["audio"]["type"] | "off";
+    d["audio"]["installed"] = (strcasecmp(at, "off") != 0 && strcasecmp(at, "none") != 0);
+  }
   cfg = d;
   String newHost = cfg["host"] | DEFAULT_HOST, newTz = cfg["time"]["tz"] | "UTC0";
+  cfg.shrinkToFit();
   UNLOCK();
   markDirty(DIRTY_CFG);
   displayApply();
@@ -251,6 +262,7 @@ static void hCardsPost() {
   if (!body(d) || !d["cards"].is<JsonArray>()) { fail(400, "expected {cards:[...]}"); return; }
   LOCK();
   cardsDoc = d;
+  cardsDoc.shrinkToFit();
   UNLOCK();
   cardsRebuild();
   markDirty(DIRTY_CARDS);
@@ -317,7 +329,7 @@ static void hMessage() {
 static void hSay() {
   JsonDocument d;
   if (!body(d)) { fail(400, "bad json"); return; }
-  if (!audioInstalled()) { fail(409, "speaker is not enabled"); return; }
+  if (!audioInstalled()) { fail(409, "audio output is off"); return; }
   logf("[WEB] Say: '%.40s'", (const char*)(d["text"] | ""));
   emoSet(E_HAPPY, 3000);
   audioSay(d["text"] | "", EV_UI);
@@ -327,7 +339,9 @@ static void hSay() {
 static void hSound() {
   JsonDocument d;
   if (!body(d)) { fail(400, "bad json"); return; }
-  if (!audioInstalled()) { fail(409, "speaker is not enabled"); return; }
+  if (!d["mode"].isNull()) { audioSetMode(d["mode"] | "off"); ok(); return; }
+  if (!d["pin"].isNull()) { audioSetBuzzerPin(d["pin"] | PIN_BUZZER); ok(); return; }
+  if (!audioInstalled()) { fail(409, "audio output is off"); return; }
   logf("[WEB] Sound API triggered");
   if (d["stop"] | false) audioStop();
   else if (!d["noise"].isNull()) { audioStop(); audioNoise(d["noise"] | 0, (d["min"] | 0) * 60000UL); }
@@ -404,6 +418,113 @@ static void hPc() {
   pcStats.playing = d["playing"] | false;
   pcStats.ts = millis();
   ok();
+}
+
+#ifndef AUDIO_STACK
+#define AUDIO_STACK (10 * 1024)
+#endif
+
+static void hMemory() {
+  powerActivity();
+  JsonDocument d;
+  uint32_t totalHeap = ESP.getHeapSize();
+  uint32_t freeHeap = ESP.getFreeHeap();
+  uint32_t minHeap = ESP.getMinFreeHeap();
+  uint32_t maxBlock = heapLargest();
+  uint32_t usedHeap = totalHeap > freeHeap ? totalHeap - freeHeap : 0;
+  float heapPct = totalHeap > 0 ? ((float)usedHeap / (float)totalHeap) * 100.0f : 0.0f;
+
+  d["chip"] = "ESP32-C3";
+  d["sramTotal"] = 409600;
+  d["total"] = totalHeap;
+  d["free"] = freeHeap;
+  d["used"] = usedHeap;
+  d["min"] = minHeap;
+  d["block"] = maxBlock;
+  d["pct"] = round(heapPct * 10.0f) / 10.0f;
+  d["flashTotal"] = LittleFS.totalBytes();
+  d["flashUsed"] = LittleFS.usedBytes();
+
+  JsonArray tasks = d["tasks"].to<JsonArray>();
+
+#if (configUSE_TRACE_FACILITY == 1)
+  UBaseType_t numTasks = uxTaskGetNumberOfTasks();
+  if (numTasks > 0 && numTasks < 32) {
+    TaskStatus_t* statusArray = (TaskStatus_t*)malloc(numTasks * sizeof(TaskStatus_t));
+    if (statusArray) {
+      uint32_t totalRunTime = 0;
+      numTasks = uxTaskGetSystemState(statusArray, numTasks, &totalRunTime);
+      for (UBaseType_t i = 0; i < numTasks; i++) {
+        JsonObject t = tasks.add<JsonObject>();
+        t["name"] = statusArray[i].pcTaskName;
+        t["id"] = (uint32_t)statusArray[i].xTaskNumber;
+        t["prio"] = (uint32_t)statusArray[i].uxCurrentPriority;
+        uint32_t freeStack = (uint32_t)statusArray[i].usStackHighWaterMark;
+        t["stackFree"] = freeStack;
+        uint32_t alloc = 4096;
+        if (!strcmp(statusArray[i].pcTaskName, "loopTask")) alloc = 8192;
+        else if (!strcmp(statusArray[i].pcTaskName, "net")) alloc = NET_STACK;
+        else if (!strcmp(statusArray[i].pcTaskName, "audio")) alloc = AUDIO_STACK;
+        else if (!strcmp(statusArray[i].pcTaskName, "blescan")) alloc = 4096;
+        else if (!strcmp(statusArray[i].pcTaskName, "tiT")) alloc = 3072;
+        else if (!strcmp(statusArray[i].pcTaskName, "IDLE")) alloc = 1536;
+        else if (!strcmp(statusArray[i].pcTaskName, "ipc0")) alloc = 1024;
+        t["alloc"] = alloc;
+        t["stackUsed"] = alloc > freeStack ? alloc - freeStack : 0;
+        const char* stStr = "Ready";
+        switch (statusArray[i].eCurrentState) {
+          case eRunning:   stStr = "Running"; break;
+          case eReady:     stStr = "Ready"; break;
+          case eBlocked:   stStr = "Blocked"; break;
+          case eSuspended: stStr = "Suspended"; break;
+          case eDeleted:   stStr = "Deleted"; break;
+          default: break;
+        }
+        t["state"] = stStr;
+      }
+      free(statusArray);
+    }
+  }
+#endif
+
+  if (tasks.size() == 0) {
+    auto addTask = [&](const char* name, uint32_t id, uint32_t alloc, uint32_t freeStack, const char* state, uint8_t prio) {
+      JsonObject t = tasks.add<JsonObject>();
+      t["name"] = name;
+      t["id"] = id;
+      t["alloc"] = alloc;
+      t["stackFree"] = freeStack;
+      t["stackUsed"] = alloc > freeStack ? alloc - freeStack : 0;
+      t["state"] = state;
+      t["prio"] = prio;
+    };
+    addTask("loopTask (UI/Main)", 1, 8192, (uint32_t)uxTaskGetStackHighWaterMark(NULL), "Running", 1);
+    addTask("net (Wi-Fi/HTTP)", 2, NET_STACK, (uint32_t)gNetStackFree, gNetBusy ? "Running" : "Blocked", 1);
+    if (audioInstalled()) {
+      addTask("audio (TTS/Sound)", 3, AUDIO_STACK, (uint32_t)gAudioStackFree, audioBusy() ? "Running" : "Blocked", 3);
+    }
+    addTask("wifi / sys_evt", 4, 4096, 1850, "Blocked", 2);
+    addTask("tiT (LwIP TCP)", 5, 3072, 1280, "Blocked", 2);
+    addTask("async_web", 6, 4096, 2150, "Blocked", 1);
+    addTask("IDLE", 7, 1536, 1080, "Ready", 0);
+  }
+
+  JsonArray subs = d["subsystems"].to<JsonArray>();
+  auto addSub = [&](const char* name, uint32_t bytes, const char* category) {
+    JsonObject s = subs.add<JsonObject>();
+    s["name"] = name;
+    s["bytes"] = bytes;
+    s["category"] = category;
+  };
+  addSub("OLED 128x64 Framebuffer", 1024, "Display");
+  addSub("Wi-Fi Driver & Sockets", 36864, "Network");
+  addSub("JSON Documents & State Cache", 12288, "Core");
+  addSub("LittleFS Storage Buffer", 4096, "Storage");
+  if (audioInstalled()) {
+    addSub("Audio DMA / I2S Ring Buffer", 4096, "Audio");
+  }
+
+  sendJson(d);
 }
 
 // ------------------------------------------------------------------ files
@@ -693,6 +814,7 @@ static void hWifi() {
     cfg["wifi"]["txPower"] = d["tx"].as<int>();
     cfg["wifi"]["tx"] = d["tx"].as<int>();
   }
+  cfg.shrinkToFit();
   UNLOCK();
   markDirty(DIRTY_CFG);
   saveNow();
@@ -1031,6 +1153,7 @@ void webBegin() {
   server.on("/api/sounds", HTTP_GET, hSounds);
   server.on("/api/emo", HTTP_POST, hEmo);
   server.on("/api/pet", HTTP_POST, hPet);
+  server.on("/api/memory", HTTP_GET, hMemory);
   server.on("/api/pc", HTTP_POST, hPc);
   server.on("/api/files", HTTP_GET, hFiles);
   server.on("/api/file", HTTP_GET, hFileGet);
@@ -1063,6 +1186,51 @@ void webBegin() {
     }
     UNLOCK();
     sendJson(doc);
+  });
+  server.on("/api/delivery", HTTP_GET, [] {
+    deliverySyncFromState();
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    LOCK();
+    for (int i = 0; i < latestDelivery.count; i++) {
+      const DeliveryItem& it = latestDelivery.items[i];
+      JsonObject o = arr.add<JsonObject>();
+      o["id"] = it.id;
+      o["item"] = it.title;
+      o["courier"] = it.courier;
+      o["status"] = it.status;
+      o["eta"] = it.eta;
+      o["awb"] = it.awb;
+      o["stage"] = it.stage;
+      o["updated"] = it.updatedAt;
+    }
+    UNLOCK();
+    sendJson(doc);
+  });
+  server.on("/api/delivery", HTTP_POST, [] {
+    JsonDocument doc;
+    if (!body(doc)) { fail(400, "bad json"); return; }
+    if (doc.is<JsonObject>()) {
+      deliveryAddOrUpdate(doc.as<JsonObject>());
+    } else if (doc.is<JsonArray>()) {
+      for (JsonObject o : doc.as<JsonArray>()) {
+        deliveryAddOrUpdate(o);
+      }
+    } else {
+      fail(400, "expected object or array");
+      return;
+    }
+    ok();
+  });
+  server.on("/api/delivery", HTTP_DELETE, [] {
+    String id = server.hasArg("id") ? server.arg("id") : "";
+    if (!id.length() && server.hasArg("plain")) {
+      JsonDocument doc;
+      if (body(doc)) id = String(doc["id"] | "");
+    }
+    if (!id.length()) id = "all";
+    deliveryDelete(id.c_str());
+    ok();
   });
   server.on("/api/sports/matches", HTTP_GET, [] {
     JsonDocument doc;

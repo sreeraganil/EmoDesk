@@ -37,11 +37,32 @@ struct CardInst { const CardType* t; void* d; uint32_t st[6]; uint32_t nextFetch
   X(pomodoro) X(timer) X(stopwatch) X(alarms) X(reminders) X(todo) X(habits) X(water) X(note) X(calevents) \
   X(message) X(mqtt) X(pcstats) X(nowplaying) X(musicbox) X(soundboard) X(sleepsounds) X(metronome) \
   X(visualizer) X(images) X(anim) X(scroller) X(flappy) X(dino) X(stack) X(dodge) X(reaction) X(rhythm) \
-  X(eightball) X(dice) X(decision) X(matrix) X(starfield) X(life) X(fireworks) X(bounce) X(netinfo) X(health) X(battery) X(ble) X(whatsapp) X(cinema)
+  X(eightball) X(dice) X(decision) X(matrix) X(starfield) X(life) X(fireworks) X(bounce) X(netinfo) X(health) X(battery) X(ble) X(whatsapp) X(cinema) X(delivery)
 
 #define CARD_DECL(n) extern const CardType CT_##n;
 CARD_LIST(CARD_DECL)
 extern const CardType CT_cinema;
+extern const CardType CT_delivery;
+
+struct DeliveryItem {
+  char id[16];
+  char title[32];
+  char courier[16];
+  char status[24];
+  char eta[24];
+  char awb[24];
+  uint8_t stage;        // 0=Ordered, 1=Shipped, 2=In Transit, 3=Out for Delivery, 4=Delivered
+  uint32_t updatedAt;
+};
+struct DeliveryData {
+  bool ok;
+  uint8_t count;
+  DeliveryItem items[4];
+};
+extern DeliveryData latestDelivery;
+void deliverySyncFromState();
+bool deliveryAddOrUpdate(const JsonObject& d);
+bool deliveryDelete(const char* id);
 struct CineItem {
   char id[20];
   char title[48];
@@ -55,13 +76,13 @@ struct CinemaData {
   bool ok;
   bool linked;
   uint8_t n;
-  CineItem items[8];
-  char pickTitle[48];
+  CineItem items[5];
+  char pickTitle[40];
   char pickGenre[12];
   float pickRating;
   uint16_t watchedMonth;
   uint16_t listSize;
-  char err[24];
+  char err[20];
 };
 extern CinemaData latestCinema;
 

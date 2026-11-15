@@ -113,6 +113,7 @@ static void enterCard(int i) {
     safeCopy(rtcActiveCardType, ci[i].t->id, sizeof(rtcActiveCardType));
     stateDoc["activeCard"] = cid;
     stateDoc["activeCardType"] = ci[i].t->id;
+    markDirty(DIRTY_STATE);  // flush to state.json within ~1s so cold-boot restores the right card
   }
 
   inputSetRaw(ci[i].t->flags & CF_RAW);
@@ -166,7 +167,8 @@ void cardsRebuild() {
       memset(&x, 0, sizeof(x));
       x.t = t;
       x.ai = ai;
-      x.d = t->dsize ? calloc(1, t->dsize) : nullptr;
+      bool en = c["en"] | true;
+      x.d = (en && t->dsize) ? calloc(1, t->dsize) : nullptr;
       cn++;
     }
     ai++;
@@ -228,6 +230,7 @@ void cardsRebuild() {
 }
 
 void cardsBegin() {
+  deliverySyncFromState();
   cardsRebuild();
 }
 

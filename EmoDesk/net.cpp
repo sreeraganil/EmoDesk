@@ -224,6 +224,108 @@ static void drawConnecting(const char* ssid, uint32_t t0) {
   displaySend();
 }
 
+static void drawScanning(uint32_t t0) {
+  u8g2.clearBuffer();
+  drawHeader("EmoDesk", "WI-FI");
+  emoRender(64, 24, 0.50f);
+  u8g2.setFont(F_SMALL);
+  textCenter(48, "Scanning Wi-Fi...");
+  int bx = 24, by = 54, bw = 80, bh = 5;
+  u8g2.drawRFrame(bx, by, bw, bh, 2);
+  int pW = 18;
+  int span = bw - 4 - pW;
+  int phase = ((millis() - t0) / 35) % (span * 2);
+  int pos = phase <= span ? phase : (span * 2 - phase);
+  u8g2.drawRBox(bx + 2 + pos, by + 1, pW, bh - 2, 1);
+  displaySend();
+}
+
+static bool tryConnectProfile(int p, uint32_t waitMs = 9000) {
+  String s = netSSID(p);
+  if (!s.length()) return false;
+  if (WiFi.status() == WL_CONNECTED) return true;
+
+  beginSta(p);
+  uint32_t t0 = millis();
+  uint32_t lastDraw = 0;
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < waitMs) {
+    wdtFeed();
+    if (millis() - lastDraw >= 200) {
+      lastDraw = millis();
+      drawConnecting(s.c_str(), t0);
+    }
+    // If we got a definitive authentication failure, log and move to next immediately
+    if (lastDisconnectReason == WIFI_REASON_AUTH_FAIL && millis() - t0 > 1500) {
+      logf("[NET] '%s' authentication failed (wrong password)", s.c_str());
+      break;
+    }
+    delay(20);
+  }
+  if (WiFi.status() == WL_CONNECTED) return true;
+  WiFi.disconnect(false, false);
+  delay(100);
+  return false;
+}
+
+struct ScannedSavedNet {
+  int profile;
+  int rssi;
+};
+
+static int findAvailableSavedProfiles(ScannedSavedNet* matches, int maxMatches) {
+  wdtFeed();
+  int n = WiFi.scanNetworks(false, false);
+  wdtFeed();
+  int count = 0;
+  if (n <= 0) {
+    WiFi.scanDelete();
+    return 0;
+  }
+  logf("[NET] Wi-Fi scan found %d network(s) in range", n);
+
+  int maxProfiles = 3;
+  if (cfg["wifi"]["nets"].is<JsonArray>()) {
+    int arrSize = cfg["wifi"]["nets"].as<JsonArray>().size();
+    if (arrSize > maxProfiles) maxProfiles = arrSize;
+  }
+
+  for (int p = 1; p <= maxProfiles; p++) {
+    String saved = netSSID(p);
+    if (!saved.length()) continue;
+
+    int bestRssi = -1000;
+    bool found = false;
+    for (int i = 0; i < n; i++) {
+      if (saved.equalsIgnoreCase(WiFi.SSID(i))) {
+        found = true;
+        if (WiFi.RSSI(i) > bestRssi) bestRssi = WiFi.RSSI(i);
+      }
+    }
+
+    if (found && count < maxMatches) {
+      matches[count].profile = p;
+      matches[count].rssi = bestRssi;
+      logf("[NET] Saved network '%s' (Profile #%d) available in scan (RSSI: %d dBm)",
+           saved.c_str(), p, bestRssi);
+      count++;
+    }
+  }
+
+  WiFi.scanDelete();
+
+  // Sort available saved networks by signal strength (strongest RSSI first)
+  for (int i = 0; i < count - 1; i++) {
+    for (int j = i + 1; j < count; j++) {
+      if (matches[j].rssi > matches[i].rssi) {
+        ScannedSavedNet tmp = matches[i];
+        matches[i] = matches[j];
+        matches[j] = tmp;
+      }
+    }
+  }
+  return count;
+}
+
 void netBegin() {
   String host = cfg["host"] | DEFAULT_HOST;
   WiFi.persistent(false);
@@ -235,32 +337,31 @@ void netBegin() {
   netApplyTxPower();
   if (!netHasCreds()) { startPortal(); return; }
 
-  netActiveProfile = 1;
+  // Draw scanning animation on screen
+  drawScanning(millis());
 
-  // Try each configured or predefined network (profiles 1, 2, 3)
-  for (int p = 1; p <= 3; p++) {
-    String s = netSSID(p);
-    if (!s.length()) continue;
-    if (WiFi.status() == WL_CONNECTED) break;
-    beginSta(p);
-    uint32_t t0 = millis();
-    uint32_t waitMs = 9000;
-    uint32_t lastDraw = 0;
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < waitMs) {
-      if (millis() - lastDraw >= 200) {
-        lastDraw = millis();
-        drawConnecting(s.c_str(), t0);
-      }
-      // If we got a definitive authentication failure, log and move to next immediately
-      if (lastDisconnectReason == WIFI_REASON_AUTH_FAIL && millis() - t0 > 1500) {
-        logf("[NET] '%s' authentication failed (wrong password)", s.c_str());
-        break;
-      }
-      delay(20);
+  ScannedSavedNet matches[6];
+  int matchCount = findAvailableSavedProfiles(matches, 6);
+
+  if (matchCount > 0) {
+    logf("[NET] Found %d saved network(s) in scan. Connecting to available network...", matchCount);
+    for (int i = 0; i < matchCount; i++) {
+      int p = matches[i].profile;
+      String s = netSSID(p);
+      logf("[NET] Attempting available network '%s' (Profile #%d, RSSI: %d dBm)...",
+           s.c_str(), p, matches[i].rssi);
+      if (tryConnectProfile(p, 9000)) break;
     }
-    if (WiFi.status() == WL_CONNECTED) break;
-    WiFi.disconnect(false, false);
-    delay(100);
+  } else {
+    logf("[NET] No saved network visible in scan (or hidden SSID). Trying saved networks in order...");
+    int maxProfiles = 3;
+    if (cfg["wifi"]["nets"].is<JsonArray>()) {
+      int arrSize = cfg["wifi"]["nets"].as<JsonArray>().size();
+      if (arrSize > maxProfiles) maxProfiles = arrSize;
+    }
+    for (int p = 1; p <= maxProfiles; p++) {
+      if (tryConnectProfile(p, 9000)) break;
+    }
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -311,15 +412,38 @@ void netLoop() {
 
   if (!c && netHasCreds() && now - lastRetry > retryMs) {
     lastRetry = now;
-    int nextP = (netActiveProfile % 3) + 1;
-    for (int i = 0; i < 3; i++) {
-      if (netSSID(nextP).length() > 0) break;
-      nextP = (nextP % 3) + 1;
+    ScannedSavedNet matches[6];
+    int matchCount = findAvailableSavedProfiles(matches, 6);
+    bool connected = false;
+
+    if (matchCount > 0) {
+      logf("[NET] Reconnect: %d saved network(s) available in scan. Attempting...", matchCount);
+      for (int i = 0; i < matchCount; i++) {
+        int p = matches[i].profile;
+        if (tryConnectProfile(p, 7000)) {
+          connected = true;
+          break;
+        }
+      }
     }
-    String s = netSSID(nextP);
-    logf("[NET] Retrying Wi-Fi with profile #%d (%s) (retry interval: %us)...",
-         nextP, s.c_str(), (unsigned)retrySec);
-    beginSta(nextP);
+
+    if (!connected && WiFi.status() != WL_CONNECTED) {
+      // Fallback: rotate profile
+      int maxProfiles = 3;
+      if (cfg["wifi"]["nets"].is<JsonArray>()) {
+        int arrSize = cfg["wifi"]["nets"].as<JsonArray>().size();
+        if (arrSize > maxProfiles) maxProfiles = arrSize;
+      }
+      int nextP = (netActiveProfile % maxProfiles) + 1;
+      for (int i = 0; i < maxProfiles; i++) {
+        if (netSSID(nextP).length() > 0) break;
+        nextP = (nextP % maxProfiles) + 1;
+      }
+      String s = netSSID(nextP);
+      logf("[NET] Scan found no saved networks. Retrying profile #%d (%s)...",
+           nextP, s.c_str());
+      beginSta(nextP);
+    }
   }
 }
 
@@ -373,13 +497,13 @@ int httpGet(const String& url, std::function<bool(Stream&)> cb, const char* hNam
     http.useHTTP10(true);
     http.setTimeout(5000);
     http.setConnectTimeout(4000);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     http.setUserAgent(browserUA ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
                                 : "EmoDesk/1.0 (ESP32)");
     if (hName && hVal) http.addHeader(hName, hVal);
     code = http.GET();
     if (code == 200 && cb) {
-      http.getStream().setTimeout(4000);
+      http.getStream().setTimeout(8000);
       if (!cb(http.getStream())) code = -2;
     }
     http.end();
@@ -396,13 +520,27 @@ int httpGet(const String& url, std::function<bool(Stream&)> cb, const char* hNam
 
 bool httpJson(const String& url, JsonDocument& doc, JsonDocument* filter, const char* hName, const char* hVal, bool browserUA) {
   bool ok = false;
-  httpGet(url, [&](Stream& s) {
-    DeserializationError e = filter ? deserializeJson(doc, s, DeserializationOption::Filter(*filter))
-                                    : deserializeJson(doc, s);
-    if (e) logf("JSON error: %s", e.c_str());
-    ok = !e;
-    return ok;
-  }, hName, hVal, browserUA);
+  DeserializationError lastErr = DeserializationError::Ok;
+  int attempts = 0;
+  do {
+    if (attempts > 0) {
+      // Transient truncated read (e.g. Render cold-start): wait briefly then retry once
+      logf("JSON IncompleteInput from %s — retrying in 2s", url.substring(0, min((int)url.length(), 60)).c_str());
+      delay(2000);
+      doc.clear();
+    }
+    ok = false;
+    lastErr = DeserializationError::Ok;
+    httpGet(url, [&](Stream& s) {
+      s.setTimeout(attempts > 0 ? 12000 : 8000);  // extra time on retry
+      lastErr = filter ? deserializeJson(doc, s, DeserializationOption::Filter(*filter))
+                       : deserializeJson(doc, s);
+      if (lastErr) logf("JSON error: %s", lastErr.c_str());
+      ok = !lastErr;
+      return ok;
+    }, hName, hVal, browserUA);
+    attempts++;
+  } while (!ok && lastErr == DeserializationError::IncompleteInput && attempts < 2);
   return ok;
 }
 

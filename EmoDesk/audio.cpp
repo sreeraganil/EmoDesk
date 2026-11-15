@@ -16,8 +16,22 @@ volatile uint32_t vizStamp = 0;
 static uint8_t vizPos = 0;
 static volatile int32_t gainQ = 1200;   // Q12 master gain
 static volatile int32_t rampQ = 4096;   // Q12 alarm ramp
-static bool i2sOk = false, ampState = false;
+static volatile uint8_t curMode = AUDIO_OFF;
+static uint8_t activeMode = AUDIO_OFF;
+static int curBuzPin = PIN_BUZZER, attachedBuzPin = -1;
+static bool i2sOk = false, ampState = false, pwmAttached = false;
 static uint32_t lastActive = 0;
+
+static const char* const MODE_NAMES[] = {"off", "buzzer", "active", "speaker"};
+static bool validBuzPin(int p) { return p == 1 || p == 2 || p == 6 || p == 7 || p == 10; }
+static uint8_t parseAudioMode(const char* s, bool legacyInstalled) {
+  if (!s || !*s) return legacyInstalled ? AUDIO_SPEAKER : AUDIO_OFF;
+  if (!strcasecmp(s, "buzzer") || !strcasecmp(s, "passive")) return AUDIO_BUZZER;
+  if (!strcasecmp(s, "active")) return AUDIO_ACTIVE;
+  if (!strcasecmp(s, "speaker") || !strcasecmp(s, "i2s")) return AUDIO_SPEAKER;
+  if (!strcasecmp(s, "off") || !strcasecmp(s, "none")) return AUDIO_OFF;
+  return legacyInstalled ? AUDIO_SPEAKER : AUDIO_OFF;
+}
 static int16_t sinTab[256];
 static uint32_t ph = 0, rng = 2463534242UL;
 
@@ -47,7 +61,36 @@ static inline void put(int32_t s) {
   if (on >= 512) flushOut();
 }
 
+static bool interrupted() { return abortReq; }
+static bool newWork() { return abortReq || uxQueueMessagesWaiting(aq) > 0; }
+
+static void vizPush(int16_t sample) {
+  for (int i = 0; i < 4; i++) vizBuf[(vizPos++) & 127] = sample;
+  vizStamp = millis();
+}
+
+static void buzWaitMs(uint32_t ms, int16_t vizAmp) {
+  uint32_t elapsed = 0;
+  while (elapsed < ms && !interrupted()) {
+    uint32_t step = ms - elapsed;
+    if (step > 12) step = 12;
+    delay(step);
+    elapsed += step;
+    if (vizAmp) vizPush((elapsed & 1) ? vizAmp : -vizAmp);
+    else { vizBuf[(vizPos++) & 127] = 0; vizStamp = millis(); }
+  }
+}
+
 static void silence(uint32_t n) {
+  if (activeMode != AUDIO_SPEAKER) {
+    if (attachedBuzPin >= 0) {
+      if (activeMode == AUDIO_BUZZER && pwmAttached) ledcWrite(attachedBuzPin, 0);
+      else if (activeMode == AUDIO_ACTIVE) digitalWrite(attachedBuzPin, LOW);
+    }
+    uint32_t ms = (uint32_t)((uint64_t)n * 1000 / SAMPLE_RATE);
+    if (ms) buzWaitMs(ms, 0);
+    return;
+  }
   for (uint32_t i = 0; i < n; i++) {
     if ((i & 255) == 0 && abortReq) return;
     put(0);
@@ -59,11 +102,68 @@ static inline int32_t rnd16() {
   return (int16_t)(rng & 0xFFFF);
 }
 
-static bool interrupted() { return abortReq; }
-static bool newWork() { return abortReq || uxQueueMessagesWaiting(aq) > 0; }
-
 // ------------------------------------------------------------------ synth
+static void toneBuzzer(int f0, int f1, uint32_t ms, uint8_t wave, uint8_t vol) {
+  if (attachedBuzPin < 0 || !pwmAttached) return;
+  bool decay = wave & DECAY;
+  wave &= 0x7F;
+  if (f0 <= 0 || vol == 0 || gainQ == 0) {
+    ledcWrite(attachedBuzPin, 0);
+    buzWaitMs(ms, 0);
+    return;
+  }
+  int32_t masterQ = (gainQ * rampQ) >> 12;
+  int32_t baseDuty = (512L * vol * masterQ) / (210L * 3276L);
+  if (baseDuty < 4 && masterQ > 0) baseDuty = 4;
+  if (baseDuty > 512) baseDuty = 512;
+
+  uint32_t elapsed = 0;
+  int lastFreq = -1;
+  uint32_t lastDuty = 0;
+  while (elapsed < ms && !interrupted()) {
+    uint32_t chunk = ms - elapsed;
+    if (chunk > 10) chunk = 10;
+    uint32_t pos = elapsed + chunk / 2;
+    int32_t f = f0 + (int64_t)(f1 - f0) * (int32_t)pos / (int32_t)(ms ? ms : 1);
+    if (wave == W_NOISE) {
+      int lo = f < 220 ? 220 : f;
+      f = lo + (int)(esp_random() % (lo + 180));
+    }
+    f = constrain(f, 90, 12000);
+    int32_t envQ = 4096;
+    if (decay && ms > 0) envQ = 4096L * (int32_t)(ms - elapsed) / (int32_t)ms;
+    uint32_t duty = (uint32_t)((baseDuty * envQ) >> 12);
+    if (duty == 0 && envQ > 256 && baseDuty > 0) duty = 1;
+    if (f != lastFreq) { ledcChangeFrequency(attachedBuzPin, (uint32_t)f, 10); lastFreq = f; }
+    if (duty != lastDuty) { ledcWrite(attachedBuzPin, duty); lastDuty = duty; }
+    delay(chunk);
+    int16_t v = (int16_t)((duty * 52) > 28000 ? 28000 : (duty * 52));
+    vizPush(((elapsed / 10) & 1) ? v : -v);
+    elapsed += chunk;
+  }
+  ledcWrite(attachedBuzPin, 0);
+}
+
+static void toneActive(int f0, uint32_t ms, uint8_t vol) {
+  if (attachedBuzPin < 0) return;
+  if (f0 <= 0 || vol == 0 || gainQ == 0) {
+    digitalWrite(attachedBuzPin, LOW);
+    buzWaitMs(ms, 0);
+    return;
+  }
+  uint32_t onMs = ms < 10 ? 10 : (ms > 28 ? (ms * 82) / 100 : ms);
+  if (onMs < 18 && ms > 28) onMs = 18;
+  uint32_t offMs = (ms > onMs) ? (ms - onMs) : 0;
+  digitalWrite(attachedBuzPin, HIGH);
+  buzWaitMs(onMs, (int16_t)min<int32_t>(28000, gainQ * 7));
+  digitalWrite(attachedBuzPin, LOW);
+  if (offMs && !interrupted()) buzWaitMs(offMs, 0);
+}
+
 static void tone(int f0, int f1, uint32_t ms, uint8_t wave, uint8_t vol) {
+  if (activeMode == AUDIO_BUZZER) { toneBuzzer(f0, f1, ms, wave, vol); return; }
+  if (activeMode == AUDIO_ACTIVE) { toneActive(f0, ms, vol); return; }
+  if (activeMode != AUDIO_SPEAKER) return;
   bool decay = wave & DECAY;
   wave &= 0x7F;
   uint32_t n = ms * SAMPLE_RATE / 1000;
@@ -240,6 +340,7 @@ static void playRtttl(const char* p) {
 
 // ------------------------------------------------------------------ WAV
 static void playWav(const char* path) {
+  if (activeMode != AUDIO_SPEAKER) { logf("audio: WAV requires speaker mode"); return; }
   File f = LittleFS.open(path, "r");
   if (!f) { logf("audio: no file %s", path); return; }
   char id[4];
@@ -303,51 +404,53 @@ class SamOut : public AudioOutput {
 
 static void say(const char* text) {
 #if ENABLE_TTS
-  SamOut out;
-  ESP8266SAM sam;
-  LOCK();
-  String vs = cfg["audio"]["voice"] | "sam";
-  int sp = cfg["audio"]["speed"] | 0, pi = cfg["audio"]["pitch"] | 0;
-  UNLOCK();
-  const char* v = vs.c_str();
-  if (!strcmp(v, "elf")) sam.SetVoice(ESP8266SAM::VOICE_ELF);
-  else if (!strcmp(v, "robot")) sam.SetVoice(ESP8266SAM::VOICE_ROBOT);
-  else if (!strcmp(v, "stuffy")) sam.SetVoice(ESP8266SAM::VOICE_STUFFY);
-  else if (!strcmp(v, "oldlady")) sam.SetVoice(ESP8266SAM::VOICE_OLDLADY);
-  else if (!strcmp(v, "et")) sam.SetVoice(ESP8266SAM::VOICE_ET);
-  else sam.SetVoice(ESP8266SAM::VOICE_SAM);
-  sam.SetSpeed(sp > 0 ? sp : 95);
-  sam.SetPitch(pi > 0 ? pi : 64);
-  speaking = true;
-  char chunk[124];
-  const char* p = text;
-  while (*p && !interrupted()) {
-    while (*p == ' ') p++;
-    int len = strlen(p), take = len;
-    if (len > 120) {
-      take = 120;
-      for (int i = 120; i > 40; i--) if (p[i] == ' ' || p[i] == '.' || p[i] == ',') { take = i; break; }
+  if (activeMode == AUDIO_SPEAKER) {
+    SamOut out;
+    ESP8266SAM sam;
+    LOCK();
+    String vs = cfg["audio"]["voice"] | "sam";
+    int sp = cfg["audio"]["speed"] | 0, pi = cfg["audio"]["pitch"] | 0;
+    UNLOCK();
+    const char* v = vs.c_str();
+    if (!strcmp(v, "elf")) sam.SetVoice(ESP8266SAM::VOICE_ELF);
+    else if (!strcmp(v, "robot")) sam.SetVoice(ESP8266SAM::VOICE_ROBOT);
+    else if (!strcmp(v, "stuffy")) sam.SetVoice(ESP8266SAM::VOICE_STUFFY);
+    else if (!strcmp(v, "oldlady")) sam.SetVoice(ESP8266SAM::VOICE_OLDLADY);
+    else if (!strcmp(v, "et")) sam.SetVoice(ESP8266SAM::VOICE_ET);
+    else sam.SetVoice(ESP8266SAM::VOICE_SAM);
+    sam.SetSpeed(sp > 0 ? sp : 95);
+    sam.SetPitch(pi > 0 ? pi : 64);
+    speaking = true;
+    char chunk[124];
+    const char* p = text;
+    while (*p && !interrupted()) {
+      while (*p == ' ') p++;
+      int len = strlen(p), take = len;
+      if (len > 120) {
+        take = 120;
+        for (int i = 120; i > 40; i--) if (p[i] == ' ' || p[i] == '.' || p[i] == ',') { take = i; break; }
+      }
+      int k = 0;
+      for (int i = 0; i < take && k < 122; i++) chunk[k++] = toupper((unsigned char)p[i]);
+      chunk[k] = 0;
+      if (k) sam.Say(&out, chunk);
+      p += take;
+      tone(0, 0, 60, 0, 0);
     }
-    int k = 0;
-    for (int i = 0; i < take && k < 122; i++) chunk[k++] = toupper((unsigned char)p[i]);
-    chunk[k] = 0;
-    if (k) sam.Say(&out, chunk);
-    p += take;
-    tone(0, 0, 60, 0, 0);
+    speaking = false;
+    return;
   }
-  speaking = false;
-#else
-  // No TTS library: robot babble with one blip per word
+#endif
+  // Buzzer / non-TTS fallback: cute robot babble with one blip per word
   speaking = true;
   for (const char* p = text; *p && !interrupted(); p++) {
     if (*p == ' ' || p == text) {
-      int f = 500 + esp_random() % 500;
-      tone(f, f + 150 - (int)(esp_random() % 300), 70, curWave, 160);
-      tone(0, 0, 30, 0, 0);
+      int f = 650 + esp_random() % 600;
+      tone(f, f + 150 - (int)(esp_random() % 300), 55, curWave, 160);
+      tone(0, 0, 28, 0, 0);
     }
   }
   speaking = false;
-#endif
 }
 
 // ------------------------------------------------------------------ chirps
@@ -382,6 +485,19 @@ static void chirp(int e) {
 // ------------------------------------------------------------------ continuous
 static void noiseGen(int type, uint32_t ms) {
   contin = true;
+  if (activeMode != AUDIO_SPEAKER) {
+    uint32_t start = millis();
+    while (!newWork() && (!ms || millis() - start < ms)) {
+      if (activeMode == AUDIO_BUZZER && type == 3 && (esp_random() & 15) == 0) {
+        int f = 1400 + (int)(esp_random() % 1400);
+        toneBuzzer(f, f * 7 / 10, 18, W_SINE | DECAY, 65);
+      } else {
+        delay(20);
+      }
+    }
+    contin = false;
+    return;
+  }
   uint32_t total = ms ? (uint32_t)((uint64_t)ms * SAMPLE_RATE / 1000) : 0xFFFFFFF0UL;
   uint32_t fade = SAMPLE_RATE * 8;
   int32_t b0 = 0, b1 = 0, b2 = 0, brown = 0, dropEnv = 0;
@@ -420,6 +536,22 @@ static void noiseGen(int type, uint32_t ms) {
 static void metronome(int bpm) {
   if (bpm < 20) return;
   contin = true;
+  if (activeMode != AUDIO_SPEAKER) {
+    uint32_t beat = 0, beatMs = 60000UL / (uint32_t)bpm;
+    while (!newWork()) {
+      uint32_t t0 = millis();
+      metroBeat = t0;
+      int f = beat % 4 == 0 ? 1800 : 1200;
+      tone(f, f, 15, W_SQ, beat % 4 == 0 ? 170 : 120);
+      while (!newWork() && millis() - t0 < beatMs) {
+        uint32_t rem = beatMs - (millis() - t0);
+        delay(rem > 12 ? 12 : rem);
+      }
+      beat++;
+    }
+    contin = false;
+    return;
+  }
   uint32_t period = (uint32_t)SAMPLE_RATE * 60 / bpm, beat = 0, click = SAMPLE_RATE * 15 / 1000;
   while (!newWork()) {
     metroBeat = millis();
@@ -466,19 +598,71 @@ static void amp(bool onOff) {
   if (onOff) delay(8);
 }
 
+static void hwRelease() {
+  if (i2sOk) {
+    i2s.end();
+    i2sOk = false;
+  }
+  if (ampState) amp(false);
+  if (attachedBuzPin >= 0) {
+    if (pwmAttached) {
+      ledcWrite(attachedBuzPin, 0);
+      ledcDetach(attachedBuzPin);
+      pwmAttached = false;
+    }
+    pinMode(attachedBuzPin, OUTPUT);
+    digitalWrite(attachedBuzPin, LOW);
+    attachedBuzPin = -1;
+  }
+  activeMode = AUDIO_OFF;
+}
+
+static bool hwPrepare(uint8_t mode, int pin) {
+  if (activeMode == mode && (mode == AUDIO_SPEAKER || attachedBuzPin == pin)) {
+    return mode == AUDIO_SPEAKER ? i2sOk : true;
+  }
+  hwRelease();
+  if (mode == AUDIO_SPEAKER) {
+    pinMode(PIN_AMP_SD, OUTPUT);
+    digitalWrite(PIN_AMP_SD, LOW);
+    i2s.setPins(PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DIN);
+    i2sOk = i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+    if (!i2sOk) { logf("I2S init failed"); return false; }
+    activeMode = AUDIO_SPEAKER;
+    return true;
+  }
+  if (mode == AUDIO_BUZZER) {
+    attachedBuzPin = pin;
+    pwmAttached = ledcAttach(pin, 2000, 10);
+    if (!pwmAttached) {
+      logf("Buzzer PWM init failed on GPIO%d", pin);
+      attachedBuzPin = -1;
+      return false;
+    }
+    ledcWrite(pin, 0);
+    activeMode = AUDIO_BUZZER;
+    return true;
+  }
+  if (mode == AUDIO_ACTIVE) {
+    attachedBuzPin = pin;
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+    activeMode = AUDIO_ACTIVE;
+    return true;
+  }
+  return false;
+}
+
 static void audioTask(void*) {
   AMsg m;
   for (;;) {
     if (xQueueReceive(aq, &m, pdMS_TO_TICKS(250)) == pdTRUE) {
       abortReq = false;
       busy = true;
-      if (!i2sOk) {
-        i2s.setPins(PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DIN);
-        i2sOk = i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
-        if (!i2sOk) logf("I2S init failed");
-      }
-      if (i2sOk) {
-        amp(true);
+      uint8_t targetMode = curMode;
+      int targetPin = curBuzPin;
+      if (targetMode != AUDIO_OFF && hwPrepare(targetMode, targetPin)) {
+        if (activeMode == AUDIO_SPEAKER) amp(true);
         LOCK();
         curWave = themeWave();
         UNLOCK();
@@ -495,14 +679,24 @@ static void audioTask(void*) {
           case A_SPEC: if (m.s) playSpecTask(m.s); break;
         }
         silence(SAMPLE_RATE / 20);
-        flushOut();
+        if (activeMode == AUDIO_SPEAKER) flushOut();
+        else if (uxQueueMessagesWaiting(aq) == 0) { memset(vizBuf, 0, sizeof(vizBuf)); vizStamp = millis(); }
+      } else if (targetMode == AUDIO_OFF) {
+        hwRelease();
       }
       if (m.s) free(m.s);
       lastActive = millis();
       busy = uxQueueMessagesWaiting(aq) > 0;
     } else {
       gAudioStackFree = uxTaskGetStackHighWaterMark(NULL);
-      if (!ampState || millis() - lastActive <= 2000) continue;
+      if (curMode == AUDIO_OFF) {
+        if (activeMode != AUDIO_OFF) hwRelease();
+        continue;
+      }
+      if (activeMode != AUDIO_OFF && (curMode != activeMode || (activeMode != AUDIO_SPEAKER && curBuzPin != attachedBuzPin))) {
+        hwRelease();
+      }
+      if (activeMode != AUDIO_SPEAKER || !ampState || millis() - lastActive <= 2000) continue;
       silence(1024);
       flushOut();
       amp(false);
@@ -511,35 +705,82 @@ static void audioTask(void*) {
   }
 }
 
+#ifndef AUDIO_STACK
 #if ENABLE_TTS
 #define AUDIO_STACK 10240   // the SAM voice needs room
 #else
 #define AUDIO_STACK 6144
 #endif
+#endif
 static TaskHandle_t audioTaskH = nullptr;
 
-// The audio task (and its stack) only exists once a speaker is switched on.
+// The audio task (and its stack) only exists once an output device is enabled.
 static void audioEnsureTask() {
-  if (audioTaskH || !aq || gSafeMode || !audioInstalled()) return;
+  if (audioTaskH || !aq || gSafeMode || curMode == AUDIO_OFF) return;
   if (xTaskCreate(audioTask, "audio", AUDIO_STACK, nullptr, 3, &audioTaskH) != pdPASS) audioTaskH = nullptr;
 }
 
 void audioBegin() {
-  pinMode(PIN_AMP_SD, OUTPUT);
-  digitalWrite(PIN_AMP_SD, LOW);
   for (int i = 0; i < 256; i++) sinTab[i] = (int16_t)(sinf(i * 2 * PI / 256) * 30000);
   aq = xQueueCreate(8, sizeof(AMsg));
   audioApply();
+  if (curMode == AUDIO_SPEAKER || curMode == AUDIO_OFF) {
+    pinMode(PIN_AMP_SD, OUTPUT);
+    digitalWrite(PIN_AMP_SD, LOW);
+  }
+  if (curMode == AUDIO_BUZZER || curMode == AUDIO_ACTIVE) {
+    pinMode(curBuzPin, OUTPUT);
+    digitalWrite(curBuzPin, LOW);
+  }
 }
 
 void audioApply() {
+  LOCK();
   int v = cfg["audio"]["vol"] | 40;
+  bool inst = cfg["audio"]["installed"] | false;
+  String t = cfg["audio"]["type"] | "";
+  int bp = cfg["audio"]["buzPin"] | PIN_BUZZER;
+  UNLOCK();
   v = constrain(v, 0, 100);
   gainQ = (int32_t)v * v * 4096 / 10000 * 8 / 10;
+  uint8_t nm = parseAudioMode(t.c_str(), inst);
+  int np = validBuzPin(bp) ? bp : PIN_BUZZER;
+  if (nm != curMode || np != curBuzPin) {
+    audioStop();
+    curMode = nm;
+    curBuzPin = np;
+  }
   audioEnsureTask();
 }
 
-bool audioInstalled() { return cfg["audio"]["installed"] | false; }
+uint8_t audioMode() { return curMode; }
+const char* audioModeName() { return MODE_NAMES[curMode < 4 ? curMode : 0]; }
+void audioSetMode(const char* mode) {
+  uint8_t m = parseAudioMode(mode, false);
+  LOCK();
+  cfg["audio"]["type"] = MODE_NAMES[m];
+  cfg["audio"]["installed"] = (m != AUDIO_OFF);
+  UNLOCK();
+  audioApply();
+  markDirty(DIRTY_CFG);
+}
+int audioBuzzerPin() { return curBuzPin; }
+void audioSetBuzzerPin(int pin) {
+  int np = validBuzPin(pin) ? pin : PIN_BUZZER;
+  LOCK();
+  cfg["audio"]["buzPin"] = np;
+  UNLOCK();
+  audioApply();
+  markDirty(DIRTY_CFG);
+}
+bool audioInstalled() { return curMode != AUDIO_OFF; }
+void audioSleep() {
+  audioStop();
+  for (int i = 0; i < 6 && busy; i++) delay(10);
+  hwRelease();
+  pinMode(PIN_AMP_SD, OUTPUT);
+  digitalWrite(PIN_AMP_SD, LOW);
+}
 bool audioMuted() { return cfg["audio"]["muted"] | false; }
 void audioSetMuted(bool m) { LOCK(); cfg["audio"]["muted"] = m; UNLOCK(); markDirty(DIRTY_CFG); if (m) audioStop(); }
 int audioVolume() { return cfg["audio"]["vol"] | 40; }

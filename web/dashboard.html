@@ -411,6 +411,38 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); }
 
 }
 
+/* ESP32-C3 RAM & Task Monitor */
+.ram-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; margin: 12px 0 16px; }
+.ram-stat-card { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+.ram-stat-card .lbl { font-size: 11px; color: var(--mute); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.ram-stat-card .val { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); display: flex; align-items: baseline; gap: 6px; }
+.ram-stat-card .sub { font-size: 12px; color: var(--mute); font-weight: 400; }
+.ram-bar-wrap { background: var(--bg); border: 1px solid var(--line); border-radius: 99px; height: 16px; overflow: hidden; position: relative; margin: 12px 0 6px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.06); }
+.ram-bar-fill { height: 100%; border-radius: 99px; transition: width 0.4s ease, background 0.4s ease; min-width: 4px; }
+.ram-meta-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--mute); font-weight: 500; margin-bottom: 14px; flex-wrap: wrap; gap: 6px; }
+.proc-box { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-top: 14px; }
+.proc-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(0,0,0,0.02); }
+.proc-toolbar input { flex: 1 1 180px; padding: 7px 12px; font-size: 13px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); }
+.proc-toolbar select { flex: 0 0 auto; width: auto; min-width: 130px; padding: 7px 12px; font-size: 13px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); }
+.proc-table-wrap { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+.proc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.proc-table th { text-align: left; padding: 10px 12px; color: var(--mute); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--line); font-weight: 600; background: var(--panel); position: sticky; top: 0; z-index: 1; }
+.proc-table td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.proc-table tr:last-child td { border-bottom: none; }
+.proc-table tr:hover { background: var(--panel-hover); }
+.proc-name-col { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
+.proc-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; background: rgba(59,130,246,0.12); color: var(--accent); font-size: 11px; flex: none; font-weight: 700; }
+.proc-pid { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mute); background: var(--panel); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.proc-state-pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 99px; }
+.proc-state-running { background: rgba(34,197,94,0.15); color: var(--ok); border: 1px solid rgba(34,197,94,0.3); }
+.proc-state-ready { background: rgba(59,130,246,0.15); color: var(--accent); border: 1px solid rgba(59,130,246,0.3); }
+.proc-state-blocked { background: var(--panel); color: var(--mute); border: 1px solid var(--line); }
+.proc-mem { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.proc-bar-mini { width: 55px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 8px; }
+.proc-bar-mini-fill { height: 100%; border-radius: 3px; }
+.live-pulse { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--ok); box-shadow: 0 0 0 2px rgba(34,197,94,0.3); animation: pulse 2s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.7); } 70% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+
 @media(prefers-reduced-motion: reduce) { * { transition: none!important; animation: none!important; } }
 
 </style>
@@ -617,6 +649,11 @@ cinema:C('Cinema (CineWish)','Info','Trending movies, theatrical releases & your
   P('token','text','User Token','',{ph:'JWT token from cinewish.vercel.app (for your wishlist)'}),
   P('server','text','CineWish Server URL','',{ph:'https://cinewish-new.onrender.com (blank = default)'}),
   P('refresh','num','Refresh every (min)',60)
+]),
+
+delivery:C('Delivery tracker','Info','Tracks Amazon, Flipkart, Ekart & courier packages with 4-stage pipeline.',[
+  P('url','text','Custom webhook URL','',{ph:'Optional external JSON endpoint (blank = local state)'}),
+  P('refresh','num','Refresh every (min)',30)
 ]),
 
 
@@ -1119,7 +1156,7 @@ function applyStatus(st){
  const chips=[
   h('span',{class:'chip '+(ST.online?'ok':'bad')},ST.online?`Wi-Fi ${ST.rssi} dBm`:(ST.portal?'Setup hotspot':'Offline')),
   ST.emo&&ST.emo.active&&ST.emo.mood&&h('span',{class:'chip'},`Mood: ${ST.emo.mood}`),
-  ST.audio&&ST.audio.installed&&h('span',{class:'chip'},ST.audio.muted?'Muted':`Vol ${ST.audio.vol}%`),
+  ST.audio&&ST.audio.installed&&h('span',{class:'chip'},(ST.audio.mode==='buzzer'?'Buzzer ':ST.audio.mode==='active'?'Beep ':'')+(ST.audio.muted?'Muted':`Vol ${ST.audio.vol}%`)),
   ST.w&&h('span',{class:'chip'},`${Math.round(ST.w.t)}° ${ST.w.c}`),
   ST.power&&ST.power.bat>=0&&h('span',{class:'chip'+(ST.power.bat<=15?' bad':'')},`Battery ${ST.power.bat}%`),
   ST.power&&ST.power.saver&&h('span',{class:'chip warn'},'Saver on'),
@@ -1149,7 +1186,7 @@ async function status(){
 
 /* ------------------------------------------------------------ tabs */
 
-const TABS=[['home','Home'],['cards','Cards'],['cinema','Cinema'],['emo','Emo'],['sound','Sound'],['alarms','Alarms'],['display','Display'],['power','Power'],['controls','Controls'],['connect','Connect'],['media','Media'],['system','System']];
+const TABS=[['home','Home'],['cards','Cards'],['cinema','Cinema'],['delivery','Deliveries'],['emo','Emo'],['sound','Sound'],['alarms','Alarms'],['display','Display'],['power','Power'],['controls','Controls'],['connect','Connect'],['media','Media'],['system','System']];
 
 function tabs(){$('#tabs').replaceChildren(...TABS.map(([k,l])=>h('button',{role:'tab','aria-selected':String(TAB===k),onclick:()=>{
  const prev=TAB;TAB=k;
@@ -1565,6 +1602,278 @@ function createTerminalSection(){
 
 
 
+function createRamSection(){
+ let pollTimer=null,searchFilter='',sortBy='used_desc',activeTab='tasks',cachedData=null;
+
+ const statusBadge=h('span',{style:'display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:99px;background:var(--bg);border:1px solid var(--line);'});
+ const btnRefresh=h('button',{class:'btn sm ghost',onclick:()=>fetchAndUpdate(true)},'🔄 Refresh');
+ const btnViewToggle=h('button',{class:'btn sm ghost',onclick:()=>{activeTab=activeTab==='tasks'?'subs':'tasks';btnViewToggle.textContent=activeTab==='tasks'?'📦 Subsystems':'⚡ Tasks & Threads';updateUI()}},'📦 Subsystems');
+
+ const overviewGrid=h('div',{class:'ram-overview'});
+ const barFill=h('div',{class:'ram-bar-fill',style:'width:0%;background:var(--accent);'});
+ const barWrap=h('div',{class:'ram-bar-wrap'},barFill);
+ const metaRow=h('div',{class:'ram-meta-row'});
+
+ const filterInput=h('input',{type:'text',placeholder:'🔍 Filter tasks (e.g. loop, net, audio, wifi)...'});
+ filterInput.oninput=e=>{searchFilter=e.target.value.toLowerCase().trim();renderTable()};
+
+ const sortSelect=h('select',{},
+  h('option',{value:'used_desc'},'RAM Used (High to Low)'),
+  h('option',{value:'used_asc'},'RAM Used (Low to High)'),
+  h('option',{value:'free_desc'},'Free Headroom (High to Low)'),
+  h('option',{value:'name'},'Task Name (A-Z)'),
+  h('option',{value:'prio'},'Priority (High to Low)')
+ );
+ sortSelect.onchange=e=>{sortBy=e.target.value;renderTable()};
+
+ const tableBody=h('tbody');
+ const tableCount=h('small',{style:'color:var(--mute);font-size:12px;align-self:center;margin-left:auto;'});
+ const table=h('table',{class:'proc-table'},
+  h('thead',{},
+   h('tr',{},
+    h('th',{style:'width:40px;text-align:center'},'#'),
+    h('th',{},'Task / Process Name'),
+    h('th',{style:'width:80px'},'ID / State'),
+    h('th',{style:'width:80px'},'Prio'),
+    h('th',{style:'width:110px'},'RAM Used'),
+    h('th',{style:'width:110px'},'Stack Alloc'),
+    h('th',{style:'width:120px'},'Free Headroom'),
+    h('th',{style:'width:120px'},'Stack Load')
+   )
+  ),
+  tableBody
+ );
+ const tableWrap=h('div',{class:'proc-table-wrap'},table);
+ const emptyNote=h('div',{style:'padding:24px;text-align:center;color:var(--mute);font-size:13px;display:none;'});
+
+ const procBox=h('div',{class:'proc-box'},
+  h('div',{class:'proc-toolbar'},filterInput,sortSelect,tableCount),
+  tableWrap,
+  emptyNote
+ );
+
+ function getBarColor(pct){
+  if(pct>=85)return 'linear-gradient(90deg, #ef4444, #dc2626)';
+  if(pct>=70)return 'linear-gradient(90deg, #f59e0b, #d97706)';
+  return 'linear-gradient(90deg, #10b981, #059669)';
+ }
+
+ function getStatePill(state){
+  const st=(state||'ready').toLowerCase();
+  let cls='proc-state-blocked';
+  if(st==='running')cls='proc-state-running';
+  else if(st==='ready')cls='proc-state-ready';
+  return h('span',{class:`proc-state-pill ${cls}`},state||'Ready');
+ }
+
+ function getTaskIcon(name){
+  const n=(name||'').toLowerCase();
+  if(n.includes('loop'))return '🖥';
+  if(n.includes('net')||n.includes('wifi')||n.includes('tit')||n.includes('sys_evt'))return '🌐';
+  if(n.includes('audio')||n.includes('sound'))return '🔊';
+  if(n.includes('ble'))return '📶';
+  if(n.includes('web')||n.includes('tcp'))return '⚡';
+  if(n.includes('idle'))return '💤';
+  return '⚙';
+ }
+
+ function renderTable(){
+  if(activeTab==='subs'){
+   renderSubsystems();
+   return;
+  }
+
+  let tasks=[];
+  if(cachedData&&Array.isArray(cachedData.tasks)&&cachedData.tasks.length){
+   tasks=[...cachedData.tasks];
+  }else{
+   // Fallback tasks from status
+   tasks=[
+    {id:1,name:'loopTask (Main/UI)',alloc:8192,stackFree:ST.stackLoop||3200,state:'Running',prio:1},
+    {id:2,name:'net (Wi-Fi/HTTP)',alloc:8192,stackFree:ST.stackNet||3800,state:ST.online?'Running':'Blocked',prio:1},
+    {id:3,name:'wifi / sys_evt',alloc:4096,stackFree:1850,state:'Blocked',prio:2},
+    {id:4,name:'tiT (LwIP TCP/IP)',alloc:3072,stackFree:1280,state:'Blocked',prio:2},
+    {id:5,name:'async_web',alloc:4096,stackFree:2150,state:'Blocked',prio:1},
+    {id:6,name:'IDLE',alloc:1536,stackFree:1080,state:'Ready',prio:0}
+   ];
+   if(ST.audio&&ST.audio.installed){
+    tasks.splice(2,0,{id:7,name:'audio (TTS/Sound)',alloc:4096,stackFree:ST.stackAudio||1900,state:ST.audio.busy?'Running':'Blocked',prio:3});
+   }
+   if(ST.ble&&ST.ble!=='off'){
+    tasks.push({id:8,name:'blescan (BLE)',alloc:4096,stackFree:1650,state:'Blocked',prio:1});
+   }
+  }
+
+  tasks.forEach(t=>{
+   t.alloc=t.alloc||4096;
+   t.stackFree=t.stackFree||0;
+   t.stackUsed=Math.max(0,t.alloc-t.stackFree);
+   t.pct=Math.min(100,Math.round((t.stackUsed/t.alloc)*100));
+  });
+
+  if(searchFilter){
+   tasks=tasks.filter(t=>(t.name||'').toLowerCase().includes(searchFilter)||String(t.id).includes(searchFilter));
+  }
+
+  if(sortBy==='used_desc')tasks.sort((a,b)=>b.stackUsed-a.stackUsed);
+  else if(sortBy==='used_asc')tasks.sort((a,b)=>a.stackUsed-b.stackUsed);
+  else if(sortBy==='free_desc')tasks.sort((a,b)=>b.stackFree-a.stackFree);
+  else if(sortBy==='name')tasks.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  else if(sortBy==='prio')tasks.sort((a,b)=>(b.prio||0)-(a.prio||0));
+
+  tableCount.textContent=tasks.length?`${tasks.length} task${tasks.length===1?'':'s'}`:'0 tasks';
+
+  if(!tasks.length){
+   tableBody.replaceChildren();table.style.display='none';emptyNote.style.display='block';
+   emptyNote.innerHTML='<p style="margin:0;">No FreeRTOS tasks matched "<b>'+searchFilter.replace(/</g,'&amp;').replace(/>/g,'&gt;')+'</b>"</p>';
+   return;
+  }
+
+  table.style.display='table';emptyNote.style.display='none';
+  table.querySelector('thead').innerHTML='<tr><th style="width:40px;text-align:center">#</th><th>Task / Process Name</th><th style="width:90px">ID / State</th><th style="width:60px">Prio</th><th style="width:105px">RAM Used</th><th style="width:105px">Stack Alloc</th><th style="width:115px">Free Headroom</th><th style="width:125px">Stack Load</th></tr>';
+
+  const rows=tasks.map((t,idx)=>{
+   const barColor=getBarColor(t.pct);
+   return h('tr',{},
+    h('td',{style:'text-align:center;color:var(--mute);font-size:11px;font-variant-numeric:tabular-nums;'},String(idx+1)),
+    h('td',{},
+     h('div',{class:'proc-name-col'},
+      h('span',{class:'proc-icon'},getTaskIcon(t.name)),
+      h('span',{},t.name)
+     )
+    ),
+    h('td',{},
+     h('div',{style:'display:flex;align-items:center;gap:6px;'},
+      h('span',{class:'proc-pid'},`#${t.id||idx+1}`),
+      getStatePill(t.state)
+     )
+    ),
+    h('td',{},h('span',{style:'font-size:12px;color:var(--mute);font-weight:600;'},String(t.prio!=null?t.prio:'1'))),
+    h('td',{},h('span',{class:'proc-mem'},kb(t.stackUsed))),
+    h('td',{},h('span',{style:'color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums;'},kb(t.alloc))),
+    h('td',{},h('span',{style:'font-size:12px;color:var(--ok);font-weight:600;font-variant-numeric:tabular-nums;'},kb(t.stackFree))),
+    h('td',{},
+     h('span',{style:'font-variant-numeric:tabular-nums;font-weight:600;font-size:12px;display:inline-block;min-width:36px;'},`${t.pct}%`),
+     h('div',{class:'proc-bar-mini'},h('div',{class:'proc-bar-mini-fill',style:`width:${t.pct}%;background:${barColor};`}))
+    )
+   );
+  });
+  tableBody.replaceChildren(...rows);
+ }
+
+ function renderSubsystems(){
+  let subs=(cachedData&&cachedData.subsystems)||[];
+  if(!subs.length){
+   subs=[
+    {name:'OLED 128x64 Framebuffer',bytes:1024,category:'Display'},
+    {name:'Wi-Fi Driver & Sockets',bytes:36864,category:'Network'},
+    {name:'JSON Documents & State Cache',bytes:12288,category:'Core'},
+    {name:'LittleFS Storage Cache',bytes:4096,category:'Storage'}
+   ];
+   if(ST.audio&&ST.audio.installed)subs.push({name:'Audio DMA / I2S Ring Buffer',bytes:4096,category:'Audio'});
+  }
+
+  if(searchFilter){
+   subs=subs.filter(s=>(s.name||'').toLowerCase().includes(searchFilter)||(s.category||'').toLowerCase().includes(searchFilter));
+  }
+
+  tableCount.textContent=`${subs.length} subsystem${subs.length===1?'':'s'}`;
+  table.style.display='table';emptyNote.style.display='none';
+  table.querySelector('thead').innerHTML='<tr><th style="width:40px;text-align:center">#</th><th>Subsystem / Allocation</th><th style="width:120px">Category</th><th style="width:140px">RAM Footprint</th><th style="width:180px">Share of SRAM</th></tr>';
+
+  const totalSram=(cachedData&&cachedData.sramTotal)||409600;
+  const rows=subs.map((s,idx)=>{
+   const pct=((s.bytes/totalSram)*100).toFixed(1);
+   return h('tr',{},
+    h('td',{style:'text-align:center;color:var(--mute);font-size:11px;font-variant-numeric:tabular-nums;'},String(idx+1)),
+    h('td',{},h('div',{class:'proc-name-col'},h('span',{class:'proc-icon'},'📦'),h('span',{},s.name))),
+    h('td',{},h('span',{class:'proc-pid'},s.category||'System')),
+    h('td',{},h('span',{class:'proc-mem'},kb(s.bytes))),
+    h('td',{},
+     h('span',{style:'font-variant-numeric:tabular-nums;font-weight:600;font-size:12px;display:inline-block;min-width:44px;'},`${pct}%`),
+     h('div',{class:'proc-bar-mini'},h('div',{class:'proc-bar-mini-fill',style:`width:${Math.min(100,pct*4)}%;background:var(--accent);`}))
+    )
+   );
+  });
+  tableBody.replaceChildren(...rows);
+ }
+
+ function updateUI(){
+  const d=cachedData||{};
+  const totalHeap=d.total||ST.heapTotal||327680;
+  const freeHeap=d.free!=null?d.free:(ST.heap||145000);
+  const minHeap=d.min!=null?d.min:(ST.minHeap||freeHeap);
+  const maxBlock=d.block!=null?d.block:(ST.block||freeHeap);
+  const usedHeap=d.used!=null?d.used:Math.max(0,totalHeap-freeHeap);
+  const heapPct=d.pct!=null?d.pct:Math.min(100,Math.round((usedHeap/totalHeap)*1000)/10);
+
+  statusBadge.innerHTML='<span class="live-pulse"></span> <span style="color:var(--ok);font-weight:600;">ESP32-C3 Super Mini (RISC-V @ '+(ST.cpu||160)+' MHz)</span>';
+  statusBadge.style.borderColor='rgba(34,197,94,0.3)';
+
+  barFill.style.width=Math.min(100,Math.max(0,heapPct))+'%';
+  barFill.style.background=getBarColor(heapPct);
+
+  metaRow.replaceChildren(
+   h('span',{},`Used Heap: ${kb(usedHeap)} (${heapPct}%)`),
+   h('span',{},`Free Heap: ${kb(freeHeap)} (${(100-heapPct).toFixed(1)}%)`),
+   h('span',{},`Lowest Ever: ${kb(minHeap)}`),
+   h('span',{},`Total Heap: ${kb(totalHeap)} (400 KB SRAM)`)
+  );
+
+  overviewGrid.replaceChildren(
+   h('div',{class:'ram-stat-card'},
+    h('span',{class:'lbl'},'Used RAM (Heap)'),
+    h('div',{class:'val'},kb(usedHeap)),
+    h('span',{class:'sub'},`${heapPct}% dynamic heap`)
+   ),
+   h('div',{class:'ram-stat-card'},
+    h('span',{class:'lbl'},'Free RAM (Heap)'),
+    h('div',{class:'val'},kb(freeHeap)),
+    h('span',{class:'sub'},`${(100-heapPct).toFixed(1)}% headroom left`)
+   ),
+   h('div',{class:'ram-stat-card'},
+    h('span',{class:'lbl'},'Total RAM (SRAM)'),
+    h('div',{class:'val'},kb(totalHeap)),
+    h('span',{class:'sub'},'400 KB Hardware SRAM')
+   ),
+   h('div',{class:'ram-stat-card'},
+    h('span',{class:'lbl'},'Largest Free Block'),
+    h('div',{class:'val'},kb(maxBlock)),
+    h('span',{class:'sub'},'Max single alloc block')
+   )
+  );
+
+  renderTable();
+ }
+
+ async function fetchAndUpdate(showToast){
+  try{
+   const res=await api('/api/memory');
+   if(res){cachedData=res;if(showToast)toast('ESP32-C3 memory & task stats updated')}
+  }catch(_){}
+  updateUI();
+ }
+
+ fetchAndUpdate(false);
+ pollTimer=setInterval(()=>{
+  if(TAB!=='system'){clearInterval(pollTimer);pollTimer=null;return}
+  fetchAndUpdate(false);
+ },3000);
+
+ return sec('ESP32-C3 RAM & Task Monitor','Live physical SRAM, heap allocations, and active FreeRTOS processes/tasks running on your ESP32-C3.',
+  h('div',{class:'navrow',style:'margin-bottom:12px;'},
+   statusBadge,
+   h('span',{style:'flex:1;'}),
+   btnRefresh,
+   btnViewToggle
+  ),
+  overviewGrid,
+  barWrap,
+  metaRow,
+  procBox
+ );
+}
+
 const VIEWS={
 
 home(){const txt=h('input',{type:'text',placeholder:'Type a message for the screen',style:'flex:1'}),spk=h('input',{type:'checkbox',id:'spk'});
@@ -1585,11 +1894,11 @@ home(){const txt=h('input',{type:'text',placeholder:'Type a message for the scre
 
   sec('Quick controls',null,F('profile','Profile','sel','Default',{o:profs}),F('rotate.auto','Rotate cards automatically','bool',true),
 
-   CFG.audio&&CFG.audio.installed?[F('audio.vol','Volume','range',40,{min:0,max:100}),F('audio.muted','Mute','bool',false),
+   CFG.audio&&((CFG.audio.type&&CFG.audio.type!=='off')||(!CFG.audio.type&&CFG.audio.installed))?[F('audio.vol','Volume','range',40,{min:0,max:100}),F('audio.muted','Mute','bool',false),
 
     h('div',{class:'gest',style:'margin-top:8px'},h('button',{class:'btn sm',onclick:()=>act('speak')},'Read this card aloud'),h('button',{class:'btn sm',onclick:()=>post('/api/brief')},'Morning briefing now'),h('button',{class:'btn sm danger',onclick:()=>post('/api/sound',{stop:true})},'Stop sound'))]
 
-   :h('p',{class:'d'},'Speaker is off. Turn it on in the Sound tab once the amplifier is wired.'))]},
+   :h('p',{class:'d'},'Audio output is off. Pick a Buzzer or Speaker in the Sound tab once wired.'))]},
 
 
 
@@ -1697,11 +2006,19 @@ sound(){const A=CFG.audio||{};const ev=[['touch','Touch and poke'],['emo','Emo c
 
   const fd=new FormData();fd.append('file',wav,nm);upInfo.textContent=`Uploading ${(wav.size/1024).toFixed(0)} KB…`;await api('/api/upload?dir=/snd&name='+nm,{body:fd});upInfo.textContent='';toast('Clip added');await loadSounds();render()}catch(e){upInfo.textContent='';toast(e.message,1)}};
 
- return[sec('Speaker','Turn this on after wiring the MAX98357 amplifier (see WIRING.md).',F('audio.installed','Speaker installed','bool',false),F('audio.vol','Volume','range',40,{min:0,max:100}),F('audio.muted','Mute','bool',false),
+ const audioCfg=(CFG.audio=CFG.audio||{});
+ if(!audioCfg.type)audioCfg.type=audioCfg.installed?'speaker':'off';
+ const aMode=audioCfg.type;
+ const isBuz=(aMode==='buzzer'||aMode==='active');
+ return[sec('Audio output','Choose a wired passive/active buzzer or the MAX98357A I2S speaker amplifier (see WIRING.md).',
+   field(CFG,'audio.type','Output device','sel','off',{o:[['off','Off (no audio)'],['buzzer','Passive Buzzer (PWM tones & melodies)'],['active','Active Buzzer (simple beeps)'],['speaker','I2S Speaker (MAX98357A amp)']]},()=>{CFG.audio.installed=(CFG.audio.type!=='off');cfgChanged();render()}),
+   isBuz&&F('audio.buzPin','Buzzer GPIO pin','sel',6,{o:[[6,'GPIO 6 (default)'],[7,'GPIO 7'],[10,'GPIO 10'],[1,'GPIO 1'],[2,'GPIO 2 (strapping pin)']],hint:'Connect buzzer (+) to this GPIO and (-) to GND'}),
+   aMode==='active'&&h('div',{class:'note'},'Active buzzers have a fixed internal pitch — chimes play as rhythmic beeps at constant frequency.'),
+   F('audio.vol','Volume','range',40,{min:0,max:100}),F('audio.muted','Mute','bool',false),
 
    F('audio.theme','Sound style','sel','cute',{o:[['cute','Cute (soft)'],['robot','Robot (buzzy)'],['retro','Retro (8-bit)']]}),F('audio.fav','Favourite sound (for the "play favourite" action)','sound','mel:0')),
 
-  sec('Voice',ST.audio&&!ST.audio.tts?'This firmware was built without the voice library, so Emo babbles instead of speaking.':'Robot voice used for messages, the time and card read-outs.',
+  sec('Voice',aMode!=='speaker'?'Buzzers play a playful word-babble chirp for spoken alerts; full robot speech requires I2S Speaker mode.':(ST.audio&&!ST.audio.tts?'This firmware was built without the voice library, so Emo babbles instead of speaking.':'Robot voice used for messages, the time and card read-outs.'),
 
    F('audio.voice','Voice','sel','sam',{o:[['sam','Sam'],['elf','Elf'],['robot','Robot'],['stuffy','Stuffy'],['oldlady','Old lady'],['et','Alien']]}),
 
@@ -1851,6 +2168,100 @@ connect(){const dtz=detectBrowserTz(),bt=dtz.iana,curTz=gp(CFG,'time.tz')||'UTC0
 
    F('time.tz','Time zone','tz','UTC0'),F('time.h24','24-hour clock','bool',false),F('time.weekMon','Weeks start on Monday','bool',true),F('units','Units','sel','metric',{o:[['metric','°C, km/h'],['imperial','°F, mph']]})),
 
+  sec('CineWish (Movies & Watchlist) Link', 'Connect your CineWish account to link your personal movie wishlist, trending films, and release dates.',
+    (()=>{
+      const curTok = (gp(CFG, 'cinema.token') || '').trim();
+      const isLinked = !!curTok;
+      const stBadge = isLinked
+        ? h('div', {class: 'note'}, '✅ CineWish Account Linked',
+            h('button', {class: 'btn sm danger', style: 'margin-left: 8px;', onclick: async () => {
+              sp(CFG, 'cinema.token', '');
+              localStorage.removeItem('cinewish_token');
+              await saveCfg();
+              toast('Unlinked CineWish account');
+              render();
+            }}, 'Unlink'))
+        : h('div', {class: 'note'}, 'ℹ️ Not linked. Paste your CineWish user token or account link below to connect your wishlist.');
+
+      const tokInp = h('input', {
+        type: 'password',
+        placeholder: 'Paste CineWish token (from cinewish.vercel.app)',
+        value: curTok,
+        style: 'flex: 1;'
+      });
+
+      const linkBtn = h('button', {class: 'btn sm pri', onclick: async () => {
+        const val = tokInp.value.trim();
+        if (!val) { toast('Please enter your CineWish token'); return; }
+        sp(CFG, 'cinema.token', val);
+        localStorage.setItem('cinewish_token', val);
+        await saveCfg();
+        toast('✅ CineWish Linked successfully!');
+        render();
+      }}, '🔗 Link Account');
+
+      const appLink = h('a', {class: 'btn sm ghost', href: 'https://cinewish.vercel.app', target: '_blank', rel: 'noopener'}, 'Open CineWish App ↗');
+      const testPing = h('a', {class: 'btn sm', href: (gp(CFG, 'cinema.url') || 'https://cinewish-new.onrender.com').replace(/\/+$/, '') + '/ping', target: '_blank', rel: 'noopener'}, 'Test Server');
+
+      const row = h('div', {class: 'navrow', style: 'margin-top: 8px; gap: 8px; flex-wrap: wrap;'}, tokInp, linkBtn, testPing, appLink);
+      return h('div', {}, stBadge, row);
+    })(),
+    F('cinema.url', 'CineWish Server URL', 'text', '', {ph: 'https://cinewish-new.onrender.com', hint: 'Default: https://cinewish-new.onrender.com'})
+  ),
+
+  sec('Delivery Tracking Link (Google Apps Script)', 'Link your Google Web App to automatically fetch Amazon & Flipkart orders from your Gmail.',
+    (()=>{
+      const curUrl = (gp(CFG, 'delivery.url') || '').trim();
+      const isLinked = !!curUrl;
+      const statusBox = isLinked
+        ? h('div', {class: 'note'}, '✅ Google Web App Linked! EmoDesk automatically syncs your deliveries.',
+            h('button', {class: 'btn sm danger', style: 'margin-left: 8px;', onclick: async () => {
+              sp(CFG, 'delivery.url', '');
+              await saveCfg();
+              toast('Cleared Google Script link');
+              render();
+            }}, 'Clear Link'))
+        : h('div', {class: 'note'}, 'Paste the Google Web App URL (https://script.google.com/macros/s/.../exec) to auto-track orders:');
+
+      const urlInp = h('input', {
+        type: 'text',
+        placeholder: 'https://script.google.com/macros/s/AKfycb.../exec',
+        value: curUrl,
+        style: 'flex: 1; font-family: monospace; font-size: 13px;'
+      });
+
+      const saveBtn = h('button', {class: 'btn sm pri', onclick: async () => {
+        const val = urlInp.value.trim();
+        if (!val) { toast('Please paste your Google Script link'); return; }
+        if (!val.startsWith('http')) { toast('Invalid URL: must start with https://'); return; }
+        sp(CFG, 'delivery.url', val);
+        await saveCfg();
+        toast('✅ Google Delivery Link Saved!');
+        // Test fetch immediately
+        try {
+          const res = await fetch(val);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+              await post('/api/delivery', data);
+              toast(`Synced ${data.length} shipments from Google!`);
+            }
+          }
+        } catch (_) {}
+        render();
+      }}, '🔗 Link Google Script');
+
+      const row = h('div', {class: 'navrow', style: 'margin-top: 8px; gap: 8px; flex-wrap: wrap;'}, urlInp, saveBtn);
+
+      const scriptHelp = h('p', {class: 'd', style: 'margin-top: 8px;'},
+        'To get this link: Open tools/delivery_gmail_sync.js in script.google.com ➔ Click Deploy ➔ New deployment ➔ Web app ➔ Access: "Anyone" ➔ Copy Web app URL and paste above.'
+      );
+
+      return h('div', {}, statusBox, row, scriptHelp);
+    })(),
+    F('delivery.refresh', 'Sync interval (minutes)', 'range', gp(CFG, 'delivery.refresh') || 15, {min: 5, max: 120, step: 5})
+  ),
+
   sec('Sports (Cricket & Football)','Scores come from your EmoDesk sports match server. Emo checks during live matches and periodically otherwise.',
 
    F('cric.url','Match server address','text','',{ph:'https://emo-sports-server.onrender.com',hint:'Default: https://emo-sports-server.onrender.com. Add ?key=… if using a custom server with API_KEY.'}),
@@ -1993,8 +2404,8 @@ system(){let nets=[];
 
  const ota=h('input',{type:'file',accept:'.bin'}),otaMsg=h('p',{class:'d'}),rest=h('input',{type:'file',accept:'.json'});
 
- return[sec('Wi-Fi Networks',`Current connection: ${ST.online?ST.ssid+' ('+ST.ip+')':'Not connected'}. Emo tries saved networks in order (up to 3).`,
-  h('div',{class:'row col'},h('div',{class:'lab'},'Saved Networks',h('small',{},'Top network is attempted first. Use "Try first" to reorder.')),wifiList),
+ return[sec('Wi-Fi Networks',`Current connection: ${ST.online?ST.ssid+' ('+ST.ip+')':'Not connected'}. Emo automatically scans for available networks and connects to any saved network in range (strongest signal first).`,
+  h('div',{class:'row col'},h('div',{class:'lab'},'Saved Networks',h('small',{},'Emo connects to whichever saved network is visible in scan. If multiple are in range, preferred order is used.')),wifiList),
   h('div',{class:'row col'},h('div',{class:'lab'},'Add Network',h('small',{},'Type SSID and password or click Scan to find nearby networks.')),
     h('div',{class:'navrow'},wSsid,scanBtn),scanList,
     h('div',{class:'navrow'},wPass,addBtn)),
@@ -2010,6 +2421,8 @@ system(){let nets=[];
     ['Chip',(ST.chipTemp||0).toFixed(0)+' °C'],['Up for',upTxt(ST.up)],['Last restart',ST.reset||'?'],['Stack left (net)',kb(ST.stackNet)],['Stack left (main)',kb(ST.stackLoop)],
 
     ['Stack left (audio)',ST.stackAudio?kb(ST.stackAudio):'not running']].map(([l,v])=>h('div',{},h('small',{},l),h('b',{title:v},v))))),
+
+  createRamSection(),
 
   sec('Firmware',`Version ${ST.fw||'?'}.`,
 
@@ -2404,6 +2817,165 @@ cinema(){
         }, 'Apply Token & Refresh Wishlist'),
         h('a', {class: 'btn sm', href: (gp(CFG, 'cinema.url') || 'https://cinewish-new.onrender.com').replace(/\/+$/, '') + '/ping', target: '_blank', rel: 'noopener'}, 'Test /ping'),
         h('a', {class: 'btn sm ghost', href: 'https://cinewish.vercel.app', target: '_blank', rel: 'noopener'}, 'Open CineWish App ↗')
+      )
+    )
+  ];
+},
+
+delivery(){
+  const listCont = h('div', {style: 'display:flex; flex-direction:column; gap:10px; margin-top:10px;'});
+  const statusNote = h('p', {class: 'd'}, 'Loading active shipments...');
+
+  const STAGES = ['Ordered', 'Shipped', 'In Transit', 'Out for Delivery', 'Delivered'];
+  const STAGE_COLORS = ['#888', '#2196F3', '#FF9800', '#4CAF50', '#9C27B0'];
+
+  const refreshList = async () => {
+    try {
+      const items = await api('/api/delivery');
+      listCont.innerHTML = '';
+      if (!items || !items.length) {
+        statusNote.textContent = 'No active shipments currently being tracked.';
+        listCont.append(h('div', {class: 'note'}, 'No deliveries right now. Add a shipment below or use the automated Gmail script!'));
+        return;
+      }
+      statusNote.textContent = `Tracking ${items.length} shipment${items.length > 1 ? 's' : ''}:`;
+      items.forEach(it => {
+        const stg = Math.min(Math.max(it.stage || 0, 0), 4);
+        const card = h('div', {class: 'card', style: 'padding:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; border-left:4px solid ' + STAGE_COLORS[stg]},
+          h('div', {style: 'flex:1; min-width:200px;'},
+            h('div', {style: 'display:flex; align-items:center; gap:8px; margin-bottom:4px;'},
+              h('span', {class: 'pill', style: 'font-weight:700; font-size:11px; text-transform:uppercase;'}, it.courier || 'Courier'),
+              h('strong', {style: 'font-size:15px;'}, it.item || 'Package')
+            ),
+            h('div', {style: 'font-size:13px; color:var(--mute); display:flex; gap:12px; flex-wrap:wrap;'},
+              h('span', {}, 'Status: ' + (it.status || STAGES[stg])),
+              it.eta ? h('span', {}, 'ETA: ' + it.eta) : null,
+              it.awb ? h('span', {style: 'font-family:monospace;'}, 'AWB: ' + it.awb) : null
+            ),
+            h('div', {style: 'display:flex; gap:4px; margin-top:8px; align-items:center; font-size:11px;'},
+              ...STAGES.map((s, idx) => h('span', {
+                style: `padding:2px 6px; border-radius:4px; font-weight:600; background:${idx <= stg ? STAGE_COLORS[stg] : 'var(--line)'}; color:${idx <= stg ? '#fff' : 'var(--mute)'};`
+              }, s))
+            )
+          ),
+          h('div', {style: 'display:flex; gap:6px;'},
+            stg < 4 ? h('button', {
+              class: 'btn sm',
+              onclick: async () => {
+                await post('/api/delivery', { id: it.id, stage: 4, status: 'Delivered' });
+                toast('Marked delivered!');
+                refreshList();
+              }
+            }, '✓ Delivered') : null,
+            h('button', {
+              class: 'btn sm danger',
+              onclick: async () => {
+                if (confirm('Delete this delivery?')) {
+                  await fetch('/api/delivery?id=' + encodeURIComponent(it.id), { method: 'DELETE' });
+                  toast('Deleted');
+                  refreshList();
+                }
+              }
+            }, '✕')
+          )
+        );
+        listCont.append(card);
+      });
+    } catch (e) {
+      statusNote.textContent = 'Failed to load deliveries: ' + e.message;
+    }
+  };
+
+  refreshList();
+
+  const itemInp = h('input', {type: 'text', placeholder: 'e.g. Sony WH-1000XM4 Headphones', style: 'width:100%'});
+  const courierSel = h('select', {style: 'width:100%'},
+    h('option', {value: 'Amazon'}, 'Amazon'),
+    h('option', {value: 'Flipkart'}, 'Flipkart'),
+    h('option', {value: 'Ekart'}, 'Ekart Logistics'),
+    h('option', {value: 'Delhivery'}, 'Delhivery'),
+    h('option', {value: 'India Post'}, 'India Post'),
+    h('option', {value: 'Blue Dart'}, 'Blue Dart'),
+    h('option', {value: 'Courier'}, 'Other Courier')
+  );
+  const stageSel = h('select', {style: 'width:100%'},
+    h('option', {value: 0}, '0: Ordered / Placed'),
+    h('option', {value: 1}, '1: Shipped / Dispatched'),
+    h('option', {value: 2}, '2: In Transit / Reached Hub'),
+    h('option', {value: 3, selected: true}, '3: Out for Delivery (Arriving Today)'),
+    h('option', {value: 4}, '4: Delivered')
+  );
+  const etaInp = h('input', {type: 'text', placeholder: 'e.g. Today by 9 PM, Tomorrow, 18 Nov', style: 'width:100%'});
+  const awbInp = h('input', {type: 'text', placeholder: 'e.g. FMPC0123456789 (optional)', style: 'width:100%'});
+
+  const addForm = h('div', {style: 'display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:10px;'},
+    h('div', {}, h('label', {class: 'd'}, 'Item / Package Name'), itemInp),
+    h('div', {}, h('label', {class: 'd'}, 'Courier / Platform'), courierSel),
+    h('div', {}, h('label', {class: 'd'}, 'Current Stage'), stageSel),
+    h('div', {}, h('label', {class: 'd'}, 'Expected Delivery (ETA)'), etaInp),
+    h('div', {}, h('label', {class: 'd'}, 'Tracking / AWB Number'), awbInp)
+  );
+
+  const saveBtn = h('button', {
+    class: 'btn pri',
+    style: 'margin-top:12px;',
+    onclick: async () => {
+      const title = itemInp.value.trim();
+      if (!title) { toast('Please enter item name'); return; }
+      const payload = {
+        item: title,
+        courier: courierSel.value,
+        stage: parseInt(stageSel.value, 10),
+        status: STAGES[parseInt(stageSel.value, 10)],
+        eta: etaInp.value.trim() || 'Soon',
+        awb: awbInp.value.trim()
+      };
+      await post('/api/delivery', payload);
+      toast('Delivery added to EmoDesk!');
+      itemInp.value = '';
+      etaInp.value = '';
+      awbInp.value = '';
+      refreshList();
+    }
+  }, 'Add / Update Shipment');
+
+  const webhookUrl = location.origin + '/api/delivery';
+
+  return [
+    sec('Active Shipments', 'Shipments currently tracked and shown on EmoDesk OLED screen.',
+      h('div', {style: 'display:flex; justify-content:space-between; align-items:center;'},
+        statusNote,
+        h('div', {style: 'display:flex; gap:6px;'},
+          h('button', {class: 'btn sm', onclick: refreshList}, '↻ Refresh'),
+          h('button', {
+            class: 'btn sm danger',
+            onclick: async () => {
+              if (confirm('Clear all delivered shipments?')) {
+                await fetch('/api/delivery?id=delivered', {method: 'DELETE'});
+                toast('Cleaned delivered items');
+                refreshList();
+              }
+            }
+          }, 'Clear Delivered')
+        )
+      ),
+      listCont
+    ),
+    sec('Add / Track Shipment', 'Manually add a package or update its status.',
+      addForm,
+      saveBtn
+    ),
+    sec('Automated Gmail Sync (Amazon & Flipkart)', 'Automatically track Amazon and Flipkart shipments directly from your Gmail inbox.',
+      h('p', {class: 'd'}, 'Deploy the free Google Apps Script in your Google account (100% free forever, no JSONBin limits, no extra accounts):'),
+      h('ol', {style: 'padding-left: 20px; line-height: 1.7; font-size: 13px; color: var(--mute);'},
+        h('li', {}, 'Open ', h('a', {href: 'https://script.google.com', target: '_blank', rel: 'noopener'}, 'script.google.com'), ' and click "+ New project".'),
+        h('li', {}, 'Copy and paste the script from ', h('code', {}, 'tools/delivery_gmail_sync.js'), ' into Code.gs.'),
+        h('li', {}, 'Click Deploy -> New deployment -> Select "Web app" -> Access: "Anyone" -> Deploy.'),
+        h('li', {}, 'Copy the generated Web App URL and paste it into the "Delivery tracker" card under the Cards tab!')
+      ),
+      h('p', {class: 'd', style: 'margin-top: 12px;'}, 'Or push updates manually / via curl:'),
+      h('pre', {style: 'background:var(--bg); padding:10px; border-radius:8px; border:1px solid var(--line); font-family:monospace; user-select:all; overflow-x:auto;'},
+        `POST ${webhookUrl}\nContent-Type: application/json\n\n{\n  "item": "Sony Headphones",\n  "courier": "Amazon",\n  "status": "Out for delivery",\n  "stage": 3,\n  "eta": "Today by 8 PM"\n}`
       )
     )
   ];

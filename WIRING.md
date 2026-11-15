@@ -13,6 +13,8 @@ Everything runs from the ESP32-C3 Super Mini's USB-C port. Use a good 5 V / 1 A 
 | TTP223 touch | VCC | 3V3 | |
 | | GND | GND | |
 | | I/O (OUT) | GPIO 3 | Default jumpers: momentary, output HIGH when touched |
+| Buzzer (optional, passive or active) | + (SIG) | GPIO 6 | Default pin (configurable in **Sound -> Buzzer GPIO pin**: 6, 7, 10, 1, or 2) |
+| | - (GND) | GND | If using a 3-pin buzzer module, connect VCC to 3V3 |
 | MAX98357A amp (optional, add later) | VIN | 5V | Not 3V3 - the amp needs 5 V for full power |
 | | GND | GND | |
 | | BCLK | GPIO 6 | |
@@ -41,6 +43,19 @@ Everything runs from the ESP32-C3 Super Mini's USB-C port. Use a good 5 V / 1 A 
 
    TTP223 VCC -> 3V3        TTP223 GND -> GND
 ```
+
+## Adding a buzzer (Passive or Active, no amplifier needed)
+
+If you prefer a simple 2-wire or 3-pin buzzer instead of the MAX98357A speaker:
+
+- **2-pin buzzer** (passive piezo recommended for melodies, tones & volume control):
+  - `+` -> **GPIO 6** (default, or change to GPIO 7 / 10 / 1 / 2 in the web dashboard **Sound** tab)
+  - `-` -> **GND**
+- **3-pin buzzer module** (`VCC`, `GND`, `I/O` / `SIG`):
+  - `VCC` -> **3V3**
+  - `GND` -> **GND**
+  - `I/O` (or `SIG`) -> **GPIO 6**
+- Then open the dashboard **Sound** tab and set **Output device** to **Passive Buzzer (PWM tones & melodies)** (or **Active Buzzer** if it beeps continuously when connected straight to 3.3V). You can also switch via Serial/Web CLI: `sound mode buzzer` and `sound pin 6`.
 
 ## Adding the speaker (MAX98357A)
 

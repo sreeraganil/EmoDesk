@@ -148,11 +148,14 @@ void coreBegin() {
   LittleFS.mkdir("/anim");
   LittleFS.mkdir("/snd");
   if (!loadJson("/config.json", cfg)) { cfg.clear(); cfg["name"] = "Emo"; }
+  else cfg.shrinkToFit();
   if (!loadJson("/cards.json", cardsDoc) || !cardsDoc["cards"].is<JsonArray>()) {
     createDefaultCards();
     saveJson("/cards.json", cardsDoc);
   }
+  cardsDoc.shrinkToFit();
   if (!loadJson("/state.json", stateDoc)) stateDoc.clear();
+  else stateDoc.shrinkToFit();
   tzApplyLocal();
   memset(&pcStats, 0, sizeof(pcStats));
   memset(&lastMsg, 0, sizeof(lastMsg));
@@ -187,8 +190,8 @@ void coreLoop() {
 }
 
 // ------------------------------------------------------------------ log
-#define LOG_LINES 32
-#define LOG_LINE_LEN 96
+#define LOG_LINES 16
+#define LOG_LINE_LEN 72
 static char logBuf[LOG_LINES][LOG_LINE_LEN];
 static uint8_t logHead = 0, logCount = 0;
 static uint32_t logSequence = 0;

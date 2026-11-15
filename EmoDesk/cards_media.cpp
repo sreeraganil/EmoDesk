@@ -2,7 +2,7 @@
 
 static bool needSpeaker() {
   if (audioInstalled()) return true;
-  drawCenteredMsg("No speaker yet", "Turn it on in Sound settings");
+  drawCenteredMsg("Audio is off", "Enable in Sound settings");
   return false;
 }
 static void note(int x, int y) {

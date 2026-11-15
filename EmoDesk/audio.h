@@ -4,14 +4,27 @@
 // Everything here is safe to call from any task: commands go through a queue
 // to the audio task, which renders sound into the MAX98357 over I2S.
 
+enum AudioMode : uint8_t {
+  AUDIO_OFF     = 0,
+  AUDIO_BUZZER  = 1,   // Passive piezo buzzer via LEDC PWM
+  AUDIO_ACTIVE  = 2,   // Active buzzer via HIGH/LOW digital gate
+  AUDIO_SPEAKER = 3    // MAX98357A I2S speaker amplifier
+};
+
 void audioBegin();
-void audioApply();                                  // reload volume/voice from cfg
-bool audioInstalled();
+void audioApply();                                  // reload output mode/pin/volume from cfg
+uint8_t audioMode();                                // returns AudioMode enum
+const char* audioModeName();                        // "off" | "buzzer" | "active" | "speaker"
+void audioSetMode(const char* mode);                // switch & save output mode
+int  audioBuzzerPin();                              // configured buzzer GPIO pin
+void audioSetBuzzerPin(int pin);                    // set & save buzzer GPIO pin
+bool audioInstalled();                              // true unless AUDIO_OFF
 bool audioMuted();
 void audioSetMuted(bool m);
 void audioSetVolume(int v);                         // 0..100 (saved to cfg)
 int  audioVolume();
 bool audioAllowed(uint8_t ev);
+void audioSleep();                                  // silence outputs & power down before deep sleep
 
 void audioSfx(const char* name, uint8_t ev = EV_UI);
 void audioMelody(int idx, uint8_t ev = EV_UI);
