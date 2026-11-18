@@ -79,6 +79,7 @@ static void lose(const char* game, uint8_t& st, uint32_t& deadAt, uint32_t score
 // ================================================================== flappy
 struct Flappy { uint8_t st; float y, vy, px[2]; int8_t gy[2]; bool sc[2]; uint32_t score, best, last, deadAt; };
 static void flappy_reset(Flappy* g) {
+  if (!g) return;
   g->y = 32; g->vy = 0; g->score = 0;
   for (int i = 0; i < 2; i++) { g->px[i] = 128 + i * 70; g->gy[i] = 18 + rnd(28); g->sc[i] = false; }
 }
@@ -149,6 +150,7 @@ const CardType CT_flappy = {"flappy", sizeof(Flappy), 0, CF_NOROT, flappy_enter,
 // ================================================================== dino runner
 struct Dino { uint8_t st; float y, vy, speed, ox[3]; uint8_t ow[3], oh[3]; uint32_t score, best, last, deadAt; float dist; };
 static void dino_reset(Dino* g) {
+  if (!g) return;
   g->y = 0; g->vy = 0; g->speed = 2.2f; g->score = 0; g->dist = 0;
   float x = 140;
   for (int i = 0; i < 3; i++) { g->ox[i] = x; g->ow[i] = 4 + rnd(6); g->oh[i] = 8 + rnd(8); x += 62 + rnd(58); }
@@ -228,6 +230,7 @@ const CardType CT_dino = {"dino", sizeof(Dino), 0, CF_NOROT, dino_enter, dino_dr
 // ================================================================== stack
 struct Stack { uint8_t st, n; float x, dir, speed; int16_t w; int16_t hx[10], hw[10]; uint32_t score, best, last, deadAt; };
 static void stack_reset(Stack* g) {
+  if (!g) return;
   g->n = 1; g->hx[0] = 34; g->hw[0] = 60; g->w = 60; g->x = 0; g->dir = 1; g->speed = 1.5f; g->score = 0;
 }
 static void stack_enter(CardCtx& c) {
@@ -299,6 +302,7 @@ const CardType CT_stack = {"stack", sizeof(Stack), 0, CF_NOROT, stack_enter, sta
 struct Dodge { uint8_t st, lane; int8_t dir; float oy[4], speed; uint8_t ol[4]; uint32_t score, best, last, deadAt; };
 static const int LANES[3] = {26, 64, 102};
 static void dodge_reset(Dodge* g) {
+  if (!g) return;
   g->lane = 1; g->dir = 1; g->speed = 1.2f; g->score = 0;
   for (int i = 0; i < 4; i++) { g->oy[i] = -10 - i * 24.0f; g->ol[i] = rnd(3); }
 }

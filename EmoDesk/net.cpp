@@ -8,6 +8,7 @@
 #include "emo.h"
 #include "feeds.h"
 #include "cards.h"
+#include "services.h"
 
 static DNSServer dns;
 static volatile bool portal = false, online = false;
@@ -203,40 +204,103 @@ static void onConnect() {
   if (mdnsOk) MDNS.addService("http", "tcp", 80);
   timeApply();
   feedsRefresh();
+  toastShow("Wi-Fi connected");
+}
+
+static void drawWifiWaves(uint32_t t0) {
+  uint32_t waveStep = ((millis() - t0) / 180) % 4;
+
+  // Wave 1 (inner, radius ~5)
+  if (waveStep == 0 || waveStep == 1 || waveStep == 2) {
+    // Left
+    u8g2.drawPixel(33, 23);
+    u8g2.drawPixel(34, 21); u8g2.drawPixel(34, 25);
+    u8g2.drawPixel(35, 19); u8g2.drawPixel(35, 27);
+    // Right
+    u8g2.drawPixel(95, 23);
+    u8g2.drawPixel(94, 21); u8g2.drawPixel(94, 25);
+    u8g2.drawPixel(93, 19); u8g2.drawPixel(93, 27);
+  }
+
+  // Wave 2 (middle, radius ~10)
+  if (waveStep == 1 || waveStep == 2 || waveStep == 3) {
+    // Left
+    u8g2.drawPixel(27, 23);
+    u8g2.drawPixel(28, 20); u8g2.drawPixel(28, 26);
+    u8g2.drawPixel(29, 17); u8g2.drawPixel(29, 29);
+    u8g2.drawPixel(30, 15); u8g2.drawPixel(30, 31);
+    // Right
+    u8g2.drawPixel(101, 23);
+    u8g2.drawPixel(100, 20); u8g2.drawPixel(100, 26);
+    u8g2.drawPixel(99, 17);  u8g2.drawPixel(99, 29);
+    u8g2.drawPixel(98, 15);  u8g2.drawPixel(98, 31);
+  }
+
+  // Wave 3 (outer, radius ~15)
+  if (waveStep == 2 || waveStep == 3) {
+    // Left
+    u8g2.drawPixel(21, 23);
+    u8g2.drawPixel(22, 19); u8g2.drawPixel(22, 27);
+    u8g2.drawPixel(23, 16); u8g2.drawPixel(23, 30);
+    u8g2.drawPixel(24, 13); u8g2.drawPixel(24, 33);
+    // Right
+    u8g2.drawPixel(107, 23);
+    u8g2.drawPixel(106, 19); u8g2.drawPixel(106, 27);
+    u8g2.drawPixel(105, 16); u8g2.drawPixel(105, 30);
+    u8g2.drawPixel(104, 13); u8g2.drawPixel(104, 33);
+  }
 }
 
 static void drawConnecting(const char* ssid, uint32_t t0) {
   u8g2.clearBuffer();
   drawHeader("EmoDesk", "WI-FI");
-  emoRender(64, 24, 0.50f);
-  char b[44];
-  snprintf(b, sizeof(b), "Joining %s", ssid ? ssid : "");
+  emoRender(64, 23, 0.52f);
+  drawWifiWaves(t0);
+
+  char b[48];
+  uint32_t dotCycle = ((millis() - t0) / 280) % 4;
+  const char* dots = (dotCycle == 0 ? "" : (dotCycle == 1 ? "." : (dotCycle == 2 ? ".." : "...")));
+  snprintf(b, sizeof(b), "Joining %s%s", ssid ? ssid : "", dots);
   u8g2.setFont(F_SMALL);
-  if (u8g2.getUTF8Width(b) <= 122) textCenter(48, b);
-  else drawTextFit(3, 48, 122, b);
-  int bx = 24, by = 54, bw = 80, bh = 5;
+  if (u8g2.getUTF8Width(b) <= 122) textCenter(47, b);
+  else drawTextFit(3, 47, 122, b);
+
+  int bx = 20, by = 54, bw = 88, bh = 6;
   u8g2.drawRFrame(bx, by, bw, bh, 2);
-  int pW = 18;
+  int pW = 20;
   int span = bw - 4 - pW;
-  int phase = ((millis() - t0) / 35) % (span * 2);
+  int phase = ((millis() - t0) / 22) % (span * 2);
   int pos = phase <= span ? phase : (span * 2 - phase);
   u8g2.drawRBox(bx + 2 + pos, by + 1, pW, bh - 2, 1);
+  u8g2.drawPixel(bx - 4, by + 2);
+  u8g2.drawPixel(bx + bw + 3, by + 2);
+
   displaySend();
 }
 
 static void drawScanning(uint32_t t0) {
   u8g2.clearBuffer();
   drawHeader("EmoDesk", "WI-FI");
-  emoRender(64, 24, 0.50f);
+  emoRender(64, 23, 0.52f);
+  drawWifiWaves(t0);
+
+  uint32_t dotCycle = ((millis() - t0) / 280) % 4;
+  const char* dots = (dotCycle == 0 ? "" : (dotCycle == 1 ? "." : (dotCycle == 2 ? ".." : "...")));
+  char b[32];
+  snprintf(b, sizeof(b), "Scanning Wi-Fi%s", dots);
   u8g2.setFont(F_SMALL);
-  textCenter(48, "Scanning Wi-Fi...");
-  int bx = 24, by = 54, bw = 80, bh = 5;
+  textCenter(47, b);
+
+  int bx = 20, by = 54, bw = 88, bh = 6;
   u8g2.drawRFrame(bx, by, bw, bh, 2);
-  int pW = 18;
+  int pW = 20;
   int span = bw - 4 - pW;
-  int phase = ((millis() - t0) / 35) % (span * 2);
+  int phase = ((millis() - t0) / 22) % (span * 2);
   int pos = phase <= span ? phase : (span * 2 - phase);
   u8g2.drawRBox(bx + 2 + pos, by + 1, pW, bh - 2, 1);
+  u8g2.drawPixel(bx - 4, by + 2);
+  u8g2.drawPixel(bx + bw + 3, by + 2);
+
   displaySend();
 }
 
@@ -250,16 +314,17 @@ static bool tryConnectProfile(int p, uint32_t waitMs = 9000) {
   uint32_t lastDraw = 0;
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < waitMs) {
     wdtFeed();
-    if (millis() - lastDraw >= 200) {
-      lastDraw = millis();
+    uint32_t now = millis();
+    if (now - lastDraw >= 30) {
+      lastDraw = now;
       drawConnecting(s.c_str(), t0);
     }
     // If we got a definitive authentication failure, log and move to next immediately
-    if (lastDisconnectReason == WIFI_REASON_AUTH_FAIL && millis() - t0 > 1500) {
+    if (lastDisconnectReason == WIFI_REASON_AUTH_FAIL && now - t0 > 1500) {
       logf("[NET] '%s' authentication failed (wrong password)", s.c_str());
       break;
     }
-    delay(20);
+    delay(10);
   }
   if (WiFi.status() == WL_CONNECTED) return true;
   WiFi.disconnect(false, false);
@@ -272,10 +337,58 @@ struct ScannedSavedNet {
   int rssi;
 };
 
-static int findAvailableSavedProfiles(ScannedSavedNet* matches, int maxMatches) {
+static int findAvailableSavedProfiles(ScannedSavedNet* matches, int maxMatches, bool animated = false) {
   wdtFeed();
-  int n = WiFi.scanNetworks(false, false);
+  int n = 0;
+
+  if (animated) {
+    uint32_t t0 = millis();
+    uint32_t lastDraw = 0;
+    if (!lastBootCrashed()) emoSet(E_SUSPICIOUS, 7000);
+
+    int16_t startRes = WiFi.scanNetworks(true, false);
+    if (startRes == WIFI_SCAN_FAILED) {
+      logf("[NET] Async Wi-Fi scan failed to start, falling back to sync scan");
+      drawScanning(t0);
+      n = WiFi.scanNetworks(false, false);
+    } else {
+      int16_t res = WIFI_SCAN_RUNNING;
+      while (true) {
+        wdtFeed();
+        uint32_t now = millis();
+        if (now - lastDraw >= 30) {
+          lastDraw = now;
+          drawScanning(t0);
+        }
+
+        if (res == WIFI_SCAN_RUNNING) {
+          res = WiFi.scanComplete();
+        }
+
+        if (res >= 0) {
+          n = res;
+          // Ensure the boot animation is shown for at least 1800ms
+          if (now - t0 >= 1800) break;
+        } else if (res == WIFI_SCAN_FAILED) {
+          logf("[NET] Async Wi-Fi scan returned failed");
+          n = 0;
+          break;
+        }
+
+        // Safety timeout (8 seconds)
+        if (now - t0 >= 8000) {
+          logf("[NET] Wi-Fi scan timed out");
+          n = (res >= 0) ? res : 0;
+          break;
+        }
+        delay(10);
+      }
+    }
+  } else {
+    n = WiFi.scanNetworks(false, false);
+  }
   wdtFeed();
+
   int count = 0;
   if (n <= 0) {
     WiFi.scanDelete();
@@ -337,11 +450,8 @@ void netBegin() {
   netApplyTxPower();
   if (!netHasCreds()) { startPortal(); return; }
 
-  // Draw scanning animation on screen
-  drawScanning(millis());
-
   ScannedSavedNet matches[6];
-  int matchCount = findAvailableSavedProfiles(matches, 6);
+  int matchCount = findAvailableSavedProfiles(matches, 6, true);
 
   if (matchCount > 0) {
     logf("[NET] Found %d saved network(s) in scan. Connecting to available network...", matchCount);
@@ -350,7 +460,10 @@ void netBegin() {
       String s = netSSID(p);
       logf("[NET] Attempting available network '%s' (Profile #%d, RSSI: %d dBm)...",
            s.c_str(), p, matches[i].rssi);
-      if (tryConnectProfile(p, 9000)) break;
+      if (tryConnectProfile(p, 9000)) {
+        emoSet(E_HAPPY, 3000);
+        break;
+      }
     }
   } else {
     logf("[NET] No saved network visible in scan (or hidden SSID). Trying saved networks in order...");
@@ -360,11 +473,15 @@ void netBegin() {
       if (arrSize > maxProfiles) maxProfiles = arrSize;
     }
     for (int p = 1; p <= maxProfiles; p++) {
-      if (tryConnectProfile(p, 9000)) break;
+      if (tryConnectProfile(p, 9000)) {
+        emoSet(E_HAPPY, 3000);
+        break;
+      }
     }
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    emoSet(E_HAPPY, 3000);
     onConnect();
   } else {
     logf("WiFi connection failed - setup AP started, will retry in background");

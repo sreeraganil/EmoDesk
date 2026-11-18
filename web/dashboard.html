@@ -656,6 +656,12 @@ delivery:C('Delivery tracker','Info','Tracks Amazon, Flipkart, Ekart & courier p
   P('refresh','num','Refresh every (min)',30)
 ]),
 
+boxoffice:C('Movie Collections','Info','Track real-time box office collections, daily gross & milestones.',[
+  P('url','text','Feed URL','',{ph:'Optional JSON endpoint (e.g. https://emo-sports-server.onrender.com/api/emo/boxoffice)'}),
+  P('movie','text','Specific Movie','',{ph:'e.g. Ramayana (leave blank for top trending releases)'}),
+  P('refresh','num','Refresh every (min)',15)
+]),
+
 
 emo:C('Emo face','Emo','Big expressive eyes. Tap to poke, hold to pet, double-tap to move on.',[],30),
 
@@ -2012,7 +2018,8 @@ sound(){const A=CFG.audio||{};const ev=[['touch','Touch and poke'],['emo','Emo c
  const isBuz=(aMode==='buzzer'||aMode==='active');
  return[sec('Audio output','Choose a wired passive/active buzzer or the MAX98357A I2S speaker amplifier (see WIRING.md).',
    field(CFG,'audio.type','Output device','sel','off',{o:[['off','Off (no audio)'],['buzzer','Passive Buzzer (PWM tones & melodies)'],['active','Active Buzzer (simple beeps)'],['speaker','I2S Speaker (MAX98357A amp)']]},()=>{CFG.audio.installed=(CFG.audio.type!=='off');cfgChanged();render()}),
-   isBuz&&F('audio.buzPin','Buzzer GPIO pin','sel',6,{o:[[6,'GPIO 6 (default)'],[7,'GPIO 7'],[10,'GPIO 10'],[1,'GPIO 1'],[2,'GPIO 2 (strapping pin)']],hint:'Connect buzzer (+) to this GPIO and (-) to GND'}),
+   isBuz&&F('audio.buzPin','Buzzer GPIO pin','sel',6,{o:[[6,'GPIO 6 (default)'],[7,'GPIO 7'],[10,'GPIO 10'],[1,'GPIO 1'],[2,'GPIO 2 (strapping pin)']],hint:'Standard wiring: Buzzer (+) to GPIO and (-) to GND'}),
+   aMode==='active'&&F('audio.buzInv','Active-low drive (Louder without transistor)','bool',false,{hint:'Connect Buzzer (+) to 3V3 pin and Buzzer (-) to GPIO. Sinks from 500mA regulator rail for significantly higher volume.'}),
    aMode==='active'&&h('div',{class:'note'},'Active buzzers have a fixed internal pitch — chimes play as rhythmic beeps at constant frequency.'),
    F('audio.vol','Volume','range',40,{min:0,max:100}),F('audio.muted','Mute','bool',false),
 
@@ -2795,6 +2802,75 @@ cinema(){
 
   setTimeout(() => loadCategory(getCineToken() ? 'wishlist' : 'trending'), 50);
 
+  const boListCont = h('div', {id: 'bo_list_cont', style: 'display:flex; flex-direction:column; gap:8px; margin-top:10px;'});
+  const boStatusNote = h('p', {class: 'd'}, 'Loading tracked movie collections...');
+
+  const refreshBoxOfficeList = async () => {
+    try {
+      const res = await fetch('/api/boxoffice');
+      const items = await res.json();
+      boListCont.innerHTML = '';
+      if (!items || !items.length) {
+        boStatusNote.textContent = 'No movies currently stored on EmoDesk.';
+        boListCont.append(h('div', {class: 'note'}, 'No movie collections tracked yet. Add a movie below or click "Sync Live Collections from Server"!'));
+        return;
+      }
+      boStatusNote.textContent = `Tracking ${items.length} movie${items.length > 1 ? 's' : ''} on your screen (auto-cycling every 6s):`;
+      items.forEach(it => {
+        const itemCard = h('div', {class: 'card', style: 'padding:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-left:4px solid #FF9800; background:var(--card-bg, rgba(255,152,0,0.04));'},
+          h('div', {style: 'flex:1; min-width:200px;'},
+            h('div', {style: 'display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;'},
+              h('span', {class: 'pill', style: 'font-weight:700; font-size:11px; text-transform:uppercase; background:#FF9800; color:#fff;'}, it.day || 'Live'),
+              h('strong', {style: 'font-size:16px;'}, it.title || 'Untitled Movie'),
+              it.verdict ? h('span', {class: 'pill sm', style: 'border:1px solid var(--line); font-size:11px; font-weight:600;'}, it.verdict) : null
+            ),
+            h('div', {style: 'font-size:13px; color:var(--mute); display:flex; gap:14px; flex-wrap:wrap;'},
+              h('span', {}, h('strong', {style: 'color:var(--text);'}, 'Worldwide: '), it.total || '-'),
+              it.today && it.today !== '-' ? h('span', {}, h('strong', {style: 'color:var(--text);'}, 'Today: '), it.today) : null,
+              it.net ? h('span', {}, it.net) : null
+            )
+          ),
+          h('div', {style: 'display:flex; gap:8px; align-items:center;'},
+            h('button', {
+              class: 'btn sm ghost',
+              title: 'Load into edit form below',
+              onclick: () => {
+                document.getElementById('bo_title').value = it.title || '';
+                document.getElementById('bo_day').value = it.day || '';
+                document.getElementById('bo_today').value = it.today || '';
+                document.getElementById('bo_total').value = it.total || '';
+                document.getElementById('bo_net').value = it.net || '';
+                document.getElementById('bo_verdict').value = it.verdict || '';
+                toast(`Loaded "${it.title}" into form`);
+                document.getElementById('bo_title').scrollIntoView({ behavior: 'smooth' });
+              }
+            }, '✎ Edit'),
+            h('button', {
+              class: 'btn sm danger',
+              title: 'Remove this movie collection from EmoDesk',
+              onclick: async () => {
+                if (confirm(`Remove "${it.title}" from your tracked movie collections?`)) {
+                  try {
+                    await post('/api/boxoffice/delete', { title: it.title }).catch(() => {});
+                    await fetch('/api/boxoffice?title=' + encodeURIComponent(it.title), { method: 'DELETE' }).catch(() => {});
+                    await fetch('https://emo-sports-server.onrender.com/api/emo/boxoffice?title=' + encodeURIComponent(it.title), { method: 'DELETE' }).catch(() => {});
+                  } catch (e) {}
+                  toast(`🗑️ Removed "${it.title}" from screen!`);
+                  await refreshBoxOfficeList();
+                }
+              }
+            }, '🗑️ Remove')
+          )
+        );
+        boListCont.append(itemCard);
+      });
+    } catch (e) {
+      boStatusNote.textContent = 'Could not load movies: ' + e.message;
+    }
+  };
+
+  setTimeout(refreshBoxOfficeList, 100);
+
   return [
     sec('CineWish Movies & Shows', 'Browse trending entertainment, theatrical films, and OTT streaming titles powered by your CineWish server.',
       h('div', {class: 'navrow', style: 'flex-wrap: wrap; gap: 8px;'}, ...btnTabs, h('span', {style: 'flex: 1;'}), addCardBtn),
@@ -2817,6 +2893,121 @@ cinema(){
         }, 'Apply Token & Refresh Wishlist'),
         h('a', {class: 'btn sm', href: (gp(CFG, 'cinema.url') || 'https://cinewish-new.onrender.com').replace(/\/+$/, '') + '/ping', target: '_blank', rel: 'noopener'}, 'Test /ping'),
         h('a', {class: 'btn sm ghost', href: 'https://cinewish.vercel.app', target: '_blank', rel: 'noopener'}, 'Open CineWish App ↗')
+      )
+    ),
+    sec('Currently Tracked Movies (Box Office)', 'View, monitor, and remove specific movie collections currently rotating on your EmoDesk screen.',
+      boStatusNote,
+      boListCont
+    ),
+    sec('Add / Search Movie Collection', 'Add real-time movie collections from Sacnilk or custom box office entries.',
+      h('div', {style: 'margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 8px;'},
+        h('button', {
+          class: 'btn sm pri',
+          onclick: async () => {
+            const exists = (CARDS.cards || []).some(c => c.type === 'boxoffice');
+            if (!exists) {
+              CARDS.cards.push({ id: newId(), type: 'boxoffice', en: true, p: { refresh: 15 } });
+              await saveCards();
+              toast('✅ Movie Collections card added to your active deck!');
+            } else {
+              toast('Movie Collections card is already in your deck.');
+            }
+          }
+        }, '+ Add Movie Collections Card to Screen'),
+        h('button', {
+          class: 'btn sm',
+          onclick: async () => {
+            toast('Fetching live collections from server...');
+            try {
+              const res = await fetch('https://emo-sports-server.onrender.com/api/emo/boxoffice');
+              const d = await res.json();
+              if (d && d.movies && d.movies.length > 0) {
+                await post('/api/boxoffice', { movies: d.movies });
+                toast(`✅ Loaded ${d.movies.length} live movies to EmoDesk!`);
+                await refreshBoxOfficeList();
+              } else {
+                toast('No movies returned from server.');
+              }
+            } catch (e) {
+              toast('Error connecting to server: ' + e.message);
+            }
+          }
+        }, '🔄 Sync Live Collections from Server'),
+        h('button', {
+          class: 'btn sm ghost danger',
+          onclick: async () => {
+            if (confirm('Clear all cached box office collections on EmoDesk?')) {
+              try {
+                await post('/api/boxoffice/delete', { title: 'all' }).catch(() => {});
+                await fetch('/api/boxoffice?title=all', { method: 'DELETE' }).catch(() => {});
+                await fetch('https://emo-sports-server.onrender.com/api/emo/boxoffice?title=all', { method: 'DELETE' }).catch(() => {});
+              } catch (e) {}
+              toast('Cleared collections from device and server.');
+              await refreshBoxOfficeList();
+            }
+          }
+        }, '🗑️ Clear All')
+      ),
+      h('div', {class: 'navrow', style: 'gap: 8px; flex-wrap: wrap;'},
+        h('input', {id: 'bo_title', class: 'inp sm', placeholder: 'Movie Name (e.g. Ramayana)', style: 'flex: 2; min-width: 140px;'}),
+        h('input', {id: 'bo_day', class: 'inp sm', placeholder: 'Day / Status (e.g. Day 12)', style: 'flex: 1; min-width: 90px;'}),
+        h('input', {id: 'bo_today', class: 'inp sm', placeholder: 'Today Gross (e.g. ₹32.00 Cr)', style: 'flex: 1; min-width: 100px;'}),
+        h('input', {id: 'bo_total', class: 'inp sm', placeholder: 'Worldwide Total (e.g. ₹1,437.25 Cr)', style: 'flex: 1; min-width: 110px;'}),
+        h('input', {id: 'bo_net', class: 'inp sm', placeholder: 'India / Dom Net (e.g. ₹792.60 Cr)', style: 'flex: 1; min-width: 110px;'}),
+        h('input', {id: 'bo_verdict', class: 'inp sm', placeholder: 'Verdict (e.g. All-Time Record)', style: 'flex: 1; min-width: 100px;'}),
+        h('button', {
+          class: 'btn sm',
+          onclick: async () => {
+            const title = (document.getElementById('bo_title').value || '').trim();
+            if (!title) { toast('Enter a movie title to search'); return; }
+            toast(`Searching live collections for "${title}"...`);
+            try {
+              const res = await fetch(`https://emo-sports-server.onrender.com/api/emo/boxoffice?movie=${encodeURIComponent(title)}`);
+              const d = await res.json();
+              if (d && d.movies && d.movies.length > 0) {
+                const m = d.movies[0];
+                document.getElementById('bo_title').value = m.title || title;
+                document.getElementById('bo_day').value = m.day || 'Live';
+                document.getElementById('bo_today').value = m.today || '-';
+                document.getElementById('bo_total').value = m.total || '-';
+                document.getElementById('bo_net').value = m.net || '';
+                document.getElementById('bo_verdict').value = m.verdict || 'Trending';
+                await post('/api/boxoffice', m);
+                toast(`✅ Loaded & saved ${m.title}!`);
+                await refreshBoxOfficeList();
+              } else {
+                toast(`Movie "${title}" not found on live tracker.`);
+              }
+            } catch (e) {
+              toast('Error: ' + e.message);
+            }
+          }
+        }, '🔍 Fetch Specific Movie'),
+        h('button', {
+          class: 'btn sm ok',
+          onclick: async () => {
+            const title = (document.getElementById('bo_title').value || '').trim();
+            if (!title) { toast('Please enter a movie title'); return; }
+            const day = (document.getElementById('bo_day').value || 'Today').trim();
+            const today = (document.getElementById('bo_today').value || '-').trim();
+            const total = (document.getElementById('bo_total').value || '-').trim();
+            const net = (document.getElementById('bo_net').value || '').trim();
+            const verdict = (document.getElementById('bo_verdict').value || 'Trending').trim();
+            await post('/api/boxoffice', { title, day, today, total, net, verdict });
+            toast(`Saved ${title} collections!`);
+            document.getElementById('bo_title').value = '';
+            document.getElementById('bo_day').value = '';
+            document.getElementById('bo_today').value = '';
+            document.getElementById('bo_total').value = '';
+            document.getElementById('bo_net').value = '';
+            document.getElementById('bo_verdict').value = '';
+            await refreshBoxOfficeList();
+          }
+        }, 'Save Collection')
+      ),
+      h('p', {class: 'd', style: 'margin-top: 10px;'},
+        'Webhook: Send JSON updates via ', h('code', {}, 'POST /api/boxoffice'),
+        ' with ', h('code', {}, '{"title": "Movie Name", "day": "Day 3", "today": "₹30 Cr", "total": "₹400 Cr", "verdict": "Blockbuster"}')
       )
     )
   ];

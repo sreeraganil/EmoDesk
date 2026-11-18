@@ -1,6 +1,7 @@
 #include "power.h"
 #include <WiFi.h>
 #include <esp_sleep.h>
+#include <driver/gpio.h>
 #include "soc/soc_caps.h"
 #include "display.h"
 #include "emo.h"
@@ -100,20 +101,33 @@ void powerSleepNow(uint32_t wakeAfterMin, const char* why) {
     textCenter(61, b);
   } else textCenter(61, "Touch pad to wake up");
   displaySend();
-  // wait for the finger to leave the pad, otherwise we wake straight away
-  uint32_t t0 = millis();
-  while (digitalRead(PIN_TOUCH) && millis() - t0 < 4000) { wdtFeed(); delay(20); }
   delay(1500);
+
+  // Configure touch pin with internal pull-down and ensure finger has left the pad
+  pinMode(PIN_TOUCH, INPUT_PULLDOWN);
+  gpio_pullup_dis((gpio_num_t)PIN_TOUCH);
+  gpio_pulldown_en((gpio_num_t)PIN_TOUCH);
+
+  uint32_t t0 = millis();
+  while (digitalRead(PIN_TOUCH) && millis() - t0 < 5000) { wdtFeed(); delay(20); }
+  delay(100);
+
   displayPower(false);
   audioSleep();
   ledcWrite(PIN_LED, LED_ACTIVE_LOW ? 255 : 0);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+
+  // Re-confirm pull-down right before enabling wakeup and sleeping
+  gpio_pullup_dis((gpio_num_t)PIN_TOUCH);
+  gpio_pulldown_en((gpio_num_t)PIN_TOUCH);
 #if SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP
   esp_deep_sleep_enable_gpio_wakeup(1ULL << PIN_TOUCH, ESP_GPIO_WAKEUP_GPIO_HIGH);
 #endif
   if (wakeAfterMin) esp_sleep_enable_timer_wakeup((uint64_t)wakeAfterMin * 60ULL * 1000000ULL);
-  Serial.flush();
+
+  // Allow native USB-CDC buffer time without hanging on unattached host (never block on flush)
+  delay(50);
   esp_deep_sleep_start();
 }
 

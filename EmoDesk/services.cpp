@@ -421,7 +421,6 @@ void doAction(const char* a) {
     audioSfx("pop", EV_UI);
   }
   else if (!strcmp(a, "brief")) briefingNow();
-  else if (!strncmp(a, "media_", 6)) bleMedia(a + 6);
   else if (!strcmp(a, "saver")) {
     bool on = !powerSaver();
     powerSetMode(on ? "on" : "off");

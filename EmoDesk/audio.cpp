@@ -2,6 +2,7 @@
 #include "emo.h"
 #include "power.h"
 #include <ESP_I2S.h>
+#include "driver/gpio.h"
 #if ENABLE_TTS
 #include <AudioOutput.h>
 #include <ESP8266SAM.h>
@@ -19,6 +20,7 @@ static volatile int32_t rampQ = 4096;   // Q12 alarm ramp
 static volatile uint8_t curMode = AUDIO_OFF;
 static uint8_t activeMode = AUDIO_OFF;
 static int curBuzPin = PIN_BUZZER, attachedBuzPin = -1;
+static volatile bool curBuzInv = false;
 static bool i2sOk = false, ampState = false, pwmAttached = false;
 static uint32_t lastActive = 0;
 
@@ -81,11 +83,28 @@ static void buzWaitMs(uint32_t ms, int16_t vizAmp) {
   }
 }
 
+static void setBuzzerActive(bool on) {
+  if (attachedBuzPin < 0) return;
+  if (curBuzInv) {
+    if (on) {
+      pinMode(attachedBuzPin, OUTPUT);
+      gpio_set_drive_capability((gpio_num_t)attachedBuzPin, GPIO_DRIVE_CAP_3);
+      digitalWrite(attachedBuzPin, LOW);
+    } else {
+      digitalWrite(attachedBuzPin, HIGH);
+      pinMode(attachedBuzPin, INPUT);
+    }
+  } else {
+    pinMode(attachedBuzPin, OUTPUT);
+    digitalWrite(attachedBuzPin, on ? HIGH : LOW);
+  }
+}
+
 static void silence(uint32_t n) {
   if (activeMode != AUDIO_SPEAKER) {
     if (attachedBuzPin >= 0) {
       if (activeMode == AUDIO_BUZZER && pwmAttached) ledcWrite(attachedBuzPin, 0);
-      else if (activeMode == AUDIO_ACTIVE) digitalWrite(attachedBuzPin, LOW);
+      else if (activeMode == AUDIO_ACTIVE) setBuzzerActive(false);
     }
     uint32_t ms = (uint32_t)((uint64_t)n * 1000 / SAMPLE_RATE);
     if (ms) buzWaitMs(ms, 0);
@@ -147,16 +166,16 @@ static void toneBuzzer(int f0, int f1, uint32_t ms, uint8_t wave, uint8_t vol) {
 static void toneActive(int f0, uint32_t ms, uint8_t vol) {
   if (attachedBuzPin < 0) return;
   if (f0 <= 0 || vol == 0 || gainQ == 0) {
-    digitalWrite(attachedBuzPin, LOW);
+    setBuzzerActive(false);
     buzWaitMs(ms, 0);
     return;
   }
   uint32_t onMs = ms < 10 ? 10 : (ms > 28 ? (ms * 82) / 100 : ms);
   if (onMs < 18 && ms > 28) onMs = 18;
   uint32_t offMs = (ms > onMs) ? (ms - onMs) : 0;
-  digitalWrite(attachedBuzPin, HIGH);
+  setBuzzerActive(true);
   buzWaitMs(onMs, (int16_t)min<int32_t>(28000, gainQ * 7));
-  digitalWrite(attachedBuzPin, LOW);
+  setBuzzerActive(false);
   if (offMs && !interrupted()) buzWaitMs(offMs, 0);
 }
 
@@ -361,7 +380,7 @@ static void playWav(const char* path) {
     } else if (!memcmp(id, "data", 4)) { dataLen = sz; break; }
     else f.seek(f.position() + sz + (sz & 1));
   }
-  if (!dataLen || fmt != 1 || (bits != 8 && bits != 16) || !rate) { f.close(); logf("audio: bad wav"); return; }
+  if (!dataLen || fmt != 1 || !ch || (bits != 8 && bits != 16) || !rate) { f.close(); logf("audio: bad wav"); return; }
   uint8_t bps = (bits / 8) * ch;
   uint32_t total = dataLen / bps, idx = 0;
   uint32_t step = (uint32_t)((uint64_t)rate * 65536 / SAMPLE_RATE), frac = 0;
@@ -610,8 +629,7 @@ static void hwRelease() {
       ledcDetach(attachedBuzPin);
       pwmAttached = false;
     }
-    pinMode(attachedBuzPin, OUTPUT);
-    digitalWrite(attachedBuzPin, LOW);
+    setBuzzerActive(false);
     attachedBuzPin = -1;
   }
   activeMode = AUDIO_OFF;
@@ -645,8 +663,7 @@ static bool hwPrepare(uint8_t mode, int pin) {
   }
   if (mode == AUDIO_ACTIVE) {
     attachedBuzPin = pin;
-    pinMode(pin, OUTPUT);
-    digitalWrite(pin, LOW);
+    setBuzzerActive(false);
     activeMode = AUDIO_ACTIVE;
     return true;
   }
@@ -729,8 +746,9 @@ void audioBegin() {
     digitalWrite(PIN_AMP_SD, LOW);
   }
   if (curMode == AUDIO_BUZZER || curMode == AUDIO_ACTIVE) {
-    pinMode(curBuzPin, OUTPUT);
-    digitalWrite(curBuzPin, LOW);
+    attachedBuzPin = curBuzPin;
+    setBuzzerActive(false);
+    if (curMode == AUDIO_BUZZER) attachedBuzPin = -1;
   }
 }
 
@@ -740,15 +758,18 @@ void audioApply() {
   bool inst = cfg["audio"]["installed"] | false;
   String t = cfg["audio"]["type"] | "";
   int bp = cfg["audio"]["buzPin"] | PIN_BUZZER;
+  bool bi = cfg["audio"]["buzInv"] | false;
   UNLOCK();
   v = constrain(v, 0, 100);
   gainQ = (int32_t)v * v * 4096 / 10000 * 8 / 10;
   uint8_t nm = parseAudioMode(t.c_str(), inst);
   int np = validBuzPin(bp) ? bp : PIN_BUZZER;
-  if (nm != curMode || np != curBuzPin) {
+  if (nm != curMode || np != curBuzPin || bi != curBuzInv) {
     audioStop();
     curMode = nm;
     curBuzPin = np;
+    curBuzInv = bi;
+    if (curMode == AUDIO_ACTIVE && attachedBuzPin >= 0) setBuzzerActive(false);
   }
   audioEnsureTask();
 }
@@ -769,6 +790,14 @@ void audioSetBuzzerPin(int pin) {
   int np = validBuzPin(pin) ? pin : PIN_BUZZER;
   LOCK();
   cfg["audio"]["buzPin"] = np;
+  UNLOCK();
+  audioApply();
+  markDirty(DIRTY_CFG);
+}
+bool audioBuzzerInvert() { return curBuzInv; }
+void audioSetBuzzerInvert(bool inv) {
+  LOCK();
+  cfg["audio"]["buzInv"] = inv;
   UNLOCK();
   audioApply();
   markDirty(DIRTY_CFG);

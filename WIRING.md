@@ -48,13 +48,28 @@ Everything runs from the ESP32-C3 Super Mini's USB-C port. Use a good 5 V / 1 A 
 
 If you prefer a simple 2-wire or 3-pin buzzer instead of the MAX98357A speaker:
 
-- **2-pin buzzer** (passive piezo recommended for melodies, tones & volume control):
-  - `+` -> **GPIO 6** (default, or change to GPIO 7 / 10 / 1 / 2 in the web dashboard **Sound** tab)
-  - `-` -> **GND**
-- **3-pin buzzer module** (`VCC`, `GND`, `I/O` / `SIG`):
-  - `VCC` -> **3V3**
+- **2-pin buzzer**:
+  - Passive piezo: `+` -> **GPIO 6 / 10** and `-` -> **GND** (dashboard: *Passive Buzzer*).
+  - Active buzzer (standard): `+` -> **GPIO 10** and `-` -> **GND** (dashboard: *Active Buzzer*).
+  - Active buzzer (loud without transistor - Active-Low): `+` -> **3V3 pin** and `-` -> **GPIO 10** (dashboard: *Active Buzzer* + enable *Active-low drive*). Draws from the 500mA regulator rail instead of sourcing through the pin.
+- **High-Volume Active Buzzer circuit (Transistor driver - 100% full battery volume)**:
+  ```text
+       Battery (+) 3.7V / 5V
+                │
+              ┌─┴─┐
+              │ + │ Active Buzzer
+              │ - │
+              └─┬─┘
+                │
+                ├── Collector (C) [2N2222 / 2N3904 / S8050 NPN]
+   GPIO 10 ───[ 1kΩ ]─── Base (B)
+                │
+                └── Emitter (E) ──── GND
+  ```
+- **3-pin buzzer module** (`VCC`, `GND`, `I/O` / `SIG` - has built-in transistor):
+  - `VCC` -> **3.7V Battery / 5V** (or **3V3**)
   - `GND` -> **GND**
-  - `I/O` (or `SIG`) -> **GPIO 6**
+  - `I/O` (or `SIG`) -> **GPIO 10** (or GPIO 6)
 - Then open the dashboard **Sound** tab and set **Output device** to **Passive Buzzer (PWM tones & melodies)** (or **Active Buzzer** if it beeps continuously when connected straight to 3.3V). You can also switch via Serial/Web CLI: `sound mode buzzer` and `sound pin 6`.
 
 ## Adding the speaker (MAX98357A)

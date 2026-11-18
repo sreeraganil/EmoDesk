@@ -235,6 +235,14 @@ String terminalExecute(const String& cmdLine, bool ansi) {
       audioSetVolume(v);
       return String(C_OK) + "[OK] Volume set to " + String(audioVolume()) + "%" + C_RST + "\r\n";
     }
+    if (arg == "inv on" || arg == "invert on") {
+      audioSetBuzzerInvert(true);
+      return String(C_OK) + "[OK] Active-low buzzer enabled (idle HIGH)" + C_RST + "\r\n";
+    }
+    if (arg == "inv off" || arg == "invert off") {
+      audioSetBuzzerInvert(false);
+      return String(C_OK) + "[OK] Active-low buzzer disabled (idle LOW)" + C_RST + "\r\n";
+    }
     return String(C_CYAN) + "Sound: Mode " + String(audioModeName()) +
            ((audioMode() == AUDIO_BUZZER || audioMode() == AUDIO_ACTIVE) ? (" (GPIO" + String(audioBuzzerPin()) + ")") : "") +
            ", Volume " + String(audioVolume()) + "%, Muted: " + String(audioMuted() ? "YES" : "NO") + C_RST + "\r\n";

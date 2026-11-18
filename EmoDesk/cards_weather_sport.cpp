@@ -812,10 +812,10 @@ static void cricfix_draw(CardCtx& c) {
     u8g2.setFont(F_SMALL);
     if (k == sel) { u8g2.drawBox(0, y - 7, 128, 9); u8g2.setDrawColor(0); }
     drawTextFit(2, y, 56, b);
-    if (cricLive(m)) strcpy(b, "LIVE");
-    else if (m.ended) strcpy(b, "Result");
+    if (cricLive(m)) safeCopy(b, "LIVE", sizeof(b));
+    else if (m.ended) safeCopy(b, "Result", sizeof(b));
     else if (m.start) { struct tm t; localtime_r(&m.start, &t); fmtHM(b, t.tm_hour, t.tm_min, cfgH24()); char d[12]; snprintf(d, sizeof(d), "%d %s ", t.tm_mday, MONTH[t.tm_mon]); String s2 = String(d) + b; safeCopy(b, s2.c_str(), sizeof(b)); }
-    else strcpy(b, "Soon");
+    else safeCopy(b, "Soon", sizeof(b));
     drawTextRightFit(126, y, 66, b);
     u8g2.setDrawColor(1);
   }
@@ -1296,7 +1296,7 @@ static void football_draw(CardCtx& c) {
                  m.venue[0] ? " · " : "", m.venue[0] ? m.venue : "");
       } else if (m.venue[0]) {
         snprintf(detail, sizeof(detail), "FT · %s", m.venue);
-      } else strcpy(detail, "Full Time · Final Result");
+      } else safeCopy(detail, "Full Time · Final Result", sizeof(detail));
     } else {
       char k2[24];
       fmtKick(m.t, k2, sizeof(k2));

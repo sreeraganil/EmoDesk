@@ -37,12 +37,33 @@ struct CardInst { const CardType* t; void* d; uint32_t st[6]; uint32_t nextFetch
   X(pomodoro) X(timer) X(stopwatch) X(alarms) X(reminders) X(todo) X(habits) X(water) X(note) X(calevents) \
   X(message) X(mqtt) X(pcstats) X(nowplaying) X(musicbox) X(soundboard) X(sleepsounds) X(metronome) \
   X(visualizer) X(images) X(anim) X(scroller) X(flappy) X(dino) X(stack) X(dodge) X(reaction) X(rhythm) \
-  X(eightball) X(dice) X(decision) X(matrix) X(starfield) X(life) X(fireworks) X(bounce) X(netinfo) X(health) X(battery) X(ble) X(whatsapp) X(cinema) X(delivery)
+  X(eightball) X(dice) X(decision) X(matrix) X(starfield) X(life) X(fireworks) X(bounce) X(netinfo) X(health) X(battery) X(ble) X(whatsapp) X(cinema) X(delivery) X(boxoffice)
 
 #define CARD_DECL(n) extern const CardType CT_##n;
 CARD_LIST(CARD_DECL)
 extern const CardType CT_cinema;
 extern const CardType CT_delivery;
+extern const CardType CT_boxoffice;
+
+struct BoxOfficeItem {
+  char title[36];
+  char day[16];
+  char today[16];
+  char total[16];
+  char net[20];
+  char verdict[16];
+  uint32_t updatedAt;
+};
+struct BoxOfficeData {
+  bool ok;
+  uint8_t count;
+  BoxOfficeItem items[5];
+  char currency[6];
+};
+extern BoxOfficeData latestBoxOffice;
+void boxofficeSyncFromState();
+bool boxofficeAddOrUpdate(const JsonObject& d, bool forceUser = false);
+bool boxofficeDelete(const char* title);
 
 struct DeliveryItem {
   char id[16];

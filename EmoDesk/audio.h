@@ -18,6 +18,8 @@ const char* audioModeName();                        // "off" | "buzzer" | "activ
 void audioSetMode(const char* mode);                // switch & save output mode
 int  audioBuzzerPin();                              // configured buzzer GPIO pin
 void audioSetBuzzerPin(int pin);                    // set & save buzzer GPIO pin
+bool audioBuzzerInvert();                           // true if active-low drive
+void audioSetBuzzerInvert(bool inv);                // set & save active-low drive
 bool audioInstalled();                              // true unless AUDIO_OFF
 bool audioMuted();
 void audioSetMuted(bool m);

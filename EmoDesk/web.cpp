@@ -1232,6 +1232,64 @@ void webBegin() {
     deliveryDelete(id.c_str());
     ok();
   });
+  server.on("/api/boxoffice", HTTP_GET, [] {
+    boxofficeSyncFromState();
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    LOCK();
+    for (int i = 0; i < latestBoxOffice.count; i++) {
+      const BoxOfficeItem& it = latestBoxOffice.items[i];
+      JsonObject o = arr.add<JsonObject>();
+      o["title"] = it.title;
+      o["day"] = it.day;
+      o["today"] = it.today;
+      o["total"] = it.total;
+      o["net"] = it.net;
+      o["verdict"] = it.verdict;
+      o["updated"] = it.updatedAt;
+    }
+    UNLOCK();
+    sendJson(doc);
+  });
+  server.on("/api/boxoffice", HTTP_POST, [] {
+    JsonDocument doc;
+    if (!body(doc)) { fail(400, "bad json"); return; }
+    if (doc.is<JsonObject>()) {
+      if (doc["movies"].is<JsonArray>()) {
+        for (JsonObject m : doc["movies"].as<JsonArray>()) boxofficeAddOrUpdate(m, false);
+      } else {
+        boxofficeAddOrUpdate(doc.as<JsonObject>(), true);
+      }
+    } else if (doc.is<JsonArray>()) {
+      for (JsonObject o : doc.as<JsonArray>()) {
+        boxofficeAddOrUpdate(o, false);
+      }
+    } else {
+      fail(400, "expected object or array");
+      return;
+    }
+    ok();
+  });
+  server.on("/api/boxoffice/delete", HTTP_POST, [] {
+    String title = server.hasArg("title") ? server.arg("title") : "";
+    if (!title.length() && server.hasArg("plain")) {
+      JsonDocument doc;
+      if (body(doc)) title = String(doc["title"] | doc["movie"] | "");
+    }
+    if (!title.length()) title = "all";
+    boxofficeDelete(title.c_str());
+    ok();
+  });
+  server.on("/api/boxoffice", HTTP_DELETE, [] {
+    String title = server.hasArg("title") ? server.arg("title") : "";
+    if (!title.length() && server.hasArg("plain")) {
+      JsonDocument doc;
+      if (body(doc)) title = String(doc["title"] | doc["movie"] | "");
+    }
+    if (!title.length()) title = "all";
+    boxofficeDelete(title.c_str());
+    ok();
+  });
   server.on("/api/sports/matches", HTTP_GET, [] {
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();

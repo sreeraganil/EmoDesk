@@ -51,7 +51,7 @@ const CardType CT_starfield = {"starfield", sizeof(Stars), 0, 0, nullptr, starfi
 // ================================================================== game of life (64x32, 2px cells)
 struct Life { bool init; uint16_t gen; uint32_t last, hash; uint8_t g[256]; };
 static inline bool lget(const uint8_t* g, int x, int y) { x = (x + 64) % 64; y = (y + 32) % 32; return g[y * 8 + x / 8] >> (x % 8) & 1; }
-static void life_seed(Life* l) { for (int i = 0; i < 256; i++) l->g[i] = esp_random() & esp_random(); l->gen = 0; }
+static void life_seed(Life* l) { if (!l) return; for (int i = 0; i < 256; i++) l->g[i] = esp_random() & esp_random(); l->gen = 0; }
 static void life_draw(CardCtx& c) {
   Life* l = (Life*)c.d;
   if (!l) return;

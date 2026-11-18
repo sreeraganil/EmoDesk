@@ -39,7 +39,7 @@ void inputApply() {
 void inputBegin() {
   btn[0] = {PIN_TOUCH, true, false, 0, 0, 0, 0, false, false};
   btn[1] = {PIN_BOOT, false, false, 0, 0, 0, 0, false, false};
-  pinMode(PIN_TOUCH, INPUT);
+  pinMode(PIN_TOUCH, INPUT_PULLDOWN);
   pinMode(PIN_BOOT, INPUT_PULLUP);
   lastAct = millis();
   inputApply();

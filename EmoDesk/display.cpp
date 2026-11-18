@@ -20,6 +20,7 @@ void displayBegin() {
   Wire.setClock(OLED_I2C_HZ);
   u8g2.enableUTF8Print();
   u8g2.setFontMode(1);
+  displayPower(true);
   displayApply();
 }
 
@@ -119,7 +120,7 @@ void drawTextRightFit(int xr, int y, int maxW, const char* s) {
 }
 
 int wrapText(int x, int y, int w, int lineH, const char* s, int maxLines, int skip) {
-  char buf[100];
+  char buf[128];
   int line = 0;
   const char* p = s;
   while (p && *p) {
@@ -129,6 +130,7 @@ int wrapText(int x, int y, int w, int lineH, const char* s, int maxLines, int sk
     while (p[len] && p[len] != '\n' && len < 98) {
       int next = len + 1;
       while (p[next] && ((uint8_t)p[next] & 0xC0) == 0x80) next++;   // whole UTF-8 char
+      if (next >= (int)sizeof(buf) - 1) break;
       memcpy(buf, p, next);
       buf[next] = 0;
       if (u8g2.getUTF8Width(buf) > w) break;
@@ -138,6 +140,7 @@ int wrapText(int x, int y, int w, int lineH, const char* s, int maxLines, int sk
     int take = len;
     if (p[len] && p[len] != '\n' && p[len] != ' ' && lastSpace > 0) take = lastSpace;
     if (take <= 0) take = 1;
+    if (take >= (int)sizeof(buf)) take = sizeof(buf) - 1;
     memcpy(buf, p, take);
     buf[take] = 0;
     if (line >= skip && line < skip + maxLines) u8g2.drawUTF8(x, y + (line - skip) * lineH, buf);

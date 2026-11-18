@@ -573,7 +573,11 @@ static uint8_t alertedResultIdx = 0;
   nextCric = now + interval * powerScale();
 }
 
+#define TG_OFFSET_MAGIC 0x54474F46UL
+static RTC_NOINIT_ATTR int64_t rtcTgOffset;
+static RTC_NOINIT_ATTR uint32_t rtcTgMagic;
 static int64_t tgOffset = 0;
+static bool tgInitialized = false;
 
 static const char TG_KEYBOARD[] =
   "{\"keyboard\":["
@@ -606,6 +610,29 @@ static void tgLoop(uint32_t now) {
   UNLOCK();
   if (!en || !tok.length() || (int32_t)(now - nextTg) < 0) return;
   nextTg = now + max(poll, 3) * 1000UL * powerScale();
+
+  if (!tgInitialized) {
+    if (rtcTgMagic == TG_OFFSET_MAGIC && rtcTgOffset > 0) {
+      tgOffset = rtcTgOffset;
+      tgInitialized = true;
+    } else {
+      // Cold boot: flush backlog by querying offset = -1 so we don't replay stale commands from the past
+      JsonDocument initDoc;
+      if (httpJson("https://api.telegram.org/bot" + tok + "/getUpdates?limit=1&offset=-1", initDoc)) {
+        JsonArray arr = initDoc["result"].as<JsonArray>();
+        if (!arr.isNull() && arr.size() > 0) {
+          tgOffset = arr[0]["update_id"].as<int64_t>() + 1;
+          rtcTgOffset = tgOffset;
+          rtcTgMagic = TG_OFFSET_MAGIC;
+          httpGet("https://api.telegram.org/bot" + tok + "/getUpdates?limit=1&offset=" + String((long long)tgOffset), nullptr);
+        }
+        tgInitialized = true;
+      } else {
+        return; // Network or HTTP failed, retry on next tgLoop tick
+      }
+    }
+  }
+
   if (tgPending[0] && chat.length()) {
     char t[256];
     LOCK(); safeCopy(t, tgPending, sizeof(t)); tgPending[0] = 0; UNLOCK();
@@ -614,6 +641,7 @@ static void tgLoop(uint32_t now) {
   JsonDocument filter;
   JsonObject r = filter["result"].add<JsonObject>();
   r["update_id"] = true;
+  r["message"]["date"] = true;
   r["message"]["text"] = true;
   r["message"]["chat"]["id"] = true;
   r["message"]["from"]["first_name"] = true;
@@ -623,12 +651,20 @@ static void tgLoop(uint32_t now) {
   if (!httpJson("https://api.telegram.org/bot" + tok + "/getUpdates?limit=5&timeout=0&offset=" + url, doc, &filter)) return;
   for (JsonObject u : doc["result"].as<JsonArray>()) {
     tgOffset = u["update_id"].as<int64_t>() + 1;
+    rtcTgOffset = tgOffset;
+    rtcTgMagic = TG_OFFSET_MAGIC;
     String text = u["message"]["text"] | "";
     int64_t cid = u["message"]["chat"]["id"] | (int64_t)0;
     String from = u["message"]["from"]["first_name"] | "Telegram";
     char cids[24];
     snprintf(cids, sizeof(cids), "%lld", (long long)cid);
     if (!cid || !text.length()) continue;
+
+    uint32_t msgDate = u["message"]["date"] | (uint32_t)0;
+    if (timeOK() && msgDate > 0 && (uint32_t)time(nullptr) > msgDate && ((uint32_t)time(nullptr) - msgDate > 90)) {
+      logf("[TG] Discarding stale command (%u s old): %s", (uint32_t)time(nullptr) - msgDate, text.c_str());
+      continue;
+    }
     if (!chat.length()) {
       chat = cids;
       LOCK(); cfg["tg"]["chat"] = chat; UNLOCK();
@@ -696,7 +732,7 @@ static void tgLoop(uint32_t now) {
       int bat = batteryPercent();
       char batS[36];
       if (bat >= 0) snprintf(batS, sizeof(batS), "%d%% (%.2fV)%s", bat, batteryMv() / 1000.0f, powerSaver() ? " [Saver]" : "");
-      else strcpy(batS, "No battery");
+      else safeCopy(batS, "No battery", sizeof(batS));
       char petLine[60] = "";
       if (emoActive()) {
         snprintf(petLine, sizeof(petLine), "❤️ Joy: %d%% | ⚡ Energy: %d%% | 🍔 Hunger: %d%%\n",
@@ -957,11 +993,13 @@ static void tgLoop(uint32_t now) {
     }
     else if (lc == "/reboot" || lc == "/restart") {
       tgSendTo(tok, chat, "Rebooting EmoDesk... 🔄");
+      httpGet("https://api.telegram.org/bot" + tok + "/getUpdates?limit=1&offset=" + String((long long)tgOffset), nullptr);
       delay(500);
       ESP.restart();
     }
     else if (lc == "/deepsleep") {
       tgSendTo(tok, chat, "Going into deep sleep 💤 (Touch pad to wake)");
+      httpGet("https://api.telegram.org/bot" + tok + "/getUpdates?limit=1&offset=" + String((long long)tgOffset), nullptr);
       delay(500);
       powerSleepNow(0, "Telegram");
     }
@@ -1043,7 +1081,7 @@ static void subscribeCards() {
       if (!*tp || n >= 12) continue;
       safeCopy(nv[n].topic, tp, sizeof(nv[n].topic));
       safeCopy(nv[n].val, mqttGet(tp), sizeof(nv[n].val));
-      if (!nv[n].val[0]) strcpy(nv[n].val, "--");
+      if (!nv[n].val[0]) safeCopy(nv[n].val, "--", sizeof(nv[n].val));
       n++;
     }
   }

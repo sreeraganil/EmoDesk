@@ -95,7 +95,8 @@ static void enterCard(int i) {
   if (i < 0 || i >= cn) return;
   cardHold = false;
   if (cn > 1 && i != cur && frameDrawn && (cfg["rotate"]["trans"] | true)) {
-    memcpy(oldBuf, u8g2.getBufferPtr(), 1024);
+    uint8_t* b = u8g2.getBufferPtr();
+    if (b) memcpy(oldBuf, b, 1024);
     transStart = millis();
     transDir = (lastDir != 0) ? lastDir : 1;
     inTrans = true;

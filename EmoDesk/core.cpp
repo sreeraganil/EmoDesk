@@ -507,10 +507,11 @@ void tzFormatPosix(long offsetEastSec, const char* ianaName, char* out, size_t n
 bool cfgH24() { return cfg["time"]["h24"] | false; }
 
 void fmtHM(char* out, int h, int m, bool h24) {
+  if (!out) return;
   h = constrain(h, 0, 23);
   m = constrain(m, 0, 59);
-  if (h24) sprintf(out, "%02d:%02d", h, m);
-  else sprintf(out, "%d:%02d", (h % 12) ? h % 12 : 12, m);
+  if (h24) snprintf(out, 12, "%02d:%02d", h, m);
+  else snprintf(out, 12, "%d:%02d", (h % 12) ? h % 12 : 12, m);
 }
 
 // ------------------------------------------------------------------ speech text
@@ -643,11 +644,28 @@ void safeCopy(char* dst, const char* src, size_t n) {
   if (!src) { dst[0] = 0; return; }
   strncpy(dst, src, n - 1);
   dst[n - 1] = 0;
-  // never cut a UTF-8 sequence in half
-  size_t l = strlen(dst);
-  while (l > 0 && ((uint8_t)dst[l - 1] & 0xC0) == 0x80) l--;
-  if (l > 0 && ((uint8_t)dst[l - 1] & 0xC0) == 0xC0) l--;
-  if (l < strlen(dst) && strlen(src) >= n - 1) dst[l] = 0;
+  // If truncated, ensure the last UTF-8 sequence was not cut in half
+  if (strlen(src) >= n - 1) {
+    size_t len = strlen(dst);
+    if (len > 0) {
+      size_t i = len;
+      size_t cont = 0;
+      while (i > 0 && ((uint8_t)dst[i - 1] & 0xC0) == 0x80) {
+        i--;
+        cont++;
+      }
+      if (i > 0 && ((uint8_t)dst[i - 1] & 0x80) != 0) {
+        uint8_t lead = (uint8_t)dst[i - 1];
+        size_t expected = 0;
+        if ((lead & 0xE0) == 0xC0) expected = 1;
+        else if ((lead & 0xF0) == 0xE0) expected = 2;
+        else if ((lead & 0xF8) == 0xF0) expected = 3;
+        if (cont < expected) {
+          dst[i - 1] = 0;
+        }
+      }
+    }
+  }
 }
 
 bool icontains(const char* hay, const char* needle) {

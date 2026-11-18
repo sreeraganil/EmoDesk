@@ -1518,14 +1518,15 @@ static void drawCineHero(CardCtx& c, CinemaData* cd, int curIdx) {
 }
 
 static void drawCineList(CardCtx& c, CinemaData* cd, int sel) {
-  char hrBuf[12];
-  snprintf(hrBuf, sizeof(hrBuf), "%d Titles", cd->n);
-  drawHeader("WISHLIST", hrBuf);
-
   if (!cd || !cd->n) {
+    drawHeader("WISHLIST", "0 Titles");
     drawCenteredMsg("List is empty", "Add in CineWish");
     return;
   }
+
+  char hrBuf[12];
+  snprintf(hrBuf, sizeof(hrBuf), "%d Titles", cd->n);
+  drawHeader("WISHLIST", hrBuf);
 
   int cur = (unsigned)sel % cd->n;
   int first = constrain(cur - 1, 0, max(0, cd->n - 3));
@@ -1647,22 +1648,16 @@ static void cinema_draw(CardCtx& c) {
 }
 
 // Interactive touch gestures:
-// Tap: instantly jumps to next movie!
 // Double Tap: switches view mode (Hero card -> List -> Tonight's pick)
-// Long Press: speaks movie details aloud
+// Global single-tap is preserved for next card navigation!
 static bool cinema_input(CardCtx& c, uint8_t g) {
   CinemaData* cd = (CinemaData*)c.d;
   if (!cd || !cd->n) return false;
 
   uint32_t& view = c.st[0];
-  uint32_t& idx  = c.st[1];
   uint32_t& tLast = c.st[2];
 
-  if (g == G_TAP) {
-    idx = (idx + 1) % cd->n;
-    tLast = millis();
-    return true;
-  } else if (g == G_DOUBLE) {
+  if (g == G_DOUBLE) {
     view = (view + 1) % CV_COUNT;
     tLast = millis();
     return true;
@@ -1841,7 +1836,7 @@ static void delivery_draw(CardCtx& c) {
     return;
   }
 
-  int idx = c.st[0] % latestDelivery.count;
+  int idx = (latestDelivery.count > 0) ? ((millis() - c.t0) / 6000) % latestDelivery.count : 0;
   const DeliveryItem& it = latestDelivery.items[idx];
 
   char cntBuf[16];
@@ -1935,10 +1930,7 @@ static void delivery_draw(CardCtx& c) {
 }
 
 static bool delivery_input(CardCtx& c, uint8_t g) {
-  if (latestDelivery.count > 1 && g == G_TAP) {
-    c.st[0] = (c.st[0] + 1) % latestDelivery.count;
-    return true;
-  }
+  // Always keep global touch gestures! Do not consume G_TAP so navigation never locks!
   return false;
 }
 
@@ -1975,9 +1967,369 @@ static void delivery_speak(CardCtx& c, String& s) {
     s = "You have no active deliveries.";
     return;
   }
-  int idx = c.st[0] % latestDelivery.count;
+  int idx = (latestDelivery.count > 0) ? ((millis() - c.t0) / 6000) % latestDelivery.count : 0;
   const DeliveryItem& it = latestDelivery.items[idx];
   s = String("Your ") + it.courier + " order, " + it.title + ", is " + it.status + ". Expected " + it.eta + ".";
 }
 
 const CardType CT_delivery = {"delivery", sizeof(DeliveryData), 300, 0, delivery_enter, delivery_draw, delivery_input, delivery_fetch, delivery_speak, nullptr};
+
+// ================================================================== boxoffice (Real-Time Movie Collections)
+BoxOfficeData latestBoxOffice = {false, 0, {}, "₹"};
+
+static bool isBoxOfficeRemoved(const char* title) {
+  if (!title || !*title) return false;
+  if (!stateDoc["boxoffice_removed"].is<JsonArray>()) return false;
+  JsonArray rem = stateDoc["boxoffice_removed"].as<JsonArray>();
+  for (JsonVariant v : rem) {
+    const char* r = v.as<const char*>();
+    if (r && (icontains(title, r) || icontains(r, title))) return true;
+  }
+  return false;
+}
+
+void boxofficeSyncFromState() {
+  LOCK();
+  if (!stateDoc["boxoffice"].is<JsonArray>()) {
+    stateDoc["boxoffice"].to<JsonArray>();
+    markDirty(DIRTY_STATE);
+  }
+  JsonArray arr = stateDoc["boxoffice"].as<JsonArray>();
+
+  // If any movie in the list was marked removed, purge it immediately
+  if (stateDoc["boxoffice_removed"].is<JsonArray>()) {
+    JsonArray rem = stateDoc["boxoffice_removed"].as<JsonArray>();
+    for (int i = (int)arr.size() - 1; i >= 0; i--) {
+      const char* t = arr[i]["title"] | arr[i]["movie"] | "";
+      for (JsonVariant v : rem) {
+        const char* r = v.as<const char*>();
+        if (r && (icontains(t, r) || icontains(r, t))) {
+          arr.remove(i);
+          markDirty(DIRTY_STATE);
+          break;
+        }
+      }
+    }
+  }
+
+  // Clear any legacy dummy or stale entries so fresh live collections display cleanly
+  if (arr.size() == 1 && strcmp(arr[0]["title"] | "", "Kalki 2898 AD") == 0 && strcmp(arr[0]["today"] | "", "34.5 Cr") == 0) {
+    arr.clear();
+    markDirty(DIRTY_STATE);
+  }
+  for (int i = (int)arr.size() - 1; i >= 0; i--) {
+    const char* tot = arr[i]["total"] | "";
+    if (strstr(tot, "947.25") != nullptr) {
+      arr.remove(i);
+      markDirty(DIRTY_STATE);
+    }
+  }
+  latestBoxOffice.count = 0;
+  for (JsonObject o : arr) {
+    if (latestBoxOffice.count >= 5) break;
+    BoxOfficeItem& it = latestBoxOffice.items[latestBoxOffice.count];
+    safeCopy(it.title, o["title"] | o["movie"] | o["name"] | "", sizeof(it.title));
+    safeCopy(it.day, o["day"] | o["status"] | "Today", sizeof(it.day));
+    safeCopy(it.today, o["today"] | o["daily"] | o["day_gross"] | "-", sizeof(it.today));
+    safeCopy(it.total, o["total"] | o["worldwide"] | o["gross"] | o["ww"] | "-", sizeof(it.total));
+    safeCopy(it.net, o["net"] | o["domestic"] | o["india"] | "", sizeof(it.net));
+    safeCopy(it.verdict, o["verdict"] | o["trend"] | o["tag"] | "Trending", sizeof(it.verdict));
+    it.updatedAt = o["updated"] | (uint32_t)time(nullptr);
+    latestBoxOffice.count++;
+  }
+  latestBoxOffice.ok = (latestBoxOffice.count > 0);
+  UNLOCK();
+}
+
+bool boxofficeAddOrUpdate(const JsonObject& d, bool forceUser) {
+  const char* title = d["title"] | d["movie"] | d["name"] | "";
+  if (!title || !*title) return false;
+  LOCK();
+
+  // If not explicitly added by user, skip if user previously removed this movie
+  if (!forceUser && isBoxOfficeRemoved(title)) {
+    UNLOCK();
+    return false;
+  }
+
+  // If user explicitly added it, remove from blacklist
+  if (forceUser && stateDoc["boxoffice_removed"].is<JsonArray>()) {
+    JsonArray rem = stateDoc["boxoffice_removed"].as<JsonArray>();
+    for (int i = (int)rem.size() - 1; i >= 0; i--) {
+      const char* r = rem[i].as<const char*>();
+      if (r && (icontains(title, r) || icontains(r, title))) {
+        rem.remove(i);
+      }
+    }
+  }
+
+  if (!stateDoc["boxoffice"].is<JsonArray>()) {
+    stateDoc["boxoffice"].to<JsonArray>();
+  }
+  JsonArray arr = stateDoc["boxoffice"].as<JsonArray>();
+  JsonObject target;
+  for (JsonObject o : arr) {
+    if (icontains(o["title"] | "", title) || icontains(title, o["title"] | "")) {
+      target = o;
+      break;
+    }
+  }
+  if (target.isNull()) {
+    if (arr.size() >= 5) arr.remove(0);
+    target = arr.add<JsonObject>();
+  }
+  target["title"] = title;
+  if (!d["day"].isNull()) target["day"] = d["day"];
+  if (!d["today"].isNull()) target["today"] = d["today"];
+  else if (!d["daily"].isNull()) target["today"] = d["daily"];
+  else if (!d["day_gross"].isNull()) target["today"] = d["day_gross"];
+
+  if (!d["total"].isNull()) target["total"] = d["total"];
+  else if (!d["worldwide"].isNull()) target["total"] = d["worldwide"];
+  else if (!d["gross"].isNull()) target["total"] = d["gross"];
+  else if (!d["ww"].isNull()) target["total"] = d["ww"];
+
+  if (!d["net"].isNull()) target["net"] = d["net"];
+  else if (!d["domestic"].isNull()) target["net"] = d["domestic"];
+  else if (!d["india"].isNull()) target["net"] = d["india"];
+
+  if (!d["verdict"].isNull()) target["verdict"] = d["verdict"];
+  else if (!d["trend"].isNull()) target["verdict"] = d["trend"];
+  target["updated"] = (uint32_t)time(nullptr);
+  markDirty(DIRTY_STATE);
+  UNLOCK();
+  boxofficeSyncFromState();
+  return true;
+}
+
+bool boxofficeDelete(const char* title) {
+  LOCK();
+  if (!stateDoc["boxoffice"].is<JsonArray>()) {
+    stateDoc["boxoffice"].to<JsonArray>();
+  }
+  if (!stateDoc["boxoffice_removed"].is<JsonArray>()) {
+    stateDoc["boxoffice_removed"].to<JsonArray>();
+  }
+  JsonArray arr = stateDoc["boxoffice"].as<JsonArray>();
+  JsonArray rem = stateDoc["boxoffice_removed"].as<JsonArray>();
+
+  if (!title || !*title || !strcasecmp(title, "all")) {
+    arr.clear();
+    rem.clear();
+  } else {
+    // Add to removed blacklist so background sync never brings it back
+    bool alreadyRem = false;
+    for (JsonVariant v : rem) {
+      const char* r = v.as<const char*>();
+      if (r && (icontains(title, r) || icontains(r, title))) {
+        alreadyRem = true;
+        break;
+      }
+    }
+    if (!alreadyRem) {
+      rem.add(title);
+    }
+
+    // Remove matching movie from active list
+    for (int i = (int)arr.size() - 1; i >= 0; i--) {
+      const char* t = arr[i]["title"] | arr[i]["movie"] | "";
+      if (icontains(t, title) || icontains(title, t) || !strcasecmp(t, title)) {
+        arr.remove(i);
+      }
+    }
+  }
+  markDirty(DIRTY_STATE);
+  UNLOCK();
+  boxofficeSyncFromState();
+  return true;
+}
+
+static void boxoffice_enter(CardCtx& c) {
+  boxofficeSyncFromState();
+}
+
+static void boxoffice_draw(CardCtx& c) {
+  boxofficeSyncFromState();
+  if (latestBoxOffice.count == 0) {
+    drawHeader("BOX OFFICE", "No Data");
+    u8g2.setFont(F_SMALL);
+    textCenter(34, "No Tracked Movies");
+    u8g2.setFont(F_TINY);
+    textCenter(48, "Update in Web Dashboard");
+    return;
+  }
+
+  int idx = ((millis() - c.t0) / 6000) % latestBoxOffice.count;
+  const BoxOfficeItem& it = latestBoxOffice.items[idx];
+
+  // 1. TOP HEADER: [Film Icon] [MOVIE TITLE in F_BOLD] ... [DAY BADGE]
+  int rightEdge = 127 - displayBatReserve();
+  char dayBuf[16];
+  if (it.day[0]) safeCopy(dayBuf, it.day, sizeof(dayBuf));
+  else snprintf(dayBuf, sizeof(dayBuf), "%d/%d", idx + 1, latestBoxOffice.count);
+
+  u8g2.setFont(F_TINY);
+  int dw = u8g2.getUTF8Width(dayBuf);
+  int bw = dw + 6;
+  int bx = rightEdge - bw;
+
+  // Film clapper icon
+  u8g2.drawXBMP(2, 2, 7, 7, XBM_FILM7);
+
+  // Movie Title in bold, large font
+  int maxTitleW = max(24, bx - 14);
+  u8g2.setFont(F_BOLD);
+  if (u8g2.getUTF8Width(it.title) > maxTitleW) {
+    u8g2.setFont(F_MED);
+    if (u8g2.getUTF8Width(it.title) > maxTitleW) {
+      u8g2.setFont(F_SMALL);
+    }
+  }
+  drawTextFit(11, 10, maxTitleW, it.title);
+
+  // Day Badge on top-right (filled rounded capsule)
+  u8g2.setFont(F_TINY);
+  drawPill(bx, 1, bw, 9, dayBuf, true);
+
+  // Header separator
+  u8g2.drawHLine(0, 12, 128);
+
+  // 2. HERO SECTION: Big Worldwide Gross (or Today if WW unavailable)
+  bool hasWW = (it.total[0] && strcmp(it.total, "-") != 0 && strcmp(it.total, "0") != 0);
+  const char* heroVal = hasWW ? it.total : it.today;
+  const char* heroLbl = hasWW ? "WORLDWIDE GROSS" : "TODAY'S COLLECTION";
+
+  u8g2.setFont(F_TINY);
+  u8g2.drawStr(2, 21, heroLbl);
+
+  // BIG HERO NUMBER in F_HELV14 (14px tall Helvetica Bold)
+  u8g2.setFont(F_HELV14);
+  int heroW = u8g2.getUTF8Width(heroVal);
+  if (heroW > 124) {
+    u8g2.setFont(F_BOLD);
+    heroW = u8g2.getUTF8Width(heroVal);
+    if (heroW > 124) {
+      u8g2.setFont(F_MED);
+    }
+  }
+  drawTextFit(2, 36, 124, heroVal);
+
+  // Subtle separator
+  drawDottedHLine(2, 39, 124);
+
+  // 3. SECONDARY METRICS: Today Gross + India/Domestic Net
+  char todayBuf[32] = "";
+  if (hasWW && it.today[0] && strcmp(it.today, "-") != 0) {
+    snprintf(todayBuf, sizeof(todayBuf), "Today: %s", it.today);
+  }
+
+  u8g2.setFont(F_MED);
+  if (todayBuf[0]) {
+    if (u8g2.getUTF8Width(todayBuf) > 74) u8g2.setFont(F_SMALL);
+    drawTextFit(2, 49, 74, todayBuf);
+  }
+
+  if (it.net[0]) {
+    u8g2.setFont(F_SMALL);
+    drawTextRightFit(latestBoxOffice.count > 1 ? 114 : 126, 49, 50, it.net);
+  }
+
+  // 4. FOOTER: Verdict pill + Page Dots
+  if (it.verdict[0]) {
+    u8g2.setFont(F_TINY);
+    int tw = u8g2.getUTF8Width(it.verdict);
+    int pw = constrain(tw + 8, 20, 75);
+    drawPill(2, 53, pw, 10, it.verdict, false);
+  }
+
+  if (latestBoxOffice.count > 1) {
+    drawPageDots(126, 58, latestBoxOffice.count, idx);
+  }
+}
+
+static bool boxoffice_input(CardCtx& c, uint8_t g) {
+  // Always keep global touch gestures for every card!
+  // Single-tap (G_TAP) is never consumed so it advances to next card globally.
+  if (g == G_DOUBLE && latestBoxOffice.count > 1) {
+    c.t0 = millis();
+    return true;
+  }
+  return false;
+}
+
+static bool boxoffice_fetch(JsonObject p, void* d) {
+  boxofficeSyncFromState();
+  String url = p["url"].is<const char*>() ? (p["url"] | "") : "";
+  String movie = p["movie"].is<const char*>() ? (p["movie"] | "") : "";
+
+  if (!url.length()) {
+    LOCK();
+    if (cfg["boxoffice"].is<JsonObject>()) {
+      if (cfg["boxoffice"]["url"].is<const char*>()) url = cfg["boxoffice"]["url"] | "";
+      if (!movie.length() && cfg["boxoffice"]["movie"].is<const char*>()) {
+        movie = cfg["boxoffice"]["movie"] | "";
+      }
+    } else if (cfg["boxoffice_url"].is<const char*>()) {
+      url = cfg["boxoffice_url"] | "";
+    }
+    UNLOCK();
+  }
+  if (!url.length()) {
+    url = String(DEFAULT_SPORTS_SERVER) + "/api/emo/boxoffice";
+  }
+  url.trim();
+  movie.trim();
+
+  if (movie.length()) {
+    if (url.indexOf('?') >= 0) url += "&movie=";
+    else url += "?movie=";
+    for (size_t i = 0; i < movie.length(); i++) {
+      char c = movie[i];
+      if (c == ' ') url += "%20";
+      else url += c;
+    }
+  }
+
+  if (url.length()) {
+    JsonDocument doc;
+    if (httpJson(url, doc)) {
+      if (doc.is<JsonObject>()) {
+        if (doc["movies"].is<JsonArray>()) {
+          JsonArray arr = doc["movies"].as<JsonArray>();
+          for (JsonObject m : arr) {
+            const char* t = m["title"] | m["movie"] | "";
+            if (!isBoxOfficeRemoved(t)) {
+              boxofficeAddOrUpdate(m, false);
+            }
+          }
+        } else if (doc["title"].is<const char*>()) {
+          const char* t = doc["title"] | "";
+          if (!isBoxOfficeRemoved(t)) {
+            boxofficeAddOrUpdate(doc.as<JsonObject>(), false);
+          }
+        }
+      } else if (doc.is<JsonArray>()) {
+        JsonArray arr = doc.as<JsonArray>();
+        for (JsonObject o : arr) {
+          const char* t = o["title"] | o["movie"] | "";
+          if (!isBoxOfficeRemoved(t)) {
+            boxofficeAddOrUpdate(o, false);
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+static void boxoffice_speak(CardCtx& c, String& s) {
+  if (latestBoxOffice.count == 0) {
+    s = "No movie box office collections available.";
+    return;
+  }
+  int idx = ((millis() - c.t0) / 6000) % latestBoxOffice.count;
+  const BoxOfficeItem& it = latestBoxOffice.items[idx];
+  s = String("Movie ") + it.title + " has collected " + it.today + " today, with total worldwide collection reaching " + it.total + ".";
+}
+
+const CardType CT_boxoffice = {"boxoffice", sizeof(BoxOfficeData), 300, 0, boxoffice_enter, boxoffice_draw, boxoffice_input, boxoffice_fetch, boxoffice_speak, nullptr};
